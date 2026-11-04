@@ -35,7 +35,7 @@ function snapshot(root) {
       const r = path.join(rel, e.name);
       if (e.name === '.state') continue;
       if (e.isDirectory()) walk(r);
-      else out[r] = readFileSync(path.join(root, r), 'utf8');
+      else out[r.split(path.sep).join('/')] = readFileSync(path.join(root, r), 'utf8'); // posix keys on every OS
     }
   };
   walk('.shipline');

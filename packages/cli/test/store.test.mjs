@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { encodePath, shiplineHome, storeDir, tasksDir, stateDir, uiDir } from '../src/store.mjs';
 import { BIN, CLI_ROOT, git, homeFor, hook, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
 
@@ -77,7 +78,7 @@ describe('SHIPLINE_HOME', () => {
     const env = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome };
     delete env.SHIPLINE_HOME;
     const lib = path.join(CLI_ROOT, 'templates', 'shipline', 'bin', 'lib.mjs');
-    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `import(${JSON.stringify(lib)}).then((l) => console.log(l.shiplineHome()))`], { env, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `import(${JSON.stringify(pathToFileURL(lib).href)}).then((l) => console.log(l.shiplineHome()))`], { env, encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout.trim(), path.join(fakeHome, '.shipline'));
   });

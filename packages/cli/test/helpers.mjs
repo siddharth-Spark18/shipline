@@ -75,7 +75,8 @@ export function tmpDir(prefix = 'shipline-test-') {
 // Removes a dir; for a tmpDir() dir, its SHIPLINE_HOME too.
 export function removeDir(dir) {
   if (!dir) return;
-  rmSync(dir, { recursive: true, force: true });
+  // Windows refuses to delete a folder a process still has open (a watcher closing, git): retry briefly.
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   if (HOMES.has(dir)) {
     const home = HOMES.get(dir);
     // A late write by a closing in-process server then lands in the process home (removed on exit), not here.

@@ -1,7 +1,10 @@
 name: cli
 
 on:
+  # Branch pushes are covered by the pull_request run; only main is built on push, so one push to a PR
+  # branch starts one run, not two (macOS runners are scarce).
   push:
+    branches: [main]
     paths:
       - 'packages/cli/**'
       - 'packages/ui/**'
@@ -11,6 +14,11 @@ on:
       - 'packages/cli/**'
       - 'packages/ui/**'
       - '.github/workflows/cli.yml'
+
+# A new push to the same PR (or to main) cancels its older, now outdated run.
+concurrency:
+  group: cli-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # The vendored hook scripts and `init` must keep working on Node 18 (engines.node >=18).

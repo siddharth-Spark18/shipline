@@ -173,7 +173,7 @@ describe('GET /api/file', () => {
   test('reads a task artifact by its absolute store path', async () => {
     const r = await file(`${TASK}/ticket.md`);
     assert.equal(r.status, 200, r.text);
-    assert.deepEqual(r.json, { path: `${TASK}/ticket.md`, content: '# LL-12\n' });
+    assert.deepEqual(r.json, { path: path.join(TASK, 'ticket.md'), content: '# LL-12\n' });
   });
 
   test('a missing file inside the store tasks/ folder is 404', async () => {

@@ -93,8 +93,13 @@ const record = (obj) => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = (obj) => process.stdout.write((typeof obj === 'string' ? obj : JSON.stringify(obj)) + '\n');
-const fill = (s) =>
-  s.replaceAll('{{SESSION_ID}}', sessionId).replaceAll('{{OTHER_SESSION_ID}}', OTHER_SESSION_ID).replaceAll('{{CWD}}', process.cwd());
+// Stream lines are JSON, so there {{CWD}} is JSON-escaped (a Windows path has backslashes); directive
+// arguments are plain text and get the raw path.
+const fill = (s, json = false) =>
+  s
+    .replaceAll('{{SESSION_ID}}', sessionId)
+    .replaceAll('{{OTHER_SESSION_ID}}', OTHER_SESSION_ID)
+    .replaceAll('{{CWD}}', json ? JSON.stringify(process.cwd()).slice(1, -1) : process.cwd());
 
 // stdin: stream-json user messages.
 const userQueue = [];
@@ -204,7 +209,7 @@ async function main() {
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
     if (!line.startsWith('@')) {
-      out(fill(line));
+      out(fill(line, true));
       continue;
     }
     const sp = line.indexOf(' ');

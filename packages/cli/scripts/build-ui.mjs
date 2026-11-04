@@ -7,9 +7,12 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // pnpm runs the build with packages/ui as the working directory, so the output path must be absolute.
 const out = path.resolve(here, '..', 'ui-dist');
 
+// On Windows pnpm is pnpm.cmd, which Node only runs through a shell (EINVAL/ENOENT otherwise). The
+// arguments are fixed strings, so the shell needs no quoting.
 const build = spawnSync('pnpm', ['--filter', '@shipline/ui', 'build'], {
   stdio: 'inherit',
   env: { ...process.env, SHIPLINE_UI_OUT: out },
+  shell: process.platform === 'win32',
 });
 if (build.error) {
   console.error(`Could not run pnpm: ${build.error.message}`);

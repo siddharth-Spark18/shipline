@@ -1,209 +1,236 @@
 # Shipline
 
-One guardrailed workflow from a chat to a merged PR. Work starts from a chat (pick a project, type); the
-person who started it owns it end to end, in one browser view and one continuous Claude conversation,
-using their own Claude subscription with Shipline's agents and guardrails attached. Every chat gets a
-per-project key (`LL-12`); a Jira ticket is optional and Claude asks about it in its first reply.
-There are no approvals: Claude proposes each stage change and the owner confirms it inline.
+Shipline installs one shared, guardrailed workflow into a git repo so that everyone using Claude Code there
+works the same way: pick a workflow, move through stages, save an artifact for each stage, and let hooks
+stop the steps that shouldn't happen yet (editing source before the plan is done, committing before verify).
 
-Plan: `docs/plans/shipline-v1.md`.
+## 1. What Shipline is
 
-## Install
+- **Workflows.** Feature, Bugfix, Hotfix and Small change. Each is a list of stages (for example Feasibility,
+  Open questions, Plan, Implement, Verify, Commit and PR). Claude picks the workflow and starts it.
+- **Stages and artifacts.** Each stage has rules (`.shipline/rules/<stage>.md`) and an artifact (such as
+  `plan.md`) that must exist before the stage can finish. Progress is recorded with `stage.mjs`.
+- **Guardrails.** Hooks in `.claude/settings.json` run on every session. A stage can only guide, warn, or block.
+- **A browser UI.** `npx @forgeyard/shipline ui` is a local web app to chat with Claude in the repo, edit the
+  setup (workflows, rules, agents and skills) and watch tasks.
 
-Shipline's repo workflow is published on npm as `@forgeyard/shipline`. Run it from the root of the repo you
-want to set up (Node 18+; the `ui` command needs Node 20+):
+Everything Shipline adds to the repo is plain files you commit. Teammates get it on clone, with nothing to
+install beyond Node.
+
+## 2. Requirements
+
+| For | You need |
+| --- | --- |
+| The hooks, `init --yes`, `upgrade`, `uninstall` | Node 18+ |
+| Interactive `init` (it asks questions) | Node 20.17+ |
+| `shipline ui` | Node 20+ |
+| Everything | [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) signed in, and git |
+
+## 3. Install
+
+Run it from the root of the repo you want to set up:
 
 ```bash
-npx @forgeyard/shipline init       # install the workflow into this repo (asks what to install; --yes for the defaults)
-npx @forgeyard/shipline upgrade    # update an installed repo and move its tasks to ~/.shipline
-npx @forgeyard/shipline uninstall  # remove Shipline from this repo
-npx @forgeyard/shipline ui         # optional local web UI
+npx @forgeyard/shipline init          # interactive: choose workflows, agents and skills
+npx @forgeyard/shipline init --yes    # install the defaults, no questions
+npx @forgeyard/shipline init --dry-run  # preview only
 ```
 
-`upgrade` shows a preview and asks before changing anything (`--dry-run` only previews, `--yes` skips the
-question, `--force` also replaces Shipline files your team edited). It never commits: the removal of the old
-in-repo task folder is staged for you to review.
+In a terminal, `init` asks which workflows, which Shipline agents and which of your repo's own skills to use,
+and what to do when one of Shipline's agent names already exists in `.claude/agents/` (keep yours, use ours,
+or skip). `--yes` installs everything and keeps your own agent files on a clash. Without a terminal and
+without `--yes` it refuses. If any other file name collides, it aborts with nothing written. Running it again
+reports "already initialized".
 
-In a terminal, `init` asks which workflows (Feature, Bugfix, Hotfix, Small change), which Shipline agents and
-which of your repo's own skills to use, and what to do when one of Shipline's agent names already exists in
-`.claude/agents/` (keep yours, use ours, or skip). `init --yes` installs everything and keeps your own agent
-files on a clash; without a terminal and without `--yes` it refuses.
+**What gets added to the repo (commit all of it):**
 
-### Uninstall
+- `.shipline/`: `config.yml`, `workflows/*.yml`, `rules/<stage>.md`, `bin/*.mjs` (the hook and stage scripts,
+  dependency-free) and `bin/VERSION`.
+- `.claude/agents/` and `.claude/skills/shipline-setup`, `.claude/skills/shipline-workflow`.
+- Hook entries and allow rules merged into `.claude/settings.json`.
+- A `<!-- shipline:start -->` block in `CLAUDE.md`.
+
+**What stays out of the repo.** Task data (each task's `manifest.json` and artifacts, session state and UI
+data) lives in `~/.shipline/projects/<repo path>/`, the way Claude Code keeps its chats. It is personal, not
+shared through git. A new session resumes your unfinished tasks from there.
+
+The old `/shipline:init` Claude Code plugin is gone; `npx @forgeyard/shipline init` replaces it.
+
+## 4. Daily use
+
+Open Claude Code in the repo and describe the work. Claude follows the `shipline-workflow` skill:
+
+1. **Picks a workflow.** For a typo, rename, config tweak or one-file fix it says "Using the Small change
+   workflow" and starts. For anything else it asks once ("This looks like a feature, so I'll follow the
+   Feature workflow. OK?"). Quick questions don't start a workflow.
+2. **Works stage by stage.** Default stages:
+
+   | Workflow | Stages |
+   | --- | --- |
+   | Feature | Jira ticket (optional), Feasibility, Open questions, Plan, Wireframes (UI work only), Implement, Verify, Commit and PR |
+   | Bugfix | Jira ticket (optional), Reproduce, Root cause, Fix, Verify, Commit and PR |
+   | Hotfix | Jira ticket (optional), Fix, Verify, Commit and PR |
+   | Small change | Jira ticket (optional), Implement, Verify, Commit and PR |
+
+3. **Asks you at the gates.** Stages with `confirm_to_advance: true` need your OK before Claude moves on.
+
+**Enforcement.** Each stage sets `enforcement`:
+
+- `guide`: advice only; nothing is stopped.
+- `warn`: Claude gets a reminder when it does something the stage holds back.
+- `block`: the tool call is denied until the stage that holds it back is done. By default, editing source is
+  blocked until Plan is done, and `git commit` / `gh pr create` until Verify is done.
+
+A broken config fails open with a visible warning instead of locking you out. Hooks run inside Claude; they
+are not a server-side gate.
+
+**`stage.mjs`.** Claude records progress with it; you can run it too from the repo root:
 
 ```bash
+node .shipline/bin/stage.mjs workflows                 # list workflows
+node .shipline/bin/stage.mjs start --workflow feature --title "Add export" [--ticket PROJ-12]
+node .shipline/bin/stage.mjs status                    # where am I
+node .shipline/bin/stage.mjs advance [--confirmed]     # finish the stage (--confirmed only after you agreed)
+node .shipline/bin/stage.mjs skip --reason "no Jira"   # optional stages
+node .shipline/bin/stage.mjs reopen <stage>            # go back
+node .shipline/bin/stage.mjs resume <task folder>      # pick up an unfinished task
+```
+
+## 5. The browser UI
+
+```bash
+npx @forgeyard/shipline ui [dir] [--port <n>] [--no-open]
+```
+
+It starts a server on `127.0.0.1` (a random port unless `--port`) for the repo you run it in and opens
+`http://127.0.0.1:<port>/?t=<token>`. Ctrl+C stops it. The token is swapped for a cookie on first load, and
+requests with a foreign `Host` or `Origin` are refused. The UI is optional: the hooks enforce the workflow
+with or without it. It runs your own installed `claude` and never sees your Claude credentials.
+
+- **Chat:** talk to Claude in the repo. Permission and question prompts appear in the page. A chat can always
+  be continued in a terminal with `claude --resume <id>`.
+- **Setup:** forms for `config.yml`, each workflow and each rules file. Saving shows a diff first, keeps the
+  fields it doesn't know, and lists open tasks that still use an old stage list. Commit the files after saving.
+
+  ![Setup: workflows](docs/images/setup.png)
+
+  The **Agents & skills** tab chooses which Shipline agents and repo skills are installed.
+
+  ![Setup: Agents & skills](docs/images/agents-skills.png)
+
+- **Tasks:** each unfinished task with its stages, its files and the working-tree changes, updated live. A
+  Diagnostics view shows versions and the tail of the UI log.
+
+A repo installed by an older Shipline shows a banner with what its hook scripts lack. A repo set up by a newer
+Shipline is read-only in the UI and shows the `npx @forgeyard/shipline@<version> ui` command to run.
+
+## 6. Configuration reference
+
+**`.shipline/config.yml`**
+
+```yaml
+branch_pattern: "{type}/{key}-{slug}"   # {key} = Jira key (dropped with no ticket), {slug} = task name, {type} = workflow id
+tracker: jira                           # Jira is read through the Atlassian MCP when connected
+commands:                               # the Verify stage runs only the commands you set
+  test: ""
+  lint: ""
+  build: ""
+skills: []                              # your own .claude/skills/<name> that Claude may use at any stage
+```
+
+**Workflow files** (`.shipline/workflows/<id>.yml`): `id`, `name`, `description` and a list of `stages`. Stage fields:
+
+| Field | Meaning |
+| --- | --- |
+| `id`, `name` | The stage's id (also the rules file name) and label |
+| `artifact` | File in the task folder that must exist to finish the stage |
+| `optional` | The stage may be skipped |
+| `condition: ui_only` | Runs only when the task is flagged as UI work |
+| `agent` | Suggested subagent |
+| `confirm_to_advance` | Ask the developer before moving on |
+| `enforcement` | `guide`, `warn` or `block` |
+| `blocks` | What is held back until this stage is done: `{ tools: 'Edit\|Write', allow_paths: [globs] }` or `{ bash: 'regex' }` |
+
+**Rules files** (`.shipline/rules/<stage>.md`): plain Markdown that Claude reads before each stage.
+
+**`.shipline/bin/VERSION`**: JSON recording the package version, the interface version, a hash of each
+Shipline-owned file (so `upgrade` knows what you edited) and `excluded` (agents you kept as your own).
+
+**`SHIPLINE_HOME`**: where task data lives. Default `~/.shipline`. With a custom value Claude asks permission
+for artifact writes, because the allow rules cover `~/.shipline/**`.
+
+The config files are YAML read by a small built-in parser (a constrained subset) so hooks have no dependencies.
+Line endings are kept: a CRLF file stays CRLF when Shipline saves it.
+
+## 7. Upgrade and uninstall
+
+```bash
+npx @forgeyard/shipline upgrade [dir] [--yes] [--dry-run] [--force]
 npx @forgeyard/shipline uninstall [dir] [--yes] [--dry-run] [--purge]
 ```
 
-It previews what it will remove, then asks. It removes `.shipline/`, the agents and skills Shipline installed
-(agents you kept as your own, recorded in `VERSION.excluded`, are left alone), the `CLAUDE.md` block, and
-Shipline's hook entries and `Read/Edit(~/.shipline/**)` allow rules in `.claude/settings.json`. It asks
-separately whether to delete this repo's task data in `~/.shipline/projects/<repo>/`; with `--yes` that data is
-kept unless you also pass `--purge`. It only deletes files from disk, never runs git: commit the removal
-yourself. It refuses while a Shipline UI chat holds the repo's lock (stop the UI first).
+**upgrade** shows a preview and asks before changing anything. `--dry-run` only previews, `--yes` skips the
+question, `--force` also replaces Shipline files your team edited (they are skipped otherwise). It moves tasks
+from an old in-repo folder into `~/.shipline` and never commits: review and commit the result.
 
-## Hard rules
+**uninstall** previews what it will remove, then asks. It removes `.shipline/`, the agents and skills Shipline
+installed (agents you kept as your own are left alone), the `CLAUDE.md` block, and Shipline's hook entries and
+allow rules in `.claude/settings.json`. It asks separately whether to delete this repo's task data in
+`~/.shipline/projects/<repo>/`; with `--yes` that data is kept unless you also pass `--purge`. It deletes
+files only and never runs git: commit the removal yourself. It refuses while a Shipline UI chat holds the
+repo (stop the UI first).
 
-- Shipline never collects, stores or relays Claude credentials or session tokens. No Agent SDK, no
-  `claude setup-token`, never `--bare`.
-- Shipline Local spawns the user's own installed, unmodified `claude` CLI.
-- Tool permission prompts go to the `approve_tool_use` MCP tool; decisions are made server-side by
-  role policy and the chat's CURRENT stage (read at call time) and logged to `ToolDecision`. A role limit
-  denies that one call with a reason ("Designers can't edit code"); no stage is ever blocked.
-- Sessions start only in repos registered to a Shipline project, in a per-chat git worktree that starts
-  detached; the named branch (`<JIRA-KEY>-<slug>` or `<KEY>-<slug>`) is created at the first file edit.
-- The PR is raised by Claude with the user's own git credentials and `gh`; there is no GitHub App fallback.
-- Hard enforcement is the GitHub App required check `shipline/gates`. GitHub repo permissions are
-  managed manually (Shipline only warns on a mismatch).
-- Jira is optional and read-only (read scopes; no write endpoints).
+## 8. Troubleshooting
 
-## Layout
+- **A hook warning appears at session start or on a tool call.** Read it: it names the problem (a config
+  that doesn't parse, a missing stage). A malformed config fails open, so work isn't blocked; fix the file
+  shown, or run `npx @forgeyard/shipline ui` and use Setup.
+- **A tool call was denied.** A `block` stage isn't done yet. Finish that stage or tell the developer; don't
+  work around it.
+- **"Shipline is already initialized".** `init` found `.shipline/`, the `CLAUDE.md` block or the hooks. To
+  change agents and skills use the UI (Setup, Agents & skills); to update use `upgrade`; to start over use
+  `uninstall`, then `init`.
+- **"Repo newer".** The repo was set up by a newer Shipline than the one you ran. Run the newer version, for
+  example `npx @forgeyard/shipline@<version> ui`, or `upgrade` with the latest.
+- **A task seems lost.** Tasks are stored per repo path under `~/.shipline/projects/`. If you moved or renamed
+  the repo folder, the store key changed and the old folder is still on disk; move it to the new key or work
+  from the old path. Also check you are on the same machine and `SHIPLINE_HOME` is unchanged.
+- **Windows.**
+  - Install [Git for Windows](https://git-scm.com/download/win); Claude Code itself requires it.
+  - The hook command is `node "$CLAUDE_PROJECT_DIR/.shipline/bin/<x>.mjs"`, which relies on Claude Code
+    running hooks through Git Bash. That is untested here; if hooks show an error, please report it.
+  - `shipline ui` opens your browser with `start`, and stops a chat with `taskkill`. Stopping can take a few
+    seconds.
+  - Task data is in `%USERPROFILE%\.shipline`. A repo at `C:\Users\you\repo` is stored as `C--Users-you-repo`.
+  - Existing CRLF files keep CRLF when Shipline saves them; new files use LF.
+
+## 9. Contributing
+
+The repo holds only the CLI product:
 
 ```
-apps/api        Express + Prisma + Postgres: REST, OAuth server, MCP server (/mcp), Jira, GitHub App, Google SSO
-apps/web        React + Vite + TanStack Query + Tailwind v4 + shadcn/ui: the hub, including the work view
-apps/local      Shipline Local: local Node service (spawns claude, browser API on 127.0.0.1:4777), Electron tray helper, `npx shipline`
-packages/plugin Claude Code plugin: agents, skill, hooks, .mcp.json, version manifest
-packages/shared Types and pure logic: stages, roles, policy, stream-json event model, versions
+packages/cli   the npm package: bin, src (init, upgrade, uninstall, UI server), templates (what init installs), tests
+packages/ui    the React app behind `shipline ui` (built into packages/cli/ui-dist)
+docs/          plans and images
+.github/       CI and the publish workflow
 ```
-
-## Prerequisites
-
-Node 20+ (22 recommended), pnpm 10, Postgres 14+, and for Shipline Local the Claude Code CLI
-(`claude`) signed in with your own account.
-
-## Setup
-
-1. Install and build shared types:
-   ```bash
-   pnpm install
-   pnpm build:shared
-   ```
-2. Database:
-   ```bash
-   createdb shipline
-   cp apps/api/.env.example apps/api/.env      # fill in the values (see below)
-   pnpm --filter @shipline/api exec prisma migrate reset   # continuous-flow revision: data reset, replays both migrations
-   pnpm db:seed                                # seeds the Feature and Hotfix workflow templates
-   ```
-3. Credentials (all in `apps/api/.env`, never committed):
-   - `JWT_SECRET`, `ENCRYPTION_KEY`: `openssl rand -hex 32` each.
-   - **Google SSO**: Google Cloud console > OAuth client (web). Redirect URI
-     `{BACKEND_URL}/api/auth/google/callback`. Set `ADMIN_EMAILS` to your email to become admin.
-   - **GitHub account link**: a GitHub OAuth App, callback `{BACKEND_URL}/api/auth/github/callback`
-     (`GITHUB_CLIENT_ID/SECRET`).
-   - **GitHub App** (the `shipline/gates` check): permissions Checks (read/write), Contents
-     (read/write, only if you use commit-artifacts-to-repo), Pull requests (read), Metadata (read);
-     subscribe to the Pull request, Pull request review and Pull request review comment events;
-     webhook URL `{BACKEND_URL}/api/webhook/github`; set
-     `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`; install it on the repo.
-     Then in GitHub branch protection require the status check `shipline/gates`.
-   - **Jira**: Atlassian OAuth 2.0 (3LO) app, scopes `read:jira-work read:me offline_access`,
-     callback `{BACKEND_URL}/api/jira/callback` (`JIRA_CLIENT_ID/SECRET`). Claude searches and links
-     tickets through it (`search_jira_issues`, `get_jira_issue`, `link_jira_issue`); there is no sync.
-   - **MCP OAuth**: no extra secret; the API is its own OAuth authorization server (PKCE, dynamic
-     client registration). Discovery: `{BACKEND_URL}/.well-known/oauth-authorization-server`.
-4. Web: `cp apps/web/.env.example apps/web/.env` (defaults work for local dev). Optional
-   `VITE_LOCAL_URL` (default `http://127.0.0.1:4777`) is where the browser reaches Shipline Local.
-5. Run: `pnpm dev` (API on :3000, web on :5173). Sign in with Google, open **Admin**, create a project
-   (GitHub repo `owner/name`, Jira key, chat key prefix such as `LL`), connect Jira there, and add members
-   and roles in the project settings. Home is the new-chat screen: pick a project, describe the work.
-   Re-run `pnpm db:seed` after registering Learnloop so its key prefix is `LL`.
-
-## Shipline Local
-
-The work view talks to Shipline Local straight from the browser. It binds to `127.0.0.1` only, allows
-CORS for the hub origin only (`SHIPLINE_CLIENT_URL`, default `http://localhost:5173`) and needs a pairing
-token on every request and WebSocket.
 
 ```bash
-pnpm --filter @shipline/local build       # compiles the service and bundles the plugin
-node apps/local/dist/server/cli.js   # headless
-pnpm desktop                         # builds shared + local, then starts the Electron tray helper
-pnpm dev:local                       # dev: the service on :4777 with file watching
+pnpm install            # the only native build is esbuild
+pnpm build:ui           # builds packages/ui into packages/cli/ui-dist
+pnpm test               # all CLI tests (Node 20)
+pnpm --filter ./packages/cli test:hooks   # the hook and init tests, which must pass on Node 18
 ```
 
-Set `SHIPLINE_API_URL` (default `http://localhost:3000`) and `SHIPLINE_CLIENT_URL`. First run: the tray
-(or the `pnpm dev:local` terminal) shows a one-time **pairing code**; open the hub, enter the code in the
-pairing dialog, sign the service in to Shipline (banner button), and set each project's working-copy
-folder under **Settings > Shipline Local**. Then start a chat: Shipline creates a git worktree at
-`<working-copy>.shipline/<KEY>`, detached at the base branch, and starts one Claude conversation for the
-whole chat in it (resumed with `--resume` after restarts). The hub signals the first allowed edit
-inside `approve_tool_use`; Shipline Local then runs `git switch -c <name>` before the call runs. Install and sign in to
-Claude Code (`claude`) and the GitHub CLI (`gh auth login`) yourself.
+After changing anything under `packages/cli/templates/`, run `node packages/cli/scripts/hash-templates.mjs` to
+record the new template hashes.
 
-The Electron app is a tray helper only (status, pairing code, open hub, start at login); its signed
-build is `pnpm --filter @shipline/local desktop:dist` with the standard electron-builder environment variables
-(`CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, ...). None are stored in the repo.
+**CI** (`.github/workflows/cli.yml`) runs the hook tests on Node 18 and the full suite plus the UI typecheck and
+bundle-size check on Node 20, on Ubuntu, macOS and Windows.
 
-## Plugin and connector
+**Releasing.** Bump the version in `packages/cli/package.json`, run the hash script, commit, then push a tag
+`v<version>` (for example `v0.7.0`). `.github/workflows/publish.yml` checks that the tag matches the package
+version and publishes `@forgeyard/shipline` to npm. It needs the `NPM_TOKEN` secret: a granular npm token with
+publish rights on the `@forgeyard` scope.
 
-- Bundled with Shipline Local (versioned with the app; `packages/plugin/.claude-plugin/plugin.json`).
-  The MCP tools are `get_my_work`, `get_ticket_context`, `submit_artifact`, `propose_stage_transition`,
-  `search_jira_issues`, `get_jira_issue`, `link_jira_issue` (and `approve_tool_use` for permission prompts).
-- Private marketplace: `.claude-plugin/marketplace.json` at the repo root. Force-install it for your
-  org with managed settings (`extraKnownMarketplaces` + `enabledPlugins`).
-- Plain Claude Code / Desktop: add the connector `{BACKEND_URL}/mcp` (OAuth sign-in on first use).
-
-## Open questions (plan section) and how v1 handles them
-
-Search the code for `OPEN-QUESTION #` to find each decision point. Numbers 1-11 follow the plan;
-`#12` marks judgment calls made in the continuous-flow revision (stage roles, base branch, merge ending
-the chat); unnumbered `OPEN-QUESTION` comments mark the chat-first (b) revision's calls.
-
-## CLI: `npx @forgeyard/shipline init` (v2 direction)
-
-Plan: `docs/plans/shipline-v2-repo-init.md`. The `packages/cli` package installs Shipline into any repo so
-that everyone using Claude Code there follows the same workflow, with nothing to install on clone.
-
-```bash
-npx @forgeyard/shipline init          # in the target repo (add --dry-run to preview)
-# then, in Claude Code:  /shipline-setup
-```
-
-`init` vendors, and you commit to the repo: `.shipline/` (config.yml, workflows feature/bugfix/hotfix/small,
-`rules/<stage>.md`, dependency-free `bin/*.mjs` hook and stage scripts), `.claude/agents`,
-`.claude/skills/shipline-setup` and `shipline-workflow`, hooks merged into `.claude/settings.json`
-(SessionStart, UserPromptSubmit, PreToolUse) and a `<!-- shipline:start -->` block in `CLAUDE.md`.
-It never overwrites your files: any name collision other than an agent name aborts with nothing written (agent name clashes are
-resolved per agent), and re-running it reports "already initialized". Needs Node 18+ on teammates' machines.
-
-- Workflow config is YAML, read by a tiny built-in parser (a constrained subset), so hooks have no deps.
-- Per stage: `enforcement` (`guide` | `warn` | `block`) and `confirm_to_advance`. By default source edits
-  are blocked until plan is done and `git commit` / `gh pr create` until verify is done. Malformed config
-  fails open with a visible warning.
-- State: tasks (`manifest.json` plus artifacts), session state and UI data are stored outside the repo, in
-  `$SHIPLINE_HOME/projects/<repo path, non-alphanumerics as "-">/` (`SHIPLINE_HOME` defaults to `~/.shipline`),
-  the same way Claude Code keeps its chats. They are personal, not shared through git; a new session resumes
-  unfinished tasks from the manifests there. `init` adds `Read(~/.shipline/**)` and `Edit(~/.shipline/**)` allow
-  rules so Claude can write artifacts without prompts; with a custom `SHIPLINE_HOME` Claude asks for permission
-  instead. If you move or rename the repo folder the store key changes and its tasks appear to be gone (the old
-  store folder stays on disk).
-- Claude records progress with `node .shipline/bin/stage.mjs start|advance|skip|reopen|status|resume`.
-- `packages/plugin` is now only a wrapper exposing `/shipline:init`. The hub (`apps/*`) is untouched and
-  is removed in a later phase.
-
-### `npx @forgeyard/shipline ui` (optional)
-
-```bash
-npx @forgeyard/shipline ui [dir] [--port <n>] [--no-open]   # Node 20+ for this command; init and the hooks stay on Node 18
-```
-
-Starts a local web server on `127.0.0.1` (random port unless `--port`) for the checkout it is run in, and
-opens `http://127.0.0.1:<port>/?t=<token>` in your browser; Ctrl+C stops it. The token is swapped for a
-cookie on first load, and requests with a foreign `Host` or `Origin` are refused. It is optional: the hooks
-enforce the workflow with or without it. Phase 1 has two screens:
-
-- **Setup:** a form for `config.yml`, `workflows/*.yml` and `rules/<stage>.md`. Saving shows a diff first,
-  keeps fields it doesn't know, keeps the comments of the shipped templates (other comments are listed as
-  removed before you confirm) and lists open tasks that keep the old stage list. Commit the files after
-  saving. `/shipline-setup` and the UI can be used in either order.
-- **Tasks:** each unfinished task with its stages, task-folder files and the working-tree changes, updated
-  live as files change. A Diagnostics view shows versions, watch mode and the tail of
-  `<store>/ui/ui.log`.
-
-Banners: a repo initialized by an older Shipline (`.shipline/bin/VERSION` missing or lower interface) shows
-an information banner listing what its hook scripts lack. A repo set up by a newer Shipline makes saving
-read-only and shows the `npx @forgeyard/shipline@<version> ui` command to run. If something breaks, nothing is lost:
-the repo files are plain files, and a Claude session can always be continued in a terminal with
-`claude --resume <id>`.
+Older design documents live in `docs/plans/`; those describing the v1 hub are marked historical.

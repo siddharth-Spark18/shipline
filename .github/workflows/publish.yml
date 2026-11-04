@@ -14,7 +14,7 @@ jobs:
       contents: read
       id-token: write # npm provenance
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Tag must match the package version
         run: |
@@ -36,11 +36,12 @@ jobs:
             }
           "
 
-      - uses: pnpm/action-setup@v4 # version from package.json "packageManager"
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6 # version from package.json "packageManager"
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
-          cache: pnpm
+          # No dependency cache in the release job: a poisoned cache must never reach what gets published.
+          package-manager-cache: false
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter ./packages/cli test

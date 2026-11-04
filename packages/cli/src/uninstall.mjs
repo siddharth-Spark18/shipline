@@ -8,7 +8,7 @@ import {
   CLAUDE_MD_KEY, SETTINGS_KEY, VERSION_FILE, ownedTemplateFiles, removeClaudeMdBlock, removeShiplineFromSettings,
 } from './hashes.mjs';
 import { parseSettings } from './init.mjs';
-import { encodePath, shiplineHome } from './store.mjs';
+import { encodePath, isInside, shiplineHome } from './store.mjs';
 import { pidAlive, readLock } from './ui/sessions.mjs';
 
 const readText = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : null);
@@ -218,7 +218,7 @@ export async function runUninstall({ target, yes = false, dryRun = false, purge 
     for (const f of files) rmSync(path.join(root, f), { force: true });
     for (const f of files) {
       let d = path.dirname(path.join(root, f));
-      while (d !== root && d.startsWith(root + path.sep)) {
+      while (d !== root && isInside(root, d)) {
         try {
           rmdirSync(d); // only succeeds when empty
         } catch {

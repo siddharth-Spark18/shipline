@@ -1,5 +1,5 @@
 // Request checks for the local UI server: Host, cookie and Origin. Node 20+, no dependencies.
-// The Host check follows apps/local/src/server/http.ts; safeEqual follows pairing.ts.
+// The Host check follows the v1 hub (removed); safeEqual too.
 import crypto from 'node:crypto';
 import { HttpError } from './http.mjs';
 

@@ -1,4 +1,4 @@
-// Version comparison for the minimum `claude` check. Copied from packages/shared/src/versions.ts.
+// Version comparison for the minimum `claude` check. Ported from the v1 hub (removed).
 // Node 20+, no dependencies.
 
 // Extracts the first `x.y.z` from a string (e.g. "2.1.3 (Claude Code)"); null if none.

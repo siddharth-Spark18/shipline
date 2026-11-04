@@ -173,7 +173,7 @@ describe('GET /api/file', () => {
   test('reads a task artifact by its absolute store path', async () => {
     const r = await file(`${TASK}/ticket.md`);
     assert.equal(r.status, 200, r.text);
-    assert.deepEqual(r.json, { path: `${TASK}/ticket.md`, content: '# LL-12\n' });
+    assert.deepEqual(r.json, { path: path.join(TASK, 'ticket.md'), content: '# LL-12\n' });
   });
 
   test('a missing file inside the store tasks/ folder is 404', async () => {
@@ -197,7 +197,7 @@ describe('GET /api/file', () => {
     assert.ok(lines.some((l) => l.type === 'add' && l.text === 'export const a = 2;'));
   });
 
-  test('diffs an untracked file against /dev/null', async () => {
+  test('diffs an untracked file against the null device (/dev/null, which git accepts on every platform)', async () => {
     write('src/new.js', 'one\ntwo\n');
     const r = await file('src/new.js', 'diff');
     assert.equal(r.status, 200, r.text);

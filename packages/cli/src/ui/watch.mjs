@@ -1,4 +1,4 @@
-// File watching for the Tasks panel. Copied from apps/local/src/server/watcher.ts (watchWorktree),
+// File watching for the Tasks panel. Ported from the v1 hub (removed) (watchWorktree),
 // changed to report errors and to fall back to polling. Node 20+, no dependencies.
 import { existsSync, mkdirSync, readdirSync, statSync, watch } from 'node:fs';
 import path from 'node:path';

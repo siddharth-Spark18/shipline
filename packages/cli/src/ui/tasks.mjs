@@ -1,7 +1,9 @@
 // The Tasks panel's data: open tasks, working-tree changes and file access. Node 20+, no dependencies.
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+// git's own name for "no file" in --no-index mode; it works on every platform (see git.mjs).
+const GIT_NULL = '/dev/null';
 import path from 'node:path';
-import { tasksDir } from '../store.mjs';
+import { isInside, tasksDir } from '../store.mjs';
 import { HttpError } from './http.mjs';
 import { fileDiff, gitOk, gitRun, looksBinary } from './git.mjs';
 
@@ -126,7 +128,7 @@ async function untrackedCounts(root, file) {
   try {
     const { stdout } = await gitRun(
       root,
-      ['diff', '--numstat', '--no-index', '--', '/dev/null', file],
+      ['diff', '--numstat', '--no-index', '--', GIT_NULL, file],
       [0, 1],
     );
     const m = /^(-|\d+)\t(-|\d+)\t/.exec(stdout);
@@ -239,7 +241,7 @@ export async function collectTasks(app) {
   return { tasks, changes };
 }
 
-// ---------- file access (copied from apps/local/src/server/assets.ts) ----------
+// ---------- file access (ported from the v1 hub (removed)) ----------
 
 export class AssetError extends Error {
   constructor(status, message) {
@@ -326,7 +328,7 @@ async function resolveRequested(app, requested) {
   const abs = path.resolve(root, rel);
   // Only reachable for an interface-2 repo: its tasks are still in the repo, read-only.
   const inTask = app.repo.needsUpgrade
-    ? readOpenTasks(root, cfg, true).some((t) => abs.startsWith(t.dir + path.sep))
+    ? readOpenTasks(root, cfg, true).some((t) => isInside(t.dir, abs))
     : false;
   if (!change && !inTask) throw notFound();
 

@@ -3,10 +3,10 @@
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { FIXTURES, removeDir, storeOf, tmpDir } from '../helpers.mjs';
+import { FAKE_CLAUDE_MJS, FIXTURES, IS_WIN, fakeClaudeBin, removeDir, storeOf, tasklist, tmpDir } from '../helpers.mjs';
 import { api, sleep } from './helpers.mjs';
 
-export const FAKE_CLAUDE = path.join(FIXTURES, 'fake-claude.mjs');
+export const FAKE_CLAUDE = FAKE_CLAUDE_MJS;
 export const SESSIONS_FIXTURES = path.join(FIXTURES, 'sessions');
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -16,14 +16,14 @@ export const FORBIDDEN = ['--bare', '--settings', '--plugin-dir', '--allowedTool
 // Sets up this test process's environment for the fake claude. The UI server runs in this process and spawns
 // claude with process.env, so everything the fake reads goes here. Returns a scratch dir and cleanup.
 export function useFakeClaude() {
-  chmodSync(FAKE_CLAUDE, 0o755);
+  if (!IS_WIN) chmodSync(FAKE_CLAUDE, 0o755);
   for (const k of ['CLAUDE_PROJECT_DIR', 'SHIPLINE_SESSION', 'CLAUDE_ENV_FILE', 'SHIPLINE_UI_DEV_ORIGIN', 'MCP_TOOL_TIMEOUT'])
     delete process.env[k];
   const scratch = tmpDir('shipline-chat-');
   const claudeConfig = path.join(scratch, 'claude-config');
   mkdirSync(path.join(claudeConfig, 'projects'), { recursive: true });
   process.env.CLAUDE_CONFIG_DIR = claudeConfig; // transcript.mjs must never read the real ~/.claude
-  process.env.SHIPLINE_CLAUDE_BIN = FAKE_CLAUDE;
+  process.env.SHIPLINE_CLAUDE_BIN = fakeClaudeBin(); // fake-claude.mjs, or its .cmd shim on Windows
   process.env.FAKE_CLAUDE_RELEASE = path.join(scratch, 'release');
   process.env.FAKE_CLAUDE_RELAY_OUT = path.join(scratch, 'relay.jsonl');
   let n = 0;
@@ -64,6 +64,16 @@ export function useFakeClaude() {
         for (const rec of fake.records(path.join(scratch, name))) {
           for (const pid of [rec.pid, rec.child]) {
             if (!pid || !pidAlive(pid)) continue;
+            if (IS_WIN) {
+              // No command lines in tasklist: only a node process with that pid is killed (with its tree).
+              if (tasklist().get(pid) !== 'node.exe') continue;
+              try {
+                execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+              } catch {
+                // Already gone.
+              }
+              continue;
+            }
             let cmd = '';
             try {
               cmd = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' });
@@ -141,7 +151,9 @@ export function pidAlive(pid) {
 }
 
 // Every live process whose process group is pgid (ps works the same on macOS and Linux with these flags).
+// POSIX only: Windows has no process groups (its tree checks use livePids/tasklist from ../helpers.mjs).
 export function groupPids(pgid) {
+  if (IS_WIN) throw new Error('groupPids is POSIX-only; use livePids (tasklist) on Windows');
   const out = execFileSync('ps', ['-A', '-o', 'pid=,pgid=,stat='], { encoding: 'utf8' });
   return out
     .split('\n')

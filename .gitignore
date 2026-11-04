@@ -4,8 +4,7 @@ dist
 .env.*
 !.env.example
 *.pem
-.turbo
-apps/local/plugin
-apps/local/release
 *.log
 packages/cli/ui-dist
+# Written by the CLI tests on Windows (a .cmd shim for the fake claude)
+packages/cli/test/fixtures/fake-claude.cmd

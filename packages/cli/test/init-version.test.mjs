@@ -81,7 +81,7 @@ describe('init writes VERSION', () => {
     assert.equal(meta.root, dir);
   });
 
-  test('an unwritable SHIPLINE_HOME stops init with "can\'t write its task store" and nothing is installed', { skip: process.platform === 'win32' ? 'POSIX paths' : false }, () => {
+  test('an unwritable SHIPLINE_HOME stops init with "can\'t write its task store" and nothing is installed', { skip: process.platform === 'win32' && 'blocks the store with a file in the path (POSIX ENOTDIR); no Windows test covers an unwritable store yet' }, () => {
     const dir = fresh();
     const blocker = path.join(homeFor(dir), 'file');
     writeFileSync(blocker, 'x');
@@ -141,7 +141,7 @@ describe('init writes VERSION', () => {
 
 describe('init write failures', () => {
   const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
-  test('if an earlier write fails, VERSION is never written and init rolls back', { skip: isRoot || process.platform === 'win32' ? 'needs a non-root POSIX user' : false }, () => {
+  test('if an earlier write fails, VERSION is never written and init rolls back', { skip: isRoot ? 'needs a non-root user' : process.platform === 'win32' && 'chmod 0o555 cannot make a folder read-only on Windows; no Windows test covers the rollback (its logic is platform-neutral)' }, () => {
     const dir = fresh();
     const agents = path.join(dir, '.claude', 'agents');
     mkdirSync(agents, { recursive: true });

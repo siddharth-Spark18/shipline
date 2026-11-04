@@ -13,8 +13,8 @@
     "ui-dist"
   ],
   "scripts": {
-    "test": "node --test test/*.test.mjs test/ui/*.test.mjs",
-    "test:hooks": "node --test test/*.test.mjs",
+    "test": "node scripts/run-tests.mjs",
+    "test:hooks": "node scripts/run-tests.mjs hooks",
     "prepack": "node scripts/build-ui.mjs",
     "check:ui": "node scripts/check-ui.mjs"
   },

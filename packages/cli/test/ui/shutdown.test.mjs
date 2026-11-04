@@ -88,7 +88,7 @@ function assertAllGone({ id, pid, grandchild }) {
 }
 
 describe('shipline ui as a process', () => {
-  test('SIGINT stops claude\'s whole process group and removes lock.json', async () => {
+  test('SIGINT stops claude\'s whole process group and removes lock.json', { skip: process.platform === 'win32' && 'Node cannot send SIGINT/SIGTERM to a child on Windows (child.kill terminates it outright, no handler runs) and there are no process groups; the Windows tree stop is covered by windows.test.mjs "Stop leaves no fake-claude or child process in tasklist"' }, async () => {
     const server = await startUiProcess('hang');
     const chat = await startHangingChat(server);
     server.child.kill('SIGINT');
@@ -98,7 +98,7 @@ describe('shipline ui as a process', () => {
     assertAllGone(chat);
   });
 
-  test('SIGINT with a claude that ignores SIGTERM: SIGKILL follows and nothing is left', async () => {
+  test('SIGINT with a claude that ignores SIGTERM: SIGKILL follows and nothing is left', { skip: process.platform === 'win32' && 'Node cannot send SIGINT/SIGTERM to a child on Windows (child.kill terminates it outright, no handler runs) and there are no process groups; the Windows tree stop is covered by windows.test.mjs "Stop leaves no fake-claude or child process in tasklist"' }, async () => {
     const server = await startUiProcess('hang-ignore-sigterm');
     const chat = await startHangingChat(server);
     const t0 = Date.now();
@@ -110,7 +110,7 @@ describe('shipline ui as a process', () => {
     assertAllGone(chat);
   });
 
-  test('SIGTERM does the same', async () => {
+  test('SIGTERM does the same', { skip: process.platform === 'win32' && 'Node cannot send SIGINT/SIGTERM to a child on Windows (child.kill terminates it outright, no handler runs) and there are no process groups; the Windows tree stop is covered by windows.test.mjs "Stop leaves no fake-claude or child process in tasklist"' }, async () => {
     const server = await startUiProcess('hang');
     const chat = await startHangingChat(server);
     server.child.kill('SIGTERM');
@@ -122,7 +122,7 @@ describe('shipline ui as a process', () => {
 });
 
 describe('in-process close()', () => {
-  test('close() stops the process group and releases the lock', async () => {
+  test('close() stops the process group and releases the lock', { skip: process.platform === 'win32' && 'checks the POSIX process group with ps; covered by windows.test.mjs "close() stops the chat\'s process tree and releases the lock"' }, async () => {
     const ui = await startUi(dir);
     const ev = await openEvents(ui);
     fake.script('hang');

@@ -16,6 +16,7 @@ import { emitConfig, emitWorkflow } from '../yaml-emit.mjs';
 import { configLayout, headerFor, validateConfig, validateWorkflow } from '../setup-schema.mjs';
 import { shippedAgents } from '../init.mjs';
 import { TEMPLATES, VERSION_FILE } from '../hashes.mjs';
+import { detectEol, toEol } from '../store.mjs';
 import { HttpError } from './http.mjs';
 import { textDiff } from './git.mjs';
 import { log } from './log.mjs';
@@ -212,7 +213,8 @@ function prepare(app, entry, override = {}) {
 
   if (entry.kind === 'rules') {
     if (typeof entry.text !== 'string') throw badRequest('rules entries need "text"');
-    out.text = entry.text;
+    // The browser sends \n; an existing file keeps its own line ending, a new one gets \n.
+    out.text = toEol(entry.text, current !== null ? detectEol(current) : '\n');
     out.removedComments = [];
     return out;
   }

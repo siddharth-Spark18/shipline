@@ -7,7 +7,7 @@ import {
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline/promises';
-import { parseYaml } from '../templates/shipline/bin/lib.mjs';
+import { detectEol, parseYaml, toEol } from '../templates/shipline/bin/lib.mjs';
 import {
   CLAUDE_MD_KEY, END, PACKAGE_VERSION, SETTINGS_KEY, START, VERSION_FILE,
   canonicalSettingsPart, claudeMdBlock, claudeMdSection, ownedTemplateFiles, sha256, templateSettings,
@@ -204,7 +204,7 @@ function planShared(root, version, force) {
   const newBlockHash = sha256(claudeMdBlock(section));
   const curBlock = mdText === null ? null : claudeMdBlock(mdText);
   if (curBlock === null) {
-    const text = mdText === null ? section : mdText.replace(/\s*$/, '\n\n') + section;
+    const text = mdText === null ? section : toEol(mdText.replace(/\s*$/, '\n\n') + section, detectEol(mdText));
     shared.claude = { action: 'add', text };
     shared.hashes[CLAUDE_MD_KEY] = newBlockHash;
   } else if (sha256(curBlock) === newBlockHash) {
@@ -213,7 +213,10 @@ function planShared(root, version, force) {
   } else if (isUnedited(sha256(curBlock), CLAUDE_MD_KEY, record) || force) {
     const a = mdText.indexOf(START);
     const b = mdText.indexOf(END, a + START.length) + END.length;
-    shared.claude = { action: 'replace', text: mdText.slice(0, a) + section.trimEnd() + mdText.slice(b) };
+    shared.claude = {
+      action: 'replace',
+      text: toEol(mdText.slice(0, a) + section.trimEnd() + mdText.slice(b), detectEol(mdText)),
+    };
     shared.hashes[CLAUDE_MD_KEY] = newBlockHash;
   } else {
     shared.claude = { action: 'skip', diff: lineDiff(curBlock, claudeMdBlock(section)) };

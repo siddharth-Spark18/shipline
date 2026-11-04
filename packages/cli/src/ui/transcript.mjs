@@ -1,5 +1,5 @@
 // Reads Claude's own session file so a reopened chat shows its history, terminal turns included.
-// Copied from apps/local/src/server/transcript.ts. Node 20+, no dependencies.
+// Ported from the v1 hub (removed). Node 20+, no dependencies.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { MCP_TOOL_TIMEOUT_ENV, buildArgs, findClaude } from './claude.mjs';
+import { MCP_TOOL_TIMEOUT_ENV, buildArgs, findClaude, startSpec } from './claude.mjs';
 import { HttpError } from './http.mjs';
 import { stateDir } from '../store.mjs';
 import { log } from './log.mjs';
@@ -156,6 +156,20 @@ export function createChats(app) {
 
   function killGroup(chat, signal) {
     if (!chat.child || !chat.child.pid) return;
+    if (process.platform === 'win32') {
+      // No process groups on Windows: taskkill /T takes down the whole tree (the shell and the claude under it).
+      // The polite stop often needs /F for console-less processes, so a stop usually takes the full 5 s.
+      try {
+        const args = ['/PID', String(chat.child.pid), '/T'];
+        if (signal === 'SIGKILL') args.push('/F');
+        const tk = spawn('taskkill', args, { stdio: 'ignore', windowsHide: true });
+        tk.on('error', () => {});
+        tk.unref();
+      } catch {
+        // Already gone.
+      }
+      return;
+    }
     try {
       process.kill(-chat.child.pid, signal); // the child leads its own process group
     } catch {
@@ -243,7 +257,14 @@ export function createChats(app) {
       // UNVERIFIED (chat test Q2): SHIPLINE_SESSION in claude's environment reaches the Bash tool under -p.
       if (MCP_TOOL_TIMEOUT_ENV) env.MCP_TOOL_TIMEOUT = MCP_TOOL_TIMEOUT_ENV;
       log('spawn', { argv, claudeVersion, sessionId: id, resume });
-      child = spawn(bin, argv, { cwd: root, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      const spec = startSpec(bin, argv);
+      child = spawn(spec.command, spec.args, {
+        cwd: root,
+        env,
+        detached: process.platform !== 'win32', // POSIX: its own process group, stopped with kill(-pid)
+        stdio: ['pipe', 'pipe', 'pipe'],
+        ...spec.options,
+      });
     } catch (e) {
       app.prompts.removeMcpConfig(id);
       releaseLock(root, app.port);

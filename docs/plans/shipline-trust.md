@@ -30,7 +30,7 @@ Shipline's pitch is guardrails. Today the guard really does block source edits w
 
 **A. Recording answers (a new PostToolUse hook)**
 - **The hook:** `.shipline/bin/record-answer.mjs` runs on `PostToolUse` with matcher `AskUserQuestion`.
-  - It reads the hook input: `session_id`, `tool_input.questions` and the tool's response with the developer's answers.
+  - It reads the hook input: `session_id`, `tool_use_id`, `tool_input.questions`, and the developer's answers from `tool_response.answers`, falling back to `tool_input.answers`. Both are a map from question text to the chosen label, for example `{ "Advance past \"plan\" in task x?": "Advance" }`. This was confirmed on 2026-11-04 in a real `claude -p` run (`claude` 2.1.317).
   - For each question whose text **exactly** matches a confirmation question that `stage.mjs` has issued for this session, it appends a line to `approvals/<session>.jsonl` in the store:
 
     ```
@@ -50,10 +50,22 @@ Shipline's pitch is guardrails. Today the guard really does block source edits w
   - for skipping: question `Skip "<stage>" in task <slug>?`, options `Skip` and `Don't skip`.
 
 **B. `stage.mjs` changes**
+- **Matching sessions:**
+  - The recorder and `stage.mjs` both key approvals by `safeId(session_id)`: `approvals/<safeId>.jsonl`, the same rule as `statePath`.
+  - The hook gets `session_id` in its input. `stage.mjs` gets it from `$SHIPLINE_SESSION`, which the SessionStart hook writes from the same `session_id` and which the browser chat sets to the same UUID, or from `--session`.
+  - With no session, `advance` on a confirm stage and `skip` on a non-optional stage are refused: "no session id; confirmations need the session that asked the question".
+  - Accepted gap: Claude could pass `--session <other id>` and use another session's unused approval. That still needs a real "Advance" answer from the developer.
 - **`--confirmed` and `--force` are removed.** Passing either prints an error explaining the new flow.
 - **`advance` on a `confirm_to_advance` stage:**
   - **Without a valid approval:** it exits non-zero and prints the exact AskUserQuestion to ask, recording `pending_confirm`.
-  - **A valid approval:** one from `approvals/<session>.jsonl` with `kind: 'advance'`, the same `task_dir` and `stage`, `answer === 'Advance'`, and `at` later than the stage's `in_progress` time.
+  - **A valid approval:** one from `approvals/<session>.jsonl` with:
+    - `kind: 'advance'`, the same `task_dir` and `stage`, and `answer === 'Advance'`;
+    - question text exactly equal to `pending_confirm.question`;
+    - `at` later than `pending_confirm.issued_at`, so answers given before this question was issued never count;
+    - not yet used.
+  - **Re-running `advance`** while a `pending_confirm` for the same stage and kind exists keeps the original `issued_at` and prints the same question again, so an answer already given stays valid.
+  - **Clearing `pending_confirm`:** it's cleared when an approval is used, and whenever the current stage changes (advance, skip or `reopen`).
+  - **"Not yet" or "Don't skip"** is recorded, but never counts. `pending_confirm` stays, so Claude can ask again later.
   - **With one:** it uses it up (marks it used in the file), records `confirmed: { via: 'answer', at }` on the manifest stage, and advances.
 - **Missing artifacts:** `advance` on a stage with an `artifact` requires the file to exist. There's no override any more.
 - **`skip` on a non-optional stage:** the same flow with `kind: 'skip'` and the answer `Skip`. The manifest records `skipped: { via: 'answer', at, reason }`.
@@ -236,11 +248,12 @@ ci:
 
 ## Behavior & Edge Cases
 
-- **The developer answers "Not yet":** nothing is recorded as approved. `stage.mjs advance` keeps refusing, and Claude carries on with the stage.
+- **The developer answers "Not yet":** it's recorded, but never counts. `pending_confirm` stays, `stage.mjs advance` keeps refusing, and Claude carries on with the stage.
+- **An old answer after `reopen`:** any approval older than the new `pending_confirm.issued_at` is ignored, so an answer to an earlier, identical question can't be reused.
 - **The question is asked twice and answered twice:** each approval is used once. Extra ones stay unused.
 - **The question is asked in another session:** it doesn't count, because approvals are per session. Resuming the task in a new session issues a new question.
 - **A new session on an existing task with a pending confirmation:** `stage.mjs status` prints the question again.
-- **The hook doesn't receive the answer** (Open Question 1): `record-answer.mjs` records nothing, so confirmations can't pass in that surface. The browser chat's relay acts as the fallback recorder: the relay already sees the answers, and it writes the same approvals line.
+- **The hook gets no `answers` field** (not expected, after the 2026-11-04 check): `record-answer.mjs` records nothing and logs a visible `systemMessage` ("Shipline couldn't read your answer; the stage can't be confirmed in this session"). There is no separate relay recorder, because the hook covers the browser chat too.
 - **An upgrade happens mid-task:** stages already confirmed keep their status. The next `advance` uses the new rules.
 - **`ci-check` on a PR from a fork:** it reads only the event payload and repo files, with no secrets, so it works with the default token.
 - **A PR body that's edited after it opened:** the check re-runs on `edited`.
@@ -260,12 +273,16 @@ ci:
    - Claude asks the question, and you answer "Advance";
    - the advance succeeds, and the manifest shows `confirmed.via = 'answer'`;
    - asking Claude to edit `manifest.json` or run `record-answer.mjs` is blocked.
-2. **The same flow in plain `claude` in a terminal** (the PostToolUse hook).
+2. **The same flow in plain `claude` in a terminal** (the PostToolUse hook). This is the only surface where the `answers` field hasn't been confirmed yet.
 3. **CI:** a test PR with no block fails, the `shipline:skip` label makes it pass, and a PR with a valid `pr-summary` block passes. With `ci.missing_block: warn` in `config.yml`, a PR with no block passes with a warning.
 4. **Leftover processes:** in the browser chat, ask Claude to start a long-running process, then press Stop. The notice appears, and "Kill them" removes it.
 5. **Tests:** `npm test` and CI are green.
 
 ## Open Questions
 
-1. **Does a PostToolUse hook for `AskUserQuestion` receive the developer's selected answers** in its input, in the terminal, the IDE extensions and `-p`? This must be checked first. If it doesn't, the relay fallback covers only the browser chat, and terminal confirmation needs another design.
-2. **The exact field names** for the answers in the hook input. Record them in this plan once checked.
+- **Resolved on 2026-11-04 (was Open Questions 1 and 2):** a PostToolUse hook on `AskUserQuestion` receives the developer's answers in `claude -p` with the permission relay (the browser chat). The answers are in `tool_response.answers` (and `tool_input.answers`), a map from question text to the label, along with `session_id` and `tool_use_id`. Evidence: a real run with `claude` 2.1.317, captured hook input.
+- **Still to confirm by hand:** the same `answers` field in an interactive terminal session (Verification 2).
+- **Accepted from the plan re-review (optional, not blocking):**
+  - **The allow rule:** the `Edit(~/.shipline/**)` allow rule stays, because artifacts need it. The guard's PreToolUse deny on `state/`, `approvals/` and manifests runs before permissions and wins over it.
+  - **CI config from the PR:** the CI gate reads `config.yml` and the workflows from the PR's own checkout, so a PR can relax its own gate. This is accepted; teams can protect `.shipline/` with CODEOWNERS or branch rules.
+  - **Other notes:** uninstall wording, the skip reason, PID reuse, the non-interactive opt-in and `-p` auto-answers are as recorded in `shipline-trust.review.md`. The builder follows the plan text.

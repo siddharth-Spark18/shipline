@@ -4,11 +4,40 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { encodePath } from '../templates/shipline/bin/lib.mjs';
 
 export const CLI_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const BIN = path.join(CLI_ROOT, 'bin', 'shipline.mjs');
 export const TEMPLATES = path.join(CLI_ROOT, 'templates', 'shipline');
 export const FIXTURES = path.join(CLI_ROOT, 'test', 'fixtures');
+
+// The task store lives outside the repo ($SHIPLINE_HOME, default ~/.shipline). Tests must never touch the
+// real one, so this process (and the in-process UI server, store.mjs imports) gets its own temp home as a
+// safety net, removed on exit; and every temp dir from tmpDir() gets its own SHIPLINE_HOME, removed with it.
+const PROCESS_HOME = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'shipline-home-proc-')));
+process.env.SHIPLINE_HOME = PROCESS_HOME;
+process.on('exit', () => rmSync(PROCESS_HOME, { recursive: true, force: true }));
+
+const HOMES = new Map(); // temp dir -> its SHIPLINE_HOME
+
+// The SHIPLINE_HOME of the temp dir that contains `dir` (or the process-wide one).
+export function homeFor(dir) {
+  if (dir) {
+    let d = path.resolve(dir);
+    for (;;) {
+      if (HOMES.has(d)) return HOMES.get(d);
+      const up = path.dirname(d);
+      if (up === d) break;
+      d = up;
+    }
+  }
+  return PROCESS_HOME;
+}
+
+// The store folder of a repo: <its SHIPLINE_HOME>/projects/<encoded realpath>.
+export function storeOf(dir) {
+  return path.join(homeFor(dir), 'projects', encodePath(realpathSync(dir)));
+}
 
 // The hooks' findRoot honours CLAUDE_PROJECT_DIR and stage.mjs reads SHIPLINE_SESSION; when these tests
 // run inside a Claude Code session those would point at the wrong repo, so children never inherit them.
@@ -22,8 +51,10 @@ export function cleanEnv(extra = {}) {
   return env;
 }
 
+// Children run with the SHIPLINE_HOME of the temp dir they run in, unless env sets one.
 export function run(cmd, args, { cwd, input, env } = {}) {
-  const r = spawnSync(cmd, args, { cwd, input, env: cleanEnv(env), encoding: 'utf8' });
+  const e = { SHIPLINE_HOME: homeFor(cwd), ...env };
+  const r = spawnSync(cmd, args, { cwd, input, env: cleanEnv(e), encoding: 'utf8' });
   if (r.error) throw r.error;
   return { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
@@ -36,15 +67,30 @@ export function git(cwd, ...args) {
 
 export function tmpDir(prefix = 'shipline-test-') {
   // realpath: on macOS os.tmpdir() is a symlink (/var -> /private/var).
-  return realpathSync(mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), prefix)));
+  HOMES.set(dir, realpathSync(mkdtempSync(path.join(os.tmpdir(), 'shipline-home-'))));
+  return dir;
 }
 
+// Removes a dir; for a tmpDir() dir, its SHIPLINE_HOME too.
 export function removeDir(dir) {
-  if (dir) rmSync(dir, { recursive: true, force: true });
+  if (!dir) return;
+  rmSync(dir, { recursive: true, force: true });
+  if (HOMES.has(dir)) {
+    const home = HOMES.get(dir);
+    // A late write by a closing in-process server then lands in the process home (removed on exit), not here.
+    if (process.env.SHIPLINE_HOME === home) process.env.SHIPLINE_HOME = PROCESS_HOME;
+    rmSync(home, { recursive: true, force: true });
+    HOMES.delete(dir);
+  }
 }
 
+// `shipline init` through the real bin. The children have no terminal, and init refuses to ask questions without
+// one, so --yes (install the defaults) is passed unless the flags start with { yes: false }.
 export function runInit(dir, ...flags) {
-  return run(process.execPath, [BIN, 'init', dir, ...flags], { cwd: dir });
+  let yes = true;
+  if (flags.length && typeof flags[0] === 'object' && flags[0] !== null) yes = flags.shift().yes !== false;
+  return run(process.execPath, [BIN, 'init', dir, ...(yes ? ['--yes'] : []), ...flags], { cwd: dir });
 }
 
 // A temporary git repo with one commit, then `shipline init` run through the real bin.

@@ -3,9 +3,9 @@ import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { BIN, CLI_ROOT, cleanEnv, makeRepo, removeDir, tmpDir } from '../helpers.mjs';
+import { BIN, CLI_ROOT, cleanEnv, homeFor, makeRepo, removeDir, storeOf, tmpDir } from '../helpers.mjs';
 import { api, rawRequest, startUi } from './helpers.mjs';
 import { safeEqual } from '../../src/ui/auth.mjs';
 import { redact } from '../../src/ui/log.mjs';
@@ -55,11 +55,22 @@ describe('status and diagnostics', () => {
   test('GET /api/status and /api/diagnostics report versions, root and watch mode', async () => {
     const pkg = JSON.parse(readFileSync(path.join(CLI_ROOT, 'package.json'), 'utf8')).version;
     const status = await api(ui, 'GET', '/api/status');
-    assert.deepEqual(status.json, { uiVersion: pkg, repoVersion: { package: pkg, interface: 2 }, versionState: 'same', root: dir });
+    const files = JSON.parse(readFileSync(path.join(dir, '.shipline', 'bin', 'VERSION'), 'utf8')).files;
+    assert.ok(files && Object.keys(files).length > 0);
+    assert.deepEqual(status.json, {
+      uiVersion: pkg,
+      repoVersion: { package: pkg, interface: 3, files, excluded: [] },
+      versionState: 'same',
+      root: dir,
+      storeDir: storeOf(dir),
+      needsUpgrade: false,
+    });
     const d = await api(ui, 'GET', '/api/diagnostics');
     assert.equal(d.status, 200);
     assert.equal(d.json.root, dir);
-    assert.equal(d.json.uiInterface, 2);
+    assert.equal(d.json.uiInterface, 3);
+    assert.equal(d.json.storeDir, storeOf(dir));
+    assert.equal(d.json.needsUpgrade, false);
     assert.equal(d.json.port, ui.port);
     assert.ok(['watch', 'poll'].includes(d.json.watchMode));
     assert.ok(Array.isArray(d.json.logTail) && d.json.logTail.length > 0);
@@ -247,7 +258,8 @@ describe('logging', () => {
     await fetch(ui.url, { redirect: 'manual' });
     await fetch(`${ui.base}/?t=wrong`, { redirect: 'manual' });
     await api(ui, 'GET', '/api/diagnostics');
-    const text = readFileSync(path.join(dir, '.shipline', '.state', 'ui.log'), 'utf8');
+    assert.ok(!existsSync(path.join(dir, '.shipline', '.state')), 'nothing is logged inside the repo');
+    const text = readFileSync(path.join(storeOf(dir), 'ui', 'ui.log'), 'utf8');
     assert.ok(text.length > 0);
     assert.ok(!text.includes(ui.token));
     const diag = await api(ui, 'GET', '/api/diagnostics');
@@ -293,7 +305,7 @@ describe('command line', () => {
   });
 
   test('prints the tokened URL, and SIGINT shuts down with exit 0', async () => {
-    const child = spawn(process.execPath, [BIN, 'ui', dir, '--no-open'], { env: cleanEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [BIN, 'ui', dir, '--no-open'], { env: cleanEnv({ SHIPLINE_HOME: homeFor(dir) }), stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     child.stdout.on('data', (c) => (out += c));
     const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
@@ -327,9 +339,25 @@ describe('command line', () => {
     try {
       const r = ui([empty, '--no-open']);
       assert.equal(r.status, 1);
-      assert.match(r.stderr, /run `npx shipline init` first/i);
+      assert.match(r.stderr, /run `npx @forgeyard\/shipline init` first/i);
     } finally {
       removeDir(empty);
+    }
+  });
+
+  test('an unwritable SHIPLINE_HOME exits 1 with "Shipline can\'t write its task store"', () => {
+    const blockDir = tmpDir();
+    try {
+      writeFileSync(path.join(blockDir, 'a-file'), 'x');
+      const r = spawnSync(process.execPath, [BIN, 'ui', dir, '--no-open'], {
+        env: cleanEnv({ SHIPLINE_HOME: path.join(blockDir, 'a-file', 'home') }),
+        encoding: 'utf8',
+        timeout: 20000,
+      });
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /Shipline can't write its task store at /);
+    } finally {
+      removeDir(blockDir);
     }
   });
 

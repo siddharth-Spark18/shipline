@@ -1,11 +1,7 @@
 # Shipline config. Edit by hand or run /shipline-setup in Claude Code.
 
-# Where task folders (artifacts + manifest.json) live.
-# Team note: ask #platform before moving this.
-artifact_root: docs/shipline
-
 # {key} = Jira key (dropped when there is no ticket), {slug} = short task name, {type} = workflow id.
-folder_pattern: "{key}-{slug}"
+# Team note: ask #platform before changing this.
 branch_pattern: "{type}/{key}-{slug}"
 
 # Jira is read through the Atlassian MCP when it is connected. Shipline ships no Jira code.

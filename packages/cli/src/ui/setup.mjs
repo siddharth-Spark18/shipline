@@ -14,6 +14,8 @@ import {
 import path from 'node:path';
 import { emitConfig, emitWorkflow } from '../yaml-emit.mjs';
 import { configLayout, headerFor, validateConfig, validateWorkflow } from '../setup-schema.mjs';
+import { shippedAgents } from '../init.mjs';
+import { TEMPLATES, VERSION_FILE } from '../hashes.mjs';
 import { HttpError } from './http.mjs';
 import { textDiff } from './git.mjs';
 import { log } from './log.mjs';
@@ -65,6 +67,18 @@ function listIds(dir, ext) {
 
 function listAgents(root) {
   return listIds(path.join(root, '.claude', 'agents'), '.md');
+}
+
+// The repo's own skills: folders in .claude/skills, without Shipline's own shipline-* ones.
+function listSkills(root) {
+  try {
+    return readdirSync(path.join(root, '.claude', 'skills'), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && ID_RE.test(e.name) && !e.name.startsWith('shipline-'))
+      .map((e) => e.name)
+      .sort();
+  } catch {
+    return [];
+  }
 }
 
 // ---------- parsing ----------
@@ -215,7 +229,7 @@ function prepare(app, entry, override = {}) {
 
   const issues =
     entry.kind === 'config'
-      ? validateConfig(model)
+      ? validateConfig(model, { skills: listSkills(root) })
       : validateWorkflow(model, { id: entry.id, agents: listAgents(root), existingStageIds });
   out.errors = issues.filter((i) => i.severity !== 'warning');
   if (disk.error !== undefined)
@@ -270,7 +284,7 @@ function prepare(app, entry, override = {}) {
 
 function openTasksOf(app) {
   const { cfg } = app.repo.getConfig();
-  return cfg ? readOpenTasks(app.repo.root, cfg) : [];
+  return cfg ? readOpenTasks(app.repo.root, cfg, app.repo.needsUpgrade) : [];
 }
 
 // Open tasks whose manifest keeps a stage list different from the new one.
@@ -443,6 +457,30 @@ async function workflows(app, body) {
     return { ok: true };
   }
 
+  if (body.action === 'create') {
+    if (typeof body.id !== 'string' || !ID_RE.test(body.id))
+      throw new HttpError(400, 'invalid', 'id may only contain letters, digits, - and _');
+    if (typeof body.name !== 'string' || body.name.trim() === '')
+      throw new HttpError(400, 'invalid', 'A name is required');
+    const target = targetPath(root, 'workflow', body.id);
+    if (existsSync(target))
+      throw new HttpError(409, 'exists', `Workflow "${body.id}" already exists`);
+    const model = {
+      id: body.id,
+      name: body.name.trim(),
+      stages: [
+        {
+          id: 'implement',
+          name: 'Implement',
+          enforcement: 'guide',
+          confirm_to_advance: false,
+        },
+      ],
+    };
+    commit(app, [prepare(app, { kind: 'workflow', id: body.id, model, baseHash: null })]); // wx inside
+    return { ok: true };
+  }
+
   if (body.action === 'delete') {
     const target = targetPath(root, 'workflow', body.id);
     if (!existsSync(target))
@@ -467,13 +505,216 @@ async function workflows(app, body) {
     return { ok: true };
   }
 
-  throw new HttpError(400, 'bad-target', 'action must be "copy" or "delete"');
+  throw new HttpError(400, 'bad-target', 'action must be "copy", "create" or "delete"');
+}
+
+// ---------- agents (Shipline's own agent files, tracked in VERSION) ----------
+
+const AGENT_FILE = (name) => `.claude/agents/${name}.md`;
+
+function fileHash(file) {
+  try {
+    return crypto.createHash('sha256').update(readFileSync(file)).digest('hex');
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  }
+}
+
+// { raw, hash, data } of .shipline/bin/VERSION. data is null when the file is missing or not a JSON object.
+function readVersionFile(root) {
+  const raw = readText(path.join(root, VERSION_FILE));
+  let data = null;
+  if (raw !== null) {
+    try {
+      const v = JSON.parse(raw);
+      if (isObj(v)) data = v;
+    } catch {
+      // Reported by the caller.
+    }
+  }
+  return { raw, hash: sha256(raw ?? ''), data };
+}
+
+const excludedOf = (v) =>
+  Array.isArray(v.excluded) ? v.excluded.filter((p) => typeof p === 'string') : [];
+
+function agentsSetup(root, version, names) {
+  const excluded = new Set(version.data ? excludedOf(version.data) : []);
+  const own = new Set(names);
+  return {
+    shipline: names.map((name) => {
+      const hash = fileHash(path.join(root, AGENT_FILE(name)));
+      return { name, installed: hash !== null, excluded: excluded.has(AGENT_FILE(name)), hash };
+    }),
+    repo: listAgents(root).filter((n) => !own.has(n)),
+  };
+}
+
+function stagesUsingAgent(app, name) {
+  const out = [];
+  const dir = path.join(app.repo.root, '.shipline', 'workflows');
+  for (const id of listIds(dir, '.yml')) {
+    const raw = readText(path.join(dir, `${id}.yml`));
+    const parsed = raw === null ? {} : parseModel(app, raw);
+    for (const st of parsed.model && Array.isArray(parsed.model.stages)
+      ? parsed.model.stages
+      : []) {
+      if (isObj(st) && st.agent === name) out.push(`${id}.${st.id}`);
+    }
+  }
+  return out;
+}
+
+// Works out what an add/remove request does, without writing. Throws 400 for a bad request.
+// Returns { changes: [{ name, path, action: 'write'|'delete', current: string|null, text: string|null }], before, after }.
+function planAgents(app, body) {
+  const { root } = app.repo;
+  if (!isObj(body)) throw badRequest('Expected { add?, remove?, baseVersionHash, baseHashes }');
+  const names = shippedAgents();
+  const list = (k) => {
+    const v = body[k] ?? [];
+    if (!Array.isArray(v) || v.some((n) => typeof n !== 'string'))
+      throw badRequest(`${k} must be a list of agent names`);
+    for (const n of v)
+      if (!names.includes(n))
+        throw new HttpError(400, 'bad-target', `"${n}" is not one of Shipline's agents`);
+    return [...new Set(v)];
+  };
+  const add = list('add');
+  const remove = list('remove');
+  if (add.some((n) => remove.includes(n)))
+    throw badRequest('An agent cannot be both added and removed');
+  if (add.length + remove.length === 0) throw badRequest('Nothing to add or remove');
+
+  const version = readVersionFile(root);
+  if (!version.data)
+    throw badRequest(
+      '.shipline/bin/VERSION is missing or unreadable; run `npx @forgeyard/shipline upgrade`',
+    );
+  const files = isObj(version.data.files) ? { ...version.data.files } : {};
+  const excluded = new Set(excludedOf(version.data));
+  const changes = [];
+  const notes = new Map();
+
+  for (const name of remove) {
+    const rel = AGENT_FILE(name);
+    const abs = path.join(root, rel);
+    const exists = existsSync(abs);
+    // In `excluded` with a file on disk: the team's own agent (a "keep yours" clash).
+    if (exists && excluded.has(rel))
+      throw new HttpError(
+        400,
+        'not-shipline',
+        `${rel} is your own agent, not Shipline's; it is not removed`,
+        {
+          path: rel,
+        },
+      );
+    excluded.add(rel);
+    delete files[rel];
+    if (exists) {
+      changes.push({
+        name,
+        path: rel,
+        action: 'delete',
+        current: readFileSync(abs, 'utf8'),
+        text: null,
+      });
+      const used = stagesUsingAgent(app, name);
+      if (used.length)
+        notes.set(name, [
+          `Stages that use "${name}" will show "agent not installed": ${used.join(', ')}`,
+        ]);
+    }
+  }
+  for (const name of add) {
+    const rel = AGENT_FILE(name);
+    const abs = path.join(root, rel);
+    const exists = existsSync(abs);
+    const ours = readFileSync(path.join(TEMPLATES, 'claude', 'agents', `${name}.md`), 'utf8');
+    const wasExcluded = excluded.has(rel);
+    if (exists && !wasExcluded) continue; // already Shipline's: nothing to do
+    excluded.delete(rel);
+    files[rel] = sha256(ours);
+    changes.push({
+      name,
+      path: rel,
+      action: 'write',
+      current: exists ? readFileSync(abs, 'utf8') : null,
+      text: ours,
+    });
+  }
+
+  const sorted = (o) =>
+    Object.fromEntries(
+      Object.keys(o)
+        .sort()
+        .map((k) => [k, o[k]]),
+    );
+  const after = { ...version.data, files: sorted(files), excluded: [...excluded].sort() };
+  const before = { ...version.data, excluded: excludedOf(version.data) };
+  return { changes, notes, version, before, after };
+}
+
+async function agentsPreview(app, body) {
+  const plan = planAgents(app, body);
+  const files = [];
+  for (const c of plan.changes) {
+    const out = {
+      kind: 'agent',
+      id: c.name,
+      text: c.text,
+      diff: await textDiff(app.repo.root, c.current ?? '', c.text ?? ''),
+      removedComments: [],
+      errors: [],
+    };
+    if (plan.notes.has(c.name)) out.notes = plan.notes.get(c.name);
+    files.push(out);
+  }
+  return { files, version: { before: plan.before, after: plan.after } };
+}
+
+async function agentsApply(app, body) {
+  const { root } = app.repo;
+  const plan = planAgents(app, body);
+  const baseHashes = body.baseHashes;
+  if (!isObj(baseHashes)) throw badRequest('baseHashes is required');
+  if (typeof body.baseVersionHash !== 'string') throw badRequest('baseVersionHash is required');
+
+  // Every hash, before the first write.
+  const changed = [];
+  if (plan.version.hash !== body.baseVersionHash) changed.push(VERSION_FILE);
+  for (const c of plan.changes) {
+    if (!(c.path in baseHashes)) throw badRequest(`baseHashes has no entry for ${c.path}`);
+    if (fileHash(path.join(root, c.path)) !== baseHashes[c.path]) changed.push(c.path);
+  }
+  if (changed.length)
+    throw new HttpError(409, 'changed', 'A file changed on disk since it was loaded', {
+      paths: changed,
+    });
+
+  for (const c of plan.changes) {
+    const abs = path.join(root, c.path);
+    if (c.action === 'delete') rmSync(abs, { force: true });
+    else writeAtomic(abs, c.text);
+    log('agents', {
+      id: c.name,
+      action: c.action,
+      hashBefore: c.current === null ? null : sha256(c.current),
+      hashAfter: c.text === null ? null : sha256(c.text),
+    });
+  }
+  writeAtomic(path.join(root, VERSION_FILE), JSON.stringify(plan.after, null, 2) + '\n'); // last
+  return { written: plan.changes.map((c) => ({ kind: 'agent', id: c.name, action: c.action })) };
 }
 
 // ---------- GET /api/setup ----------
 
 function setup(app) {
   const { root } = app.repo;
+  const version = readVersionFile(root);
+  const { cfg } = app.repo.getConfig();
   return {
     config: loadFile(app, 'config'),
     workflows: listIds(path.join(root, '.shipline', 'workflows'), '.yml').map((id) =>
@@ -482,7 +723,12 @@ function setup(app) {
     rules: listIds(path.join(root, '.shipline', 'rules'), '.md').map((id) =>
       loadFile(app, 'rules', id),
     ),
-    agents: listAgents(root),
+    agents: agentsSetup(root, version, shippedAgents()),
+    skills: {
+      repo: listSkills(root),
+      selected: cfg && Array.isArray(cfg.skills) ? cfg.skills : [],
+    },
+    versionHash: version.hash,
   };
 }
 
@@ -492,5 +738,15 @@ export function routes(app) {
     { method: 'POST', path: '/api/setup/preview', handler: ({ body }) => preview(app, body) },
     { method: 'POST', path: '/api/setup/save', handler: ({ body }) => save(app, body) },
     { method: 'POST', path: '/api/setup/workflows', handler: ({ body }) => workflows(app, body) },
+    {
+      method: 'POST',
+      path: '/api/setup/agents',
+      handler: async ({ body, url }) => {
+        app.repo.requireWritable();
+        return url.searchParams.get('preview') === '1'
+          ? agentsPreview(app, body)
+          : agentsApply(app, body);
+      },
+    },
   ];
 }

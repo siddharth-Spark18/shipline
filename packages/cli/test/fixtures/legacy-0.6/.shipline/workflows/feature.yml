@@ -1,0 +1,63 @@
+# Feature workflow. Stage fields:
+#   id, name, artifact (file in the task folder that must exist to finish the stage),
+#   optional (may be skipped), condition: ui_only (runs only when the task is flagged as UI work),
+#   agent (suggested subagent), confirm_to_advance (ask the developer before moving on),
+#   enforcement: guide | warn | block, blocks (what is held back until THIS stage is done).
+# A "blocks" entry is either { tools: 'Edit|Write', allow_paths: [globs] } or { bash: 'regex' }.
+id: feature
+name: Feature
+description: new functionality or a change in behavior
+stages:
+  - id: jira
+    name: Jira ticket
+    artifact: ticket.md
+    optional: true
+    enforcement: guide
+    confirm_to_advance: false
+  - id: feasibility
+    name: Feasibility
+    artifact: feasibility.md
+    agent: researcher
+    enforcement: guide
+    confirm_to_advance: false
+  - id: questions
+    name: Open questions
+    artifact: questions.md
+    enforcement: guide
+    confirm_to_advance: true
+  - id: plan
+    name: Plan
+    artifact: plan.md
+    agent: planner
+    enforcement: block
+    confirm_to_advance: true
+    blocks:
+      - tools: 'Edit|Write|MultiEdit|NotebookEdit'
+        allow_paths: ["{artifact_root}/**"]
+  - id: wireframes
+    name: Wireframes
+    artifact: wireframes.html
+    agent: wireframe-proposer
+    condition: ui_only
+    enforcement: guide
+    confirm_to_advance: true
+  - id: implement
+    name: Implement
+    artifact: implementation.md
+    agent: builder
+    enforcement: guide
+    confirm_to_advance: false
+  - id: verify
+    name: Verify
+    artifact: verification.md
+    agent: qa-bug-hunter
+    enforcement: block
+    confirm_to_advance: true
+    blocks:
+      - bash: '\bgit\s+commit\b|\bgh\s+pr\s+create\b'
+  - id: pr
+    name: Commit and PR
+    artifact: pr.md
+    agent: builder
+    enforcement: guide
+    confirm_to_advance: false

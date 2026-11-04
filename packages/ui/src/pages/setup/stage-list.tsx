@@ -22,14 +22,14 @@ import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { StageEditor } from '@/pages/setup/stage-editor';
 import { newKey, newStage, type WorkflowDraft } from '@/pages/setup/draft';
-import type { StageModel } from '@/lib/types';
+import type { SetupAgents, StageModel } from '@/lib/types';
 
 interface RowProps {
   id: string;
   stage: StageModel;
   isFresh: boolean;
   otherIds: string[];
-  agents: string[];
+  agents: SetupAgents;
   rules: { text: string; exists: boolean };
   onChange: (stage: StageModel) => void;
   onRulesChange: (text: string) => void;
@@ -92,7 +92,7 @@ export function StageList({
   onRulesChange,
 }: {
   draft: WorkflowDraft;
-  agents: string[];
+  agents: SetupAgents;
   rules: (stageId: string) => { text: string; exists: boolean };
   onChange: (draft: WorkflowDraft) => void;
   onRulesChange: (stageId: string, text: string) => void;

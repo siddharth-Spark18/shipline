@@ -1,7 +1,8 @@
 // Shared helpers for the Shipline hook and stage scripts. Node 18+, no dependencies.
 // Vendored into .shipline/bin/ by `shipline init`; teams may edit it.
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync, renameSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 
 // ---------- tiny YAML subset parser ----------
@@ -134,11 +135,10 @@ export function findRoot(start) {
 }
 
 const DEFAULT_CONFIG = {
-  artifact_root: 'docs/shipline',
-  folder_pattern: '{key}-{slug}',
   branch_pattern: '{type}/{key}-{slug}',
   tracker: 'jira',
   commands: {},
+  skills: [],
 };
 
 export function readYamlFile(file) {
@@ -151,7 +151,8 @@ export function readYamlFile(file) {
 
 export function loadConfig(root) {
   const cfg = { ...DEFAULT_CONFIG, ...(readYamlFile(path.join(root, '.shipline', 'config.yml')) || {}) };
-  cfg.artifact_root = String(cfg.artifact_root).replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
+  // skills: names of the repo's own .claude/skills/<name>; anything that is not a list of names is ignored.
+  cfg.skills = Array.isArray(cfg.skills) ? cfg.skills.filter((n) => typeof n === 'string' && n) : [];
   return cfg;
 }
 
@@ -184,6 +185,65 @@ export function stageEnforcement(stage) {
   return ['guide', 'warn', 'block'].includes(stage.enforcement) ? stage.enforcement : 'guide';
 }
 
+// ---------- task store (outside the repo) ----------
+// $SHIPLINE_HOME (default ~/.shipline)/projects/<encoded repo path>/{repo.json, tasks/, state/, ui/}.
+
+// Same encoding Claude Code uses for ~/.claude/projects: every non-alphanumeric character becomes "-".
+export function encodePath(p) {
+  return String(p).replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+export function shiplineHome() {
+  return process.env.SHIPLINE_HOME || path.join(os.homedir(), '.shipline');
+}
+
+function realRoot(root) {
+  try {
+    return realpathSync(root);
+  } catch {
+    return path.resolve(root);
+  }
+}
+
+// Creates the store directory when needed and checks repo.json: a store whose repo.json names another root
+// means two different paths encode the same way, so it throws instead of sharing the store.
+export function storeDir(root) {
+  const real = realRoot(root);
+  const dir = path.join(shiplineHome(), 'projects', encodePath(real));
+  const meta = path.join(dir, 'repo.json');
+  try {
+    mkdirSync(dir, { recursive: true });
+    let existing = null;
+    try {
+      existing = JSON.parse(readFileSync(meta, 'utf8'));
+    } catch {
+      // Missing or unreadable repo.json: it is (re)written below.
+    }
+    if (existing && typeof existing.root === 'string') {
+      if (existing.root !== real) {
+        throw Object.assign(
+          new Error(`Shipline store collision at ${dir}: it belongs to ${existing.root}, but this repo is ${real}. Nothing was shared.`),
+          { code: 'STORE_COLLISION' },
+        );
+      }
+    } else {
+      writeFileSync(meta, JSON.stringify({ root: real, created: new Date().toISOString() }, null, 2) + '\n');
+    }
+  } catch (e) {
+    if (e.code === 'STORE_COLLISION') throw e;
+    throw new Error(`Shipline can't write its task store at ${dir} (${e.message})`);
+  }
+  return dir;
+}
+
+export function tasksDir(root) {
+  return path.join(storeDir(root), 'tasks');
+}
+
+export function stateDir(root) {
+  return path.join(storeDir(root), 'state');
+}
+
 // ---------- state ----------
 
 export function safeId(id) {
@@ -191,7 +251,7 @@ export function safeId(id) {
 }
 
 export function statePath(root, sessionId) {
-  return path.join(root, '.shipline', '.state', `${safeId(sessionId)}.json`);
+  return path.join(stateDir(root), `${safeId(sessionId)}.json`);
 }
 
 export function readJson(file) {
@@ -214,8 +274,9 @@ export function readSession(root, sessionId) {
   return sessionId ? readJson(statePath(root, sessionId)) : null;
 }
 
+// taskDir is an absolute store path (a repo-relative path still resolves, for state files not yet migrated).
 export function manifestPath(root, taskDir) {
-  return path.join(root, taskDir, 'manifest.json');
+  return path.resolve(root, taskDir, 'manifest.json');
 }
 
 export function readManifest(root, taskDir) {
@@ -232,23 +293,23 @@ export function currentStage(manifest) {
 
 // ---------- tasks and git ----------
 
-// Every task folder under cfg.artifact_root whose manifest still has a stage that isn't done or skipped.
-export function listOpenTasks(root, cfg) {
+// Every task folder in the store whose manifest still has a stage that isn't done or skipped.
+export function listOpenTasks(root) {
   const open = [];
-  const base = path.join(root, cfg.artifact_root);
+  const base = tasksDir(root);
   if (!existsSync(base)) return open;
   for (const d of readdirSync(base, { withFileTypes: true })) {
     if (!d.isDirectory()) continue;
     let m;
     try {
-      m = readManifest(root, `${cfg.artifact_root}/${d.name}`);
+      m = readManifest(root, path.join(base, d.name));
     } catch {
       continue; // unreadable manifest: skip, stage.mjs status will report it
     }
     if (!m || !Array.isArray(m.stages) || m.stages.every((s) => isDone(s.status))) continue;
     const cur = currentStage(m);
     open.push({
-      dir: `${cfg.artifact_root}/${d.name}`,
+      dir: path.join(base, d.name),
       slug: d.name,
       workflow: m.task.workflow,
       branch: m.task.branch,

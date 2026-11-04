@@ -4,10 +4,10 @@
 // test/fixtures/fake-claude.mjs; never the real claude.
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, chmodSync, existsSync, readFileSync, statSync } from 'node:fs';
+import { copyFileSync, chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { CLI_ROOT, hook, makeRepo, removeDir, stage } from '../helpers.mjs';
+import { CLI_ROOT, hook, makeRepo, removeDir, stage, storeOf } from '../helpers.mjs';
 import { api, openEvents, startUi } from './helpers.mjs';
 import {
   FORBIDDEN,
@@ -22,6 +22,8 @@ import {
   readSessions,
   readUiLog,
   startChat,
+  stateDirOf,
+  tasksDirOf,
   stopChat,
   uiDir,
   useFakeClaude,
@@ -107,7 +109,10 @@ describe('spawn', () => {
     assert.equal(statSync(mcp).mode & 0o777, 0o600);
     firstSecret = server.env.SHIPLINE_UI_RELAY_SECRET;
     // Never logged.
-    assert.ok(!readFileSync(path.join(dir, '.shipline', '.state', 'ui.log'), 'utf8').includes(firstSecret));
+    assert.ok(!readFileSync(path.join(uiDir(dir), 'ui.log'), 'utf8').includes(firstSecret));
+    // The MCP config (it holds the secret) lives in the store, never in the repo.
+    assert.ok(mcp.startsWith(storeOf(dir) + path.sep));
+    assert.ok(!existsSync(path.join(dir, '.shipline', '.state')));
   });
 
   test('the stream is forwarded as SSE chat events; an unknown type is logged and skipped', async () => {
@@ -429,12 +434,57 @@ describe('task binding', () => {
     const since = ev.mark();
     const id = await startChat(ui, ev);
     const task = await ev.waitFor(isChat(id, 'task'), 10_000, since);
-    assert.equal(task.data.taskDir, 'docs/shipline/add-export');
-    assert.equal(sessionOf(id).task_dir, 'docs/shipline/add-export');
-    const state = JSON.parse(readFileSync(path.join(dir, '.shipline', '.state', `${id}.json`), 'utf8'));
+    const taskDir = path.join(tasksDirOf(dir), 'add-export');
+    assert.equal(task.data.taskDir, taskDir);
+    assert.equal(sessionOf(id).task_dir, taskDir);
+    const state = JSON.parse(readFileSync(path.join(stateDirOf(dir), `${id}.json`), 'utf8'));
     assert.equal(state.session_id, id, 'stage.mjs found the session through SHIPLINE_SESSION');
+    assert.equal(state.task_dir, taskDir);
+    assert.ok(existsSync(path.join(taskDir, 'manifest.json')));
+    assert.ok(!existsSync(path.join(dir, 'docs')), 'the task is not written into the repo');
     const got = await api(ui, 'GET', `/api/chats/${id}`);
-    assert.equal(got.json.chat.task_dir, 'docs/shipline/add-export');
+    assert.equal(got.json.chat.task_dir, taskDir);
     await stopChat(ui, ev, id);
+  });
+});
+
+// Plan "Interface change": chat is disabled for an interface-2 repo (its old hooks write state to
+// .shipline/.state/, which the chat code no longer reads). Start, message and continue give 423 needs-upgrade.
+describe('needs-upgrade (interface-2 repo)', () => {
+  test('POST /api/chats, /message and /continue return 423 needs-upgrade; nothing is spawned; status says needsUpgrade', async () => {
+    const legacy = makeRepo({ commitInit: true });
+    const v = path.join(legacy, '.shipline', 'bin', 'VERSION');
+    writeFileSync(v, JSON.stringify({ package: '0.6.0', interface: 2 }) + '\n');
+    // A chat recorded earlier, so /message and /continue get past the 404 for an unknown chat.
+    const chatId = '11111111-2222-4333-8444-555555555555';
+    const ui2Dir = path.join(storeOf(legacy), 'ui');
+    mkdirSync(ui2Dir, { recursive: true });
+    const now = new Date().toISOString();
+    writeFileSync(path.join(ui2Dir, 'sessions.json'), JSON.stringify([{ id: chatId, title: 'old', created: now, last_active: now, task_dir: null, status: 'ended' }]));
+    const prevHome = process.env.SHIPLINE_HOME;
+    const argvFile = fake.script('normal-turn');
+    let legacyUi;
+    try {
+      legacyUi = await startUi(legacy);
+      const status = await api(legacyUi, 'GET', '/api/status');
+      assert.equal(status.json.needsUpgrade, true);
+      assert.equal(status.json.versionState, 'repo-older');
+      for (const [p, body] of [
+        ['/api/chats', { message: 'hi' }],
+        [`/api/chats/${chatId}/message`, { text: 'hi' }],
+        [`/api/chats/${chatId}/continue`, {}],
+      ]) {
+        const r = await api(legacyUi, 'POST', p, { body });
+        assert.equal(r.status, 423, `${p}: ${r.text}`);
+        assert.equal(r.json.error.code, 'needs-upgrade', p);
+        assert.match(r.json.error.message, /npx @forgeyard\/shipline upgrade/);
+      }
+      assert.deepEqual(fake.records(argvFile), [], 'claude was never spawned');
+      assert.ok(!existsSync(path.join(ui2Dir, 'lock.json')), 'no lock was taken');
+    } finally {
+      if (legacyUi) await legacyUi.close();
+      process.env.SHIPLINE_HOME = prevHome;
+      removeDir(legacy);
+    }
   });
 });

@@ -927,8 +927,7 @@ SSE events:
 ## Alternatives Considered
 
 Decisions below marked "Rejected by author" were made by the author in the
-design session of 2026-11-03, recorded in `concepts_brief.md` and in this
-document's review history.
+design session of 2026-11-03.
 
 ### Scope and shape
 
@@ -1184,12 +1183,6 @@ document's review history.
 ## Additional Resources
 
 *   `docs/plans/shipline-v2-repo-init.md`: the v2 plan this design extends.
-*   `concepts_brief.md`: the brainstorm brief, with the risks and open
-    questions it raised.
-*   Review reports in the repo root (`consolidated_review_report.md` and the
-    per-stage reports): the design review and how each finding was resolved.
-    This design was drafted and reviewed with EGM, a design-review workflow
-    that uses separate reviewers with no shared context.
 *   Prior implementation copied from: see Packaging.
 *   `apps/api/src/services/tool-decision.service.ts`: the v1 AskUserQuestion
     answer format.
@@ -2344,10 +2337,4 @@ Test layout: tests for Phase 0 (hook scripts, writer, schema, init) are
         card, and one card left to time out (Goals 8–11).
     *   **Dogfood (Goal 13):** after Phase 2, per the values in Open
         Questions.
-*   Round-2 review nits (26) accepted as-is; see implementation_readiness_report.md.
-
---------------------------------------------------------------------------------
-
-<!-- Provenance: Indicates initial structural drafting via EGM. -->
-
-*Drafted with EGM*
+*   Round-2 review nits (26) accepted as-is.

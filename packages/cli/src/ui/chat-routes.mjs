@@ -38,6 +38,7 @@ export function routes(app) {
   const root = app.repo.root;
 
   const preflight = async () => {
+    app.repo.requireUpgraded();
     app.repo.requireWritable();
     const activeId = app.chats.activeId();
     if (activeId)
@@ -83,6 +84,7 @@ export function routes(app) {
       method: 'POST',
       path: '/api/chats/:id/message',
       handler: ({ params, body }) => {
+        app.repo.requireUpgraded();
         requireChat(app, params.id);
         if (!body || typeof body.text !== 'string' || !body.text.trim())
           throw new HttpError(400, 'bad-request', 'text is required');

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { PlusIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -7,7 +8,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DiffView } from '@/components/diff-view';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { AgentsSkills } from '@/pages/setup/agents-skills';
 import { ConfigForm } from '@/pages/setup/config-form';
+import { NewWorkflowDialog } from '@/pages/setup/new-workflow-dialog';
 import { SaveDialog, fileLabel } from '@/pages/setup/save-dialog';
 import { WorkflowEditor } from '@/pages/setup/workflow-editor';
 import {
@@ -23,6 +26,9 @@ import {
 import { ApiError, api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
 import type { ConfigModel, ValidationIssue, VersionState } from '@/lib/types';
+
+/** Nav key of the Agents & skills section. The colon can't occur in a workflow id. */
+const AGENTS_KEY = ':agents';
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -46,6 +52,7 @@ export default function SetupPage({ versionState }: { versionState: VersionState
   const [drafts, setDrafts] = useState<Drafts | null>(null);
   const [selected, setSelected] = useState('config');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [newWorkflowOpen, setNewWorkflowOpen] = useState(false);
 
   // Whenever the files are (re)loaded from disk, the edit copies start over from them.
   useEffect(() => {
@@ -91,7 +98,10 @@ export default function SetupPage({ versionState }: { versionState: VersionState
   if (!data) return null;
 
   const workflowIds = data.workflows.map((w) => w.id!).filter(Boolean);
-  const current = selected === 'config' || workflowIds.includes(selected) ? selected : 'config';
+  const current =
+    selected === 'config' || selected === AGENTS_KEY || workflowIds.includes(selected)
+      ? selected
+      : 'config';
   const workflowFile = data.workflows.find((w) => w.id === current);
 
   const updateWorkflow = (id: string, draft: WorkflowDraft) =>
@@ -152,9 +162,26 @@ export default function SetupPage({ versionState }: { versionState: VersionState
           >
             config.yml{isConfigDirty(data, drafts) ? ' *' : ''}
           </Button>
+          <Button
+            variant={current === AGENTS_KEY ? 'secondary' : 'ghost'}
+            className="justify-start"
+            onClick={() => setSelected(AGENTS_KEY)}
+          >
+            Agents &amp; skills
+          </Button>
           <p className="mt-2 hidden px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase md:block">
             Workflows
           </p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="justify-start"
+            disabled={readOnly}
+            onClick={() => setNewWorkflowOpen(true)}
+          >
+            <PlusIcon />
+            New workflow
+          </Button>
           {data.workflows.map((w) => (
             <Button
               key={w.id}
@@ -175,6 +202,16 @@ export default function SetupPage({ versionState }: { versionState: VersionState
               file={data.config}
               model={drafts.config}
               onChange={(m: ConfigModel) => setDrafts({ ...drafts, config: m })}
+            />
+          )}
+          {current === AGENTS_KEY && (
+            <AgentsSkills
+              data={data}
+              config={drafts.config}
+              onConfigChange={(m: ConfigModel) => setDrafts({ ...drafts, config: m })}
+              readOnly={readOnly}
+              hasOtherEdits={entries.length > 0}
+              onReload={() => void reload()}
             />
           )}
           {workflowFile && (
@@ -224,7 +261,9 @@ export default function SetupPage({ versionState }: { versionState: VersionState
                       <DiffView hunks={f.diff} className="max-h-96 overflow-auto" />
                     </TabsContent>
                     <TabsContent value="file">
-                      <pre className="max-h-96 overflow-auto font-mono text-xs">{f.text}</pre>
+                      <pre className="max-h-96 overflow-auto font-mono text-xs">
+                        {f.text ?? '(file removed)'}
+                      </pre>
                     </TabsContent>
                   </Tabs>
                 </CollapsibleContent>
@@ -233,6 +272,13 @@ export default function SetupPage({ versionState }: { versionState: VersionState
           </CardContent>
         </Card>
       )}
+
+      <NewWorkflowDialog
+        open={newWorkflowOpen}
+        onOpenChange={setNewWorkflowOpen}
+        existingIds={workflowIds}
+        onCreated={setSelected}
+      />
 
       <SaveDialog
         open={dialogOpen}

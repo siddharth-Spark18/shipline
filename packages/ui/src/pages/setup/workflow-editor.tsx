@@ -19,7 +19,7 @@ import { StageList } from '@/pages/setup/stage-list';
 import { ID_RE, setOptional, type WorkflowDraft } from '@/pages/setup/draft';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
-import type { SetupFile, WorkflowModel } from '@/lib/types';
+import type { SetupAgents, SetupFile, WorkflowModel } from '@/lib/types';
 
 const WORKFLOW_KEYS = ['id', 'name', 'description', 'branch_type', 'stages'];
 
@@ -27,7 +27,7 @@ export interface WorkflowEditorProps {
   file: SetupFile<WorkflowModel>;
   draft: WorkflowDraft | undefined;
   dirty: boolean;
-  agents: string[];
+  agents: SetupAgents;
   existingIds: string[];
   /** The repo is newer than this UI: nothing can be written. */
   readOnly: boolean;

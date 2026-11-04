@@ -1,0 +1,62 @@
+{
+  ".claude/agents/builder.md": {
+    "8efc1b9d996e5668f968bfdb464dffc49c0959e4f78f4fd72a61998ea62ba47b": "0.6.0",
+    "8e86e9e68e48e83d1f42552ef6f7e0551d82d60d3c627980fcbe22ec61906450": "0.7.0"
+  },
+  ".claude/agents/planner.md": {
+    "d722c4d37348a11c7f6e16cb116f067cd622ebe4d2d09511f2134d534775ecb4": "0.6.0",
+    "af02740e12298529ffbd60f2cc6b6f1885395ad5190c7c86797ae7689a4e0842": "0.7.0"
+  },
+  ".claude/agents/qa-bug-hunter.md": {
+    "9ac8ae01e8430e42652a30943ca75430faf7679f4d72ef547dfafd88e908d1cb": "0.6.0"
+  },
+  ".claude/agents/researcher.md": {
+    "ed93b46fff7fa8243d6b8586786543738092d9742cf2fa828522ece0f4d3217a": "0.6.0"
+  },
+  ".claude/agents/reviewer.md": {
+    "c883638b75de4887ef5a2051af08118049b936fa13b0d757a124888adc9a6a88": "0.6.0"
+  },
+  ".claude/agents/wireframe-proposer.md": {
+    "8de7f9380a27f5253c631c507c597e8d1cd92f5b243df7e7015d5a26c253972b": "0.6.0"
+  },
+  ".claude/settings.json#shipline": {
+    "8eacdb76fd1281751f82682bb63158b86eb150b40a821f553c247376e7883e3d": "0.6.0",
+    "a19a385a25841382fb221fa2fc23bd532b52a84897fc5a4a35933d30a5407d1f": "0.7.0"
+  },
+  ".claude/skills/shipline-setup/SKILL.md": {
+    "ba36d8d531b1dcc004b903574d662c6780f86d83d7fd503ae683439a2d486164": "0.6.0",
+    "f4aa691d72af65e30ab2b756404dd2cf31955f09f365c1c90d8b6e977c8d0b1b": "0.7.0",
+    "9d175ba002e20ca605c8517e5d4fd34fff549d64c2e312585685c9e9862fbff0": "0.7.0"
+  },
+  ".claude/skills/shipline-workflow/SKILL.md": {
+    "fc43b4e6a5ec7ba3fa8369b30a353a12dc1e8f3081b55978d996e58631a26b18": "0.6.0",
+    "c1e59e8e6fc3c299047248d329a1f78d558e0286a9e8b50612e30c3ca4dec308": "0.7.0",
+    "53aff7e2f698979d931fd0bb649b8ff84f12b553bd5d3a72fd724a8ed19badcc": "0.7.0"
+  },
+  ".shipline/bin/guard.mjs": {
+    "9db9c11191fc99684fdd60484ea87576fc5c601b0c2a6844a3079172a15f8b66": "0.6.0",
+    "d7fd9ac4513bfa021befcfe8b511553de662878548c2b8af75218d13d7cb5f16": "0.7.0"
+  },
+  ".shipline/bin/lib.mjs": {
+    "47d3408d8ca05a94abd4c299f53864a7bb8fd596a0f67c6998908e0ab5bcaf8e": "0.6.0",
+    "db77306412d5cf02c63348e7ee526162e7dfb8eb57361b55640cba563ea7a5bd": "0.7.0",
+    "022851f59f2209fcf736f17e9550059de2ab8c599eaaab496fc8f4ab2c5d7530": "0.7.0"
+  },
+  ".shipline/bin/prompt-submit.mjs": {
+    "9e410e4bdb348e8daf560bca3743def7db338a0416c50bc577d2781aa18b9116": "0.6.0"
+  },
+  ".shipline/bin/session-start.mjs": {
+    "b74ccca4893d7eca995b43449d7b13bd39ca9635d012f56eefc8b6c2574d786b": "0.6.0",
+    "c5c719ad26a34299ddfc27d01b91a2de0f5b004a19b70cf4b9a4a7507c17d7c5": "0.7.0"
+  },
+  ".shipline/bin/stage.mjs": {
+    "353a53a7fd8315b3ebd98c31279b9c62110c2c0696feb3f888d8aa625bde70a4": "0.6.0",
+    "801be73d170208d2259afff9f90339e15e96bd4e2c25d3d366a87335e15da185": "0.7.0",
+    "3a81ad5cefaa93565b82bcb1b0689e41a2b3d86dc1e942907657bb409f752eb3": "0.7.0"
+  },
+  "CLAUDE.md#shipline": {
+    "7df61f6226682a45bf6096995deded19492b3082e683f4c7f9d4d54288b24d35": "0.6.0",
+    "80e99f269496265bd088473df03c4ac6d175ec19616cbba4217e119003313cdf": "0.7.0",
+    "9c38641b579cbb474ba363f4bc335061599e30f6919c682d748338e6a33105e8": "0.7.0"
+  }
+}

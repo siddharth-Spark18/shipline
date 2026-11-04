@@ -2,10 +2,10 @@
 # test/fixtures/fake-claude.mjs (lines starting with # are comments, @ lines are fake-claude directives, see its
 # header). Field shapes follow packages/shared/src/stream-json.ts; replace with real captures from the chat test
 # (plan item 19, question 8) when they exist.
-# Claude runs `stage.mjs start` early in the turn (it writes .shipline/.state/<session>.json with task_dir).
+# Claude runs `stage.mjs start` early in the turn (it writes <store>/state/<session>.json with task_dir).
 @wait-user
 {"type":"system","subtype":"init","session_id":"{{SESSION_ID}}","cwd":"{{CWD}}","model":"fake-model","tools":["Bash","Edit","Write","AskUserQuestion"],"mcp_servers":[{"name":"shipline_ui","status":"connected"}],"permissionMode":"default"}
 {"type":"assistant","session_id":"{{SESSION_ID}}","message":{"id":"msg_s1","role":"assistant","content":[{"type":"tool_use","id":"toolu_stage","name":"Bash","input":{"command":"node .shipline/bin/stage.mjs start --workflow feature --title \"Add export\""}}]}}
 @stage-start Add export
-{"type":"user","session_id":"{{SESSION_ID}}","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_stage","is_error":false,"content":"Started Feature task in docs/shipline/add-export"}]}}
+{"type":"user","session_id":"{{SESSION_ID}}","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_stage","is_error":false,"content":"Started Feature task in /home/dev/.shipline/projects/-home-dev-repo/tasks/add-export"}]}}
 {"type":"result","subtype":"success","is_error":false,"session_id":"{{SESSION_ID}}","duration_ms":1200,"num_turns":1,"result":"Done.","total_cost_usd":0.0123,"usage":{"input_tokens":10,"output_tokens":20}}

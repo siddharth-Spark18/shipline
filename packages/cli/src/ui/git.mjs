@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import { uiDir } from '../store.mjs';
 
 const MAX_PATCH_LINES = 3000;
 
@@ -118,10 +119,10 @@ export async function fileDiff(root, change, absPath) {
   return truncated ? { hunks, truncated: true } : { hunks };
 }
 
-// Diffs two strings through two temporary files in .shipline/.state/ui/tmp/. Removed lines whose
+// Diffs two strings through two temporary files in <store>/ui/tmp/. Removed lines whose
 // trimmed text starts with `#` are marked `comment: true`.
 export async function textDiff(root, a, b) {
-  const base = path.join(root, '.shipline', '.state', 'ui', 'tmp');
+  const base = path.join(uiDir(root), 'tmp');
   mkdirSync(base, { recursive: true });
   const dir = mkdtempSync(path.join(base, 'diff-'));
   try {

@@ -1,4 +1,6 @@
 import type {
+  AgentsChange,
+  AgentsPreviewResponse,
   ApiErrorEnvelope,
   ChatDetail,
   ChatsResponse,
@@ -43,7 +45,7 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
     throw new ApiError(
       0,
       'network',
-      'Could not reach the Shipline UI server. Is `npx shipline ui` still running?',
+      'Could not reach the Shipline UI server. Is `npx @forgeyard/shipline ui` still running?',
     );
   }
   if (!res.ok) {
@@ -71,6 +73,11 @@ export const api = {
   saveSetup: (req: SaveRequest) => request<SaveResponse>('POST', '/api/setup/save', req),
   workflowAction: (req: WorkflowAction) =>
     request<{ ok: true }>('POST', '/api/setup/workflows', req),
+  createWorkflow: (id: string, name: string) =>
+    request<{ ok: true }>('POST', '/api/setup/workflows', { action: 'create', id, name }),
+  agentsPreview: (req: AgentsChange) =>
+    request<AgentsPreviewResponse>('POST', '/api/setup/agents?preview=1', req),
+  agentsApply: (req: AgentsChange) => request<unknown>('POST', '/api/setup/agents', req),
   tasks: () => request<TasksData>('GET', '/api/tasks'),
   file: (path: string, mode: FileMode) =>
     request<FileResponse>('GET', `/api/file?path=${encodeURIComponent(path)}&mode=${mode}`),

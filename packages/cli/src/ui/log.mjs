@@ -1,7 +1,8 @@
-// The UI's own log: JSON lines in .shipline/.state/ui.log (gitignored), rotated at 1 MB.
+// The UI's own log: JSON lines in <store>/ui/ui.log (outside the repo), rotated at 1 MB.
 // Node 20+, no dependencies.
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { uiDir } from '../store.mjs';
 
 const MAX_BYTES = 1024 * 1024;
 const SECRET_KEY = /secret|token|cookie/i;
@@ -9,7 +10,7 @@ const SECRET_KEY = /secret|token|cookie/i;
 let file = null;
 
 export function initLog(root) {
-  file = path.join(root, '.shipline', '.state', 'ui.log');
+  file = path.join(uiDir(root), 'ui.log');
   mkdirSync(path.dirname(file), { recursive: true });
 }
 

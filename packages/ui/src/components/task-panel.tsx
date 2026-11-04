@@ -6,63 +6,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ChangesCard, ChangesView } from '@/components/changes-view';
 import { FileViewer, type FileTarget } from '@/components/file-viewer';
 import { EnforcementBadge, STATUS_LABEL, StageDot, StageTrail } from '@/components/stage-dots';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
 import type { Block, Change, StageModel, Task } from '@/lib/types';
-
-function changeCode(c: Change): string {
-  const code = `${c.index}${c.worktree}`.replace(/ /g, '');
-  return code === '' ? '?' : code;
-}
-
-/** "Working tree changes" from `git status`. Clicking a file opens its diff. `bare` drops the card. */
-export function ChangesList({ changes, bare }: { changes: Change[]; bare?: boolean }) {
-  const [target, setTarget] = useState<FileTarget | null>(null);
-  const list =
-    changes.length === 0 ? (
-      <p className="text-sm text-muted-foreground">No changes.</p>
-    ) : (
-      <ul className="flex flex-col gap-1">
-        {changes.map((c) => (
-          <li key={c.path} className="flex items-center gap-2">
-            <Badge variant="outline" className="w-8 justify-center font-mono">
-              {changeCode(c)}
-            </Badge>
-            <Button
-              variant="link"
-              size="xs"
-              className="h-auto min-w-0 px-0 font-mono"
-              onClick={() => setTarget({ path: c.path, mode: 'diff' })}
-            >
-              <span className="truncate">{c.path}</span>
-            </Button>
-            {c.oldPath && (
-              <span className="truncate text-xs text-muted-foreground">from {c.oldPath}</span>
-            )}
-          </li>
-        ))}
-      </ul>
-    );
-  if (bare) {
-    return (
-      <>
-        {list}
-        <FileViewer target={target} onClose={() => setTarget(null)} />
-      </>
-    );
-  }
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Working tree changes</CardTitle>
-      </CardHeader>
-      <CardContent>{list}</CardContent>
-      <FileViewer target={target} onClose={() => setTarget(null)} />
-    </Card>
-  );
-}
 
 /** The files in the task folder; clicking one opens it read-only. */
 export function ArtifactList({ task }: { task: Task }) {
@@ -80,7 +29,7 @@ export function ArtifactList({ task }: { task: Task }) {
                 variant="link"
                 size="xs"
                 className="h-auto px-0 font-mono"
-                onClick={() => setTarget({ path: `${dir}/${f.name}`, mode: 'content' })}
+                onClick={() => setTarget({ path: `${dir}/${f.name}` })}
               >
                 <FileTextIcon />
                 {f.name}
@@ -270,7 +219,7 @@ export function TaskCanvas({ task, changes }: { task?: Task; changes: Change[] }
         )}
       </TabsContent>
       <TabsContent value="changes" className="min-h-0 overflow-y-auto p-4">
-        <ChangesList changes={changes} bare />
+        <ChangesView changes={changes} />
       </TabsContent>
     </Tabs>
   );
@@ -299,7 +248,7 @@ export function TaskPanel({ task, changes }: { task: Task; changes?: Change[] })
           </div>
         </CardContent>
       </Card>
-      {changes && <ChangesList changes={changes} />}
+      {changes && <ChangesCard changes={changes} />}
     </div>
   );
 }

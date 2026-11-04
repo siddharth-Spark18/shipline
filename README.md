@@ -8,6 +8,40 @@ There are no approvals: Claude proposes each stage change and the owner confirms
 
 Plan: `docs/plans/shipline-v1.md`.
 
+## Install
+
+Shipline's repo workflow is published on npm as `@forgeyard/shipline`. Run it from the root of the repo you
+want to set up (Node 18+; the `ui` command needs Node 20+):
+
+```bash
+npx @forgeyard/shipline init       # install the workflow into this repo (asks what to install; --yes for the defaults)
+npx @forgeyard/shipline upgrade    # update an installed repo and move its tasks to ~/.shipline
+npx @forgeyard/shipline uninstall  # remove Shipline from this repo
+npx @forgeyard/shipline ui         # optional local web UI
+```
+
+`upgrade` shows a preview and asks before changing anything (`--dry-run` only previews, `--yes` skips the
+question, `--force` also replaces Shipline files your team edited). It never commits: the removal of the old
+in-repo task folder is staged for you to review.
+
+In a terminal, `init` asks which workflows (Feature, Bugfix, Hotfix, Small change), which Shipline agents and
+which of your repo's own skills to use, and what to do when one of Shipline's agent names already exists in
+`.claude/agents/` (keep yours, use ours, or skip). `init --yes` installs everything and keeps your own agent
+files on a clash; without a terminal and without `--yes` it refuses.
+
+### Uninstall
+
+```bash
+npx @forgeyard/shipline uninstall [dir] [--yes] [--dry-run] [--purge]
+```
+
+It previews what it will remove, then asks. It removes `.shipline/`, the agents and skills Shipline installed
+(agents you kept as your own, recorded in `VERSION.excluded`, are left alone), the `CLAUDE.md` block, and
+Shipline's hook entries and `Read/Edit(~/.shipline/**)` allow rules in `.claude/settings.json`. It asks
+separately whether to delete this repo's task data in `~/.shipline/projects/<repo>/`; with `--yes` that data is
+kept unless you also pass `--purge`. It only deletes files from disk, never runs git: commit the removal
+yourself. It refuses while a Shipline UI chat holds the repo's lock (stop the UI first).
+
 ## Hard rules
 
 - Shipline never collects, stores or relays Claude credentials or session tokens. No Agent SDK, no
@@ -117,37 +151,42 @@ Search the code for `OPEN-QUESTION #` to find each decision point. Numbers 1-11 
 `#12` marks judgment calls made in the continuous-flow revision (stage roles, base branch, merge ending
 the chat); unnumbered `OPEN-QUESTION` comments mark the chat-first (b) revision's calls.
 
-## CLI: `npx shipline init` (v2 direction)
+## CLI: `npx @forgeyard/shipline init` (v2 direction)
 
 Plan: `docs/plans/shipline-v2-repo-init.md`. The `packages/cli` package installs Shipline into any repo so
 that everyone using Claude Code there follows the same workflow, with nothing to install on clone.
 
 ```bash
-npx shipline init          # in the target repo (add --dry-run to preview)
+npx @forgeyard/shipline init          # in the target repo (add --dry-run to preview)
 # then, in Claude Code:  /shipline-setup
 ```
 
-`init` vendors, and you commit to the repo: `.shipline/` (config.yml, workflows feature/bugfix/hotfix,
+`init` vendors, and you commit to the repo: `.shipline/` (config.yml, workflows feature/bugfix/hotfix/small,
 `rules/<stage>.md`, dependency-free `bin/*.mjs` hook and stage scripts), `.claude/agents`,
 `.claude/skills/shipline-setup` and `shipline-workflow`, hooks merged into `.claude/settings.json`
 (SessionStart, UserPromptSubmit, PreToolUse) and a `<!-- shipline:start -->` block in `CLAUDE.md`.
-It never overwrites: any name collision aborts with nothing written, and re-running it reports "already
-initialized". Needs Node 18+ on teammates' machines.
+It never overwrites your files: any name collision other than an agent name aborts with nothing written (agent name clashes are
+resolved per agent), and re-running it reports "already initialized". Needs Node 18+ on teammates' machines.
 
 - Workflow config is YAML, read by a tiny built-in parser (a constrained subset), so hooks have no deps.
 - Per stage: `enforcement` (`guide` | `warn` | `block`) and `confirm_to_advance`. By default source edits
   are blocked until plan is done and `git commit` / `gh pr create` until verify is done. Malformed config
   fails open with a visible warning.
-- State: `.shipline/.state/<session_id>.json` (gitignored) and `<artifact root>/<task>/manifest.json`
-  (committed with the artifacts); a new session resumes unfinished tasks from the manifests.
+- State: tasks (`manifest.json` plus artifacts), session state and UI data are stored outside the repo, in
+  `$SHIPLINE_HOME/projects/<repo path, non-alphanumerics as "-">/` (`SHIPLINE_HOME` defaults to `~/.shipline`),
+  the same way Claude Code keeps its chats. They are personal, not shared through git; a new session resumes
+  unfinished tasks from the manifests there. `init` adds `Read(~/.shipline/**)` and `Edit(~/.shipline/**)` allow
+  rules so Claude can write artifacts without prompts; with a custom `SHIPLINE_HOME` Claude asks for permission
+  instead. If you move or rename the repo folder the store key changes and its tasks appear to be gone (the old
+  store folder stays on disk).
 - Claude records progress with `node .shipline/bin/stage.mjs start|advance|skip|reopen|status|resume`.
 - `packages/plugin` is now only a wrapper exposing `/shipline:init`. The hub (`apps/*`) is untouched and
   is removed in a later phase.
 
-### `npx shipline ui` (optional)
+### `npx @forgeyard/shipline ui` (optional)
 
 ```bash
-npx shipline ui [dir] [--port <n>] [--no-open]   # Node 20+ for this command; init and the hooks stay on Node 18
+npx @forgeyard/shipline ui [dir] [--port <n>] [--no-open]   # Node 20+ for this command; init and the hooks stay on Node 18
 ```
 
 Starts a local web server on `127.0.0.1` (random port unless `--port`) for the checkout it is run in, and
@@ -161,10 +200,10 @@ enforce the workflow with or without it. Phase 1 has two screens:
   saving. `/shipline-setup` and the UI can be used in either order.
 - **Tasks:** each unfinished task with its stages, task-folder files and the working-tree changes, updated
   live as files change. A Diagnostics view shows versions, watch mode and the tail of
-  `.shipline/.state/ui.log`.
+  `<store>/ui/ui.log`.
 
 Banners: a repo initialized by an older Shipline (`.shipline/bin/VERSION` missing or lower interface) shows
 an information banner listing what its hook scripts lack. A repo set up by a newer Shipline makes saving
-read-only and shows the `npx shipline@<version> ui` command to run. If something breaks, nothing is lost:
+read-only and shows the `npx @forgeyard/shipline@<version> ui` command to run. If something breaks, nothing is lost:
 the repo files are plain files, and a Claude session can always be continued in a terminal with
 `claude --resume <id>`.

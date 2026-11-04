@@ -23,6 +23,10 @@ export interface Status {
   repoVersion: VersionInfo;
   versionState: VersionState;
   root: string;
+  /** The task store for this repo, outside the repo (under ~/.shipline). */
+  storeDir: string;
+  /** True when the repo's interface is below 3: tasks still live in the repo and chat is disabled. */
+  needsUpgrade: boolean;
 }
 
 // --- Diff ---
@@ -86,8 +90,6 @@ export interface WorkflowModel {
 }
 
 export interface ConfigModel {
-  artifact_root?: string | null;
-  folder_pattern?: string | null;
   branch_pattern?: string | null;
   tracker?: string | null;
   commands?: {
@@ -96,6 +98,8 @@ export interface ConfigModel {
     build?: string | null;
     [key: string]: unknown;
   } | null;
+  /** Names of the repo's own `.claude/skills/<name>`; edited in the Agents & skills section. */
+  skills?: string[] | null;
   [key: string]: unknown;
 }
 
@@ -122,11 +126,47 @@ export interface SetupFileBroken {
 
 export type SetupFile<M = SetupModel> = SetupFileOk<M> | SetupFileBroken;
 
+/** One of Shipline's own agents. `excluded` + `installed` means the team's own file is kept instead. */
+export interface ShiplineAgent {
+  name: string;
+  installed: boolean;
+  excluded: boolean;
+  /** SHA-256 of the installed `.claude/agents/<name>.md`, or null when the file is absent. */
+  hash: string | null;
+}
+
+export interface SetupAgents {
+  shipline: ShiplineAgent[];
+  /** Names of the repo's own agents. */
+  repo: string[];
+}
+
+export interface SetupSkills {
+  repo: string[];
+  selected: string[];
+}
+
 export interface SetupData {
   config: SetupFile<ConfigModel>;
   workflows: SetupFile<WorkflowModel>[];
   rules: SetupFile<never>[];
-  agents: string[];
+  agents: SetupAgents;
+  skills: SetupSkills;
+  /** SHA-256 of the raw `.shipline/bin/VERSION` text. */
+  versionHash: string;
+}
+
+/** POST /api/setup/agents. `baseHashes` is keyed by `.claude/agents/<name>.md`; null = must not exist. */
+export interface AgentsChange {
+  add?: string[];
+  remove?: string[];
+  baseVersionHash: string;
+  baseHashes: Record<string, string | null>;
+}
+
+export interface AgentsPreviewResponse {
+  files: PreviewFile[];
+  version: { before: unknown; after: unknown };
 }
 
 export interface SaveEntry {
@@ -160,9 +200,10 @@ export interface ImpactEntry {
 }
 
 export interface PreviewFile {
-  kind: SetupKind;
+  kind: SetupKind | 'agent';
   id?: string;
-  text: string;
+  /** Null for a removed agent file. */
+  text: string | null;
   diff: DiffHunk[];
   removedComments: string[];
   errors: ValidationIssue[];
@@ -178,7 +219,9 @@ export interface SaveResponse {
 }
 
 export type WorkflowAction =
-  { action: 'copy'; from: string; id: string } | { action: 'delete'; id: string };
+  | { action: 'copy'; from: string; id: string }
+  | { action: 'delete'; id: string }
+  | { action: 'create'; id: string; name: string };
 
 // --- Tasks ---
 
@@ -199,7 +242,7 @@ export interface TaskFile {
 }
 
 export interface Task {
-  /** Task folder, relative to the repo root. */
+  /** Task folder: the absolute path of its store folder. Treat it as an opaque id. */
   dir: string;
   slug: string;
   title: string;
@@ -209,12 +252,16 @@ export interface Task {
   files: TaskFile[];
 }
 
+export type ChangeStatus = 'added' | 'modified' | 'deleted' | 'renamed';
+
 export interface Change {
   path: string;
   oldPath?: string;
-  /** One-character `git status --porcelain` codes. */
-  index: string;
-  worktree: string;
+  /** Untracked files count as `added`. */
+  status: ChangeStatus;
+  /** Line counts; null for binary files. */
+  additions: number | null;
+  deletions: number | null;
 }
 
 export interface TasksData {

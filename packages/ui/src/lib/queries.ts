@@ -24,11 +24,11 @@ export function usePrompts(): PromptEvent[] {
 
 const normDir = (p: string) => p.replace(/\/+$/, '');
 
-/** The task whose folder a chat works in (`task_dir` may be absolute or relative). */
+/** The task whose folder a chat works in. Both sides are absolute store paths, compared as opaque ids. */
 export function findTask(tasks: Task[] | undefined, taskDir: string | null | undefined) {
   if (!tasks || !taskDir) return undefined;
   const dir = normDir(taskDir);
-  return tasks.find((t) => normDir(t.dir) === dir || dir.endsWith(`/${normDir(t.dir)}`));
+  return tasks.find((t) => normDir(t.dir) === dir);
 }
 
 /** True while the viewport matches the media query. */

@@ -5,7 +5,7 @@ import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { BIN, cleanEnv, makeRepo, removeDir } from '../helpers.mjs';
+import { BIN, cleanEnv, homeFor, makeRepo, removeDir } from '../helpers.mjs';
 import { openEvents, startUi } from './helpers.mjs';
 import { groupPids, lockPath, pidAlive, readSessions, startChat, useFakeClaude, waitUntil } from './chat-helpers.mjs';
 
@@ -33,7 +33,7 @@ const servers = [];
 async function startUiProcess(script) {
   fake.script(script);
   const child = spawn(process.execPath, [BIN, 'ui', dir, '--no-open', '--port', '0'], {
-    env: cleanEnv(),
+    env: cleanEnv({ SHIPLINE_HOME: homeFor(dir) }), // the repo's own store (lock.json, sessions.json)
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   servers.push(child);

@@ -1,6 +1,6 @@
-# Shipline v2: repo-installed Claude workflow (`npx shipline init`)
+# Shipline v2: repo-installed Claude workflow (`npx @forgeyard/shipline init`)
 
-Status: approved 2026-11-02. Supersedes the hub direction in `shipline-v1.md` (hub is removed in a later phase).
+Status: approved 2026-11-02. Note: the package is now published as `@forgeyard/shipline` (commands below use the new name). Supersedes the hub direction in `shipline-v1.md` (hub is removed in a later phase).
 Amended by `.claude/plans/shipline-local-ui.md` (optional local UI).
 
 ## Problem & Goal
@@ -14,7 +14,7 @@ the same flow with nothing to install.**
 
 **Success means all four of these hold:**
 
-1. **Dogfood:** after `npx shipline init` and `/shipline-setup` on a real repo, a teammate clones it and
+1. **Dogfood:** after `npx @forgeyard/shipline init` and `/shipline-setup` on a real repo, a teammate clones it and
    Claude follows the Feature flow end to end with no install.
 2. **Gates work:** in `block` mode, Claude cannot edit source before the plan is done or commit/open a PR
    before verify is done. In `warn` mode it gets reminded.
@@ -57,7 +57,7 @@ the same flow with nothing to install.**
 ### This repo
 
 - New `packages/cli/`:
-  - The bin, which uses `npx shipline init` as its entry point.
+  - The bin, which uses `npx @forgeyard/shipline init` as its entry point.
   - `templates/` holding the `.claude/` and `.shipline/` files.
   - Merge logic for existing files.
 - `packages/plugin/`: reduced to a thin `/shipline:init` wrapper. The current hub-coupled agents, skill,
@@ -88,7 +88,7 @@ CLAUDE.md                         # appended marked <!-- shipline:start/end --> 
 
 ### Data and API
 
-There's no database and no hosted server; an optional local UI (`npx shipline ui`) exists. State lives in two places:
+There's no database and no hosted server; an optional local UI (`npx @forgeyard/shipline ui`) exists. State lives in two places:
 
 - **Session state:** `.shipline/.state/<session_id>.json` records the active task and workflow. It's
   gitignored.

@@ -22,7 +22,6 @@ stages:
     confirm_to_advance: true
     blocks:
       - tools: 'Edit|Write|MultiEdit|NotebookEdit'
-        allow_paths: ["{artifact_root}/**"]
   - id: fix
     name: Fix
     artifact: fix.md

@@ -1,7 +1,7 @@
 {
-  "name": "shipline",
-  "version": "0.6.0",
-  "description": "Install a repo-committed Claude Code workflow (stages, rules, enforcement hooks, saved artifacts) with `npx shipline init`.",
+  "name": "@forgeyard/shipline",
+  "version": "0.7.0",
+  "description": "Install a repo-committed Claude Code workflow (stages, rules, enforcement hooks, task artifacts stored outside the repo) with `npx @forgeyard/shipline init`.",
   "type": "module",
   "bin": {
     "shipline": "bin/shipline.mjs"
@@ -18,8 +18,19 @@
     "prepack": "node scripts/build-ui.mjs",
     "check:ui": "node scripts/check-ui.mjs"
   },
+  "dependencies": {
+    "@inquirer/prompts": "^8.7.5"
+  },
   "engines": {
     "node": ">=18"
   },
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/siddharth-Spark18/shipline.git",
+    "directory": "packages/cli"
+  }
 }

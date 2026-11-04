@@ -2,10 +2,14 @@
 // session cookie through the token exchange, make requests, read SSE. Not a test file. Node 20+.
 import http from 'node:http';
 import { startServer } from '../../src/ui/server.mjs';
+import { homeFor } from '../helpers.mjs';
 
 // startServer prints the URL; keep test output quiet. Its close() ends in process.exit (the shutdown path
 // SIGINT uses), so exit is stubbed for the duration of the close.
+// The server runs in this process, so process.env.SHIPLINE_HOME is pointed at the repo's own temp home (and
+// left there: the server reads it on every request, and the fake claude inherits it).
 export async function startUi(dir, { env = {} } = {}) {
+  process.env.SHIPLINE_HOME = homeFor(dir);
   const saved = {};
   for (const [k, v] of Object.entries(env)) {
     saved[k] = process.env[k];
@@ -33,9 +37,11 @@ export async function startUi(dir, { env = {} } = {}) {
     origin: `http://127.0.0.1:${handle.port}`,
     cookie: null,
     closed: false,
+    home: homeFor(dir),
     async close() {
       if (ui.closed) return;
       ui.closed = true;
+      process.env.SHIPLINE_HOME = ui.home; // shutdown writes (lock, log) go to this server's own store
       const exit = process.exit;
       let code;
       process.exit = (c) => {
@@ -57,7 +63,10 @@ export async function startUi(dir, { env = {} } = {}) {
 }
 
 // fetch with the session cookie, and the server's own Origin on POST, unless overridden (null removes).
+// When several servers (on repos with different SHIPLINE_HOMEs) run in this process, each request first points
+// process.env.SHIPLINE_HOME back at the home of the server it talks to.
 export async function api(ui, method, pathname, { body, cookie = ui.cookie, origin = method === 'POST' ? ui.origin : null, headers = {} } = {}) {
+  if (ui.home) process.env.SHIPLINE_HOME = ui.home;
   const h = { ...headers };
   if (cookie !== null) h.cookie = cookie;
   if (origin !== null) h.origin = origin;
@@ -104,6 +113,7 @@ export function rawRequest(port, { method = 'GET', path = '/', headers = {}, bod
 // Opens GET /api/events and collects events. waitFor(pred, ms) resolves with the first event, received
 // after `since` (an index from mark()), that matches; rejects on timeout.
 export async function openEvents(ui) {
+  if (ui.home) process.env.SHIPLINE_HOME = ui.home;
   const ac = new AbortController();
   const r = await fetch(`${ui.base}/api/events`, { headers: { cookie: ui.cookie }, signal: ac.signal });
   if (r.status !== 200) throw new Error(`events: ${r.status}`);

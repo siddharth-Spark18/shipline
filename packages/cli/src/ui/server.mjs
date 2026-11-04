@@ -3,7 +3,7 @@ import http from 'node:http';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { INTERFACE, MISSING_BEFORE } from '../interface.mjs';
+import { INTERFACE } from '../interface.mjs';
 import { createAuth } from './auth.mjs';
 import { createChats } from './chat.mjs';
 import { routes as chatRoutes } from './chat-routes.mjs';
@@ -16,6 +16,7 @@ import { resolveRepo } from './repo.mjs';
 import { routes as setupRoutes } from './setup.mjs';
 import { createHub } from './sse.mjs';
 import { routes as taskRoutes } from './tasks.mjs';
+import { storeDir } from '../store.mjs';
 import { startTaskWatch } from './watch.mjs';
 
 const UI_DIST = fileURLToPath(new URL('../../ui-dist/', import.meta.url));
@@ -33,6 +34,10 @@ const MIME = {
   '.woff2': 'font/woff2',
   '.json': 'application/json; charset=utf-8',
 };
+
+// Every repo older than interface 3 still has its tasks and state inside the repo.
+const UPGRADE_TEXT =
+  'Task data is still stored in this repo. Run `npx @forgeyard/shipline upgrade` to move it to ~/.shipline.';
 
 function fail(message) {
   console.error(message);
@@ -54,7 +59,7 @@ export function parseUiArgs(argv) {
       }
       port = Number(value);
     } else if (a.startsWith('-'))
-      fail(`Unknown option ${a}. Usage: npx shipline ui [dir] [--port <n>] [--no-open]`);
+      fail(`Unknown option ${a}. Usage: npx @forgeyard/shipline ui [dir] [--port <n>] [--no-open]`);
     else if (dir === null) dir = a;
   }
   return { dir: dir === null ? process.cwd() : path.resolve(dir), port, open };
@@ -117,8 +122,14 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
   try {
     repo = await resolveRepo(dir);
   } catch (e) {
-    if (e.code === 'NO_REPO') fail('No Shipline setup found here. Run `npx shipline init` first.');
+    if (e.code === 'NO_REPO')
+      fail('No Shipline setup found here. Run `npx @forgeyard/shipline init` first.');
     fail(`Could not load the repo's .shipline/bin/lib.mjs: ${e.message}`);
+  }
+  try {
+    storeDir(repo.root);
+  } catch (e) {
+    fail(e.message);
   }
   initLog(repo.root);
   log('start', { root: repo.root, uiVersion: UI_VERSION, node: process.version });
@@ -147,14 +158,14 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
     banners.set('version', {
       id: 'version',
       kind: 'version',
-      text: `This repo's hook scripts are from an older Shipline (interface ${repo.version.interface}). They don't have: ${MISSING_BEFORE.join(', ')}.`,
+      text: UPGRADE_TEXT,
     });
   } else if (repo.state === 'repo-newer') {
     const v = repo.version.package || 'latest';
     banners.set('version', {
       id: 'version',
       kind: 'version',
-      text: `This repo was set up with Shipline ${v}. Run \`npx shipline@${v} ui\`.`,
+      text: `This repo was set up with Shipline ${v}. Run \`npx @forgeyard/shipline@${v} ui\`.`,
     });
   }
 

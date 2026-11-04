@@ -3,7 +3,9 @@ import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -12,7 +14,7 @@ import { BlocksEditor } from '@/pages/setup/blocks-editor';
 import { OtherFields } from '@/pages/setup/other-fields';
 import { RulesEditor } from '@/pages/setup/rules-editor';
 import { ID_RE, setOptional } from '@/pages/setup/draft';
-import type { Enforcement, StageModel } from '@/lib/types';
+import type { Enforcement, SetupAgents, StageModel } from '@/lib/types';
 
 const NONE = '__none__';
 const STAGE_KEYS = [
@@ -34,7 +36,7 @@ export interface StageEditorProps {
   isFresh: boolean;
   /** Ids of the other stages in this workflow. */
   otherIds: string[];
-  agents: string[];
+  agents: SetupAgents;
   rules: { text: string; exists: boolean };
   onChange: (stage: StageModel) => void;
   onRulesChange: (text: string) => void;
@@ -65,8 +67,21 @@ export function StageEditor({
         ? 'Another stage already has this id'
         : null;
 
-  const agentOptions =
-    stage.agent && !agents.includes(stage.agent) ? [...agents, stage.agent] : agents;
+  // Shipline's installed agents, then the repo's own (which includes a Shipline name whose file is
+  // the team's own, kept instead of ours).
+  const shiplineNames = agents.shipline
+    .filter((a) => a.installed && !a.excluded)
+    .map((a) => a.name);
+  const repoNames = [
+    ...new Set([
+      ...agents.repo,
+      ...agents.shipline.filter((a) => a.installed && a.excluded).map((a) => a.name),
+    ]),
+  ].filter((n) => !shiplineNames.includes(n));
+  const unknownAgent =
+    stage.agent && !shiplineNames.includes(stage.agent) && !repoNames.includes(stage.agent)
+      ? stage.agent
+      : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -165,13 +180,33 @@ export function StageEditor({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={NONE}>none</SelectItem>
-              {agentOptions.map((a) => (
-                <SelectItem key={a} value={a}>
-                  {a}
-                  {agents.includes(a) ? '' : ' (no such agent file)'}
-                </SelectItem>
-              ))}
+              <SelectItem value={NONE}>None</SelectItem>
+              {shiplineNames.length > 0 && (
+                <SelectGroup>
+                  <SelectLabel>Shipline agents</SelectLabel>
+                  {shiplineNames.map((a) => (
+                    <SelectItem key={a} value={a}>
+                      {a}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              )}
+              {repoNames.length > 0 && (
+                <SelectGroup>
+                  <SelectLabel>Your agents</SelectLabel>
+                  {repoNames.map((a) => (
+                    <SelectItem key={a} value={a}>
+                      {a}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              )}
+              {unknownAgent && (
+                <SelectGroup>
+                  <SelectLabel>Not installed</SelectLabel>
+                  <SelectItem value={unknownAgent}>{unknownAgent} (agent not installed)</SelectItem>
+                </SelectGroup>
+              )}
             </SelectContent>
           </Select>
         </div>

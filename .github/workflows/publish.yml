@@ -1,0 +1,54 @@
+name: publish
+
+# Publishes @forgeyard/shipline to npm when a v<major>.<minor>.<patch> tag is pushed.
+# Needs the NPM_TOKEN secret: a granular npm token with publish rights on the @forgeyard scope.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag must match the package version
+        run: |
+          version=$(node -p "require('./packages/cli/package.json').version")
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match packages/cli/package.json version v${version}" >&2
+            exit 1
+          fi
+
+      - name: known-hashes.json must have an entry for this version
+        run: |
+          node -e "
+            const v = require('./packages/cli/package.json').version;
+            const known = require('./packages/cli/src/known-hashes.json');
+            const found = Object.values(known).some((byHash) => Object.values(byHash).includes(v));
+            if (!found) {
+              console.error('packages/cli/src/known-hashes.json has no entry for ' + v + '. Run: node packages/cli/scripts/hash-templates.mjs');
+              process.exit(1);
+            }
+          "
+
+      - uses: pnpm/action-setup@v4 # version from package.json "packageManager"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter ./packages/cli test
+      - run: pnpm --filter @shipline/ui typecheck
+
+      # prepack builds ui-dist.
+      - name: Publish
+        working-directory: packages/cli
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -47,6 +47,10 @@
   --color-enf-guide: var(--enf-guide);
   --color-enf-warn: var(--enf-warn);
   --color-enf-block: var(--enf-block);
+  --color-change-added: var(--change-added);
+  --color-change-modified: var(--change-modified);
+  --color-change-deleted: var(--change-deleted);
+  --color-change-renamed: var(--change-renamed);
   --color-notice-blocked: var(--notice-blocked);
   --color-notice-reminder: var(--notice-reminder);
   --color-notice-denied: var(--notice-denied);
@@ -103,6 +107,11 @@
   --enf-guide: #3f6590;
   --enf-warn: #8f5700;
   --enf-block: #b3261e;
+  /* File change status in the changes view. */
+  --change-added: #2b7a3e;
+  --change-modified: #8f5700;
+  --change-deleted: #b3261e;
+  --change-renamed: #3f6590;
   /* Notices in the chat stream. */
   --notice-blocked: #b3261e;
   --notice-reminder: #8f5700;
@@ -149,6 +158,10 @@
   --enf-guide: #8db4e2;
   --enf-warn: #f0b452;
   --enf-block: #ff8f85;
+  --change-added: #5ccb7a;
+  --change-modified: #f0b452;
+  --change-deleted: #ff8f85;
+  --change-renamed: #8db4e2;
   --notice-blocked: #ff8f85;
   --notice-reminder: #f0b452;
   --notice-denied: #e8a0c8;
@@ -163,5 +176,31 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+/*
+ * Chat split. The task panel slides in by animating the flex-grow of the two resizable panels:
+ * closed forces 100 / 0 (the library's percentages sum to 100, so the motion is linear), open
+ * hands control back to the library, so the panel stays resizable. No transition while dragging.
+ */
+.chat-split > [data-panel] {
+  transition: flex-grow 250ms ease-out;
+}
+.chat-split:has([data-separator='active']) > [data-panel] {
+  transition: none;
+}
+.chat-split[data-closed='true'] > [data-panel]:first-child {
+  flex-grow: 100 !important;
+}
+.chat-split[data-closed='true'] > [data-panel]:last-child {
+  flex-grow: 0 !important;
+}
+.chat-split[data-closed='true'] > [data-separator] {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-split > [data-panel] {
+    transition: none;
   }
 }

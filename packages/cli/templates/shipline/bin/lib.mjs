@@ -197,6 +197,35 @@ export function shiplineHome() {
   return process.env.SHIPLINE_HOME || path.join(os.homedir(), '.shipline');
 }
 
+// True when two repo roots are the same folder. On Windows paths are case-insensitive (and drive letters
+// differ in case), so compare lowercased; elsewhere an exact match. `platform` is injectable for tests.
+export function sameRoot(a, b, platform = process.platform) {
+  if (platform === 'win32') return path.win32.resolve(a).toLowerCase() === path.win32.resolve(b).toLowerCase();
+  return a === b;
+}
+
+// True when `child` is `parent` or inside it. Windows paths are compared case-insensitively. `platform` is
+// injectable so the Windows rules can be tested on any OS.
+export function isInside(parent, child, platform = process.platform) {
+  const win = platform === 'win32';
+  const p = win ? path.win32 : path.posix;
+  const norm = (x) => (win ? String(x).toLowerCase() : String(x));
+  const rel = p.relative(norm(parent), norm(child));
+  return rel === '' || (!rel.startsWith('..') && !p.isAbsolute(rel));
+}
+
+// The line ending of a text: '\r\n' when its first line break is CRLF, otherwise '\n' (also when it has none).
+export function detectEol(text) {
+  const m = /\r?\n/.exec(String(text));
+  return m && m[0] === '\r\n' ? '\r\n' : '\n';
+}
+
+// Rewrites every line break in `text` (CRLF or LF) as `eol`.
+export function toEol(text, eol) {
+  const lf = String(text).replace(/\r\n/g, '\n');
+  return eol === '\r\n' ? lf.replace(/\n/g, '\r\n') : lf;
+}
+
 function realRoot(root) {
   try {
     return realpathSync(root);
@@ -220,7 +249,7 @@ export function storeDir(root) {
       // Missing or unreadable repo.json: it is (re)written below.
     }
     if (existing && typeof existing.root === 'string') {
-      if (existing.root !== real) {
+      if (!sameRoot(existing.root, real)) {
         throw Object.assign(
           new Error(`Shipline store collision at ${dir}: it belongs to ${existing.root}, but this repo is ${real}. Nothing was shared.`),
           { code: 'STORE_COLLISION' },

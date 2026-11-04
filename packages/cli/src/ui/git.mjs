@@ -1,5 +1,5 @@
-// git helpers and diff parsing. Copied from apps/local/src/server/git.ts and diff.ts, plus
-// parseUnifiedDiff from packages/shared/src/local.ts. Node 20+, no dependencies.
+// git helpers and diff parsing. Ported from the v1 hub (removed), plus
+// parseUnifiedDiff, also from the v1 hub. Node 20+, no dependencies.
 import { execFile } from 'node:child_process';
 import {
   closeSync,
@@ -10,6 +10,9 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+// git's own name for "no file" in --no-index mode; it works on every platform, including Windows
+// (Node's os.devNull is \\.\nul there, which git does not recognise).
+const GIT_NULL = '/dev/null';
 import path from 'node:path';
 import { uiDir } from '../store.mjs';
 
@@ -97,11 +100,7 @@ export async function fileDiff(root, change, absPath) {
   if (untracked) {
     if (absPath && looksBinary(headBytes(absPath))) return { binary: true };
     patch = (
-      await gitRun(
-        root,
-        ['diff', '--no-color', '--no-index', '--', '/dev/null', change.path],
-        [0, 1],
-      )
+      await gitRun(root, ['diff', '--no-color', '--no-index', '--', GIT_NULL, change.path], [0, 1])
     ).stdout;
   } else {
     const pathspec = change.oldPath ? [change.oldPath, change.path] : [change.path];

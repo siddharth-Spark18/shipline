@@ -82,7 +82,7 @@ describe('SHIPLINE_HOME', () => {
     assert.equal(r.stdout.trim(), path.join(fakeHome, '.shipline'));
   });
 
-  test('the store key is the realpath of the repo root (a symlinked path shares the store)', { skip: process.platform === 'win32' ? 'symlinks' : false }, () => {
+  test('the store key is the realpath of the repo root (a symlinked path shares the store)', { skip: process.platform === 'win32' && 'creating symlinks needs extra rights on Windows; the store key on a real Windows path is covered by windows.test.mjs "a repo on a drive-letter path: init, a stage, and the store folder name"' }, () => {
     const repo = keep(tmpDir());
     const link = path.join(keep(tmpDir()), 'link');
     spawnSync('ln', ['-s', repo, link]);
@@ -151,7 +151,7 @@ describe('repo.json collision guard', () => {
 });
 
 describe('an unwritable store', () => {
-  test('hooks fail open with "Shipline can\'t write its task store at <path>"', { skip: process.platform === 'win32' ? 'POSIX paths' : false }, () => {
+  test('hooks fail open with "Shipline can\'t write its task store at <path>"', { skip: process.platform === 'win32' && 'blocks the store with a file in the path (POSIX ENOTDIR); no Windows test covers an unwritable store yet' }, () => {
     const repo = keep(makeRepo({ commitInit: true }));
     const blocker = path.join(homeFor(repo), 'a-file');
     writeFileSync(blocker, 'x');

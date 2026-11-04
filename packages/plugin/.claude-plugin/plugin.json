@@ -1,6 +1,0 @@
-{
-  "name": "shipline",
-  "version": "0.3.0",
-  "description": "Thin wrapper that exposes /shipline:init, which installs the Shipline repo workflow via the @forgeyard/shipline CLI.",
-  "author": { "name": "Shipline" }
-}

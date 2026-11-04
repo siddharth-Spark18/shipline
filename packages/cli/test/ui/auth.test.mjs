@@ -304,7 +304,7 @@ describe('command line', () => {
     }
   });
 
-  test('prints the tokened URL, and SIGINT shuts down with exit 0', async () => {
+  test('prints the tokened URL, and SIGINT shuts down with exit 0', { skip: process.platform === 'win32' && 'Node cannot send SIGINT to a child on Windows (child.kill terminates it, so the exit code is never 0); no Windows test covers Ctrl+C on `shipline ui`' }, async () => {
     const child = spawn(process.execPath, [BIN, 'ui', dir, '--no-open'], { env: cleanEnv({ SHIPLINE_HOME: homeFor(dir) }), stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     child.stdout.on('data', (c) => (out += c));

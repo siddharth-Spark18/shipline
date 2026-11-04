@@ -1,5 +1,5 @@
 // The user's own installed `claude`: where it is, whether it is usable, and the one place that owns its
-// argv. Node 20+, no dependencies. claudeHealth follows apps/local/src/server/claude-cli.ts.
+// argv. Node 20+, no dependencies. claudeHealth follows the v1 hub (removed).
 import { execFile } from 'node:child_process';
 import { accessSync, constants, statSync } from 'node:fs';
 import path from 'node:path';
@@ -28,7 +28,7 @@ export const FORBIDDEN_FLAGS = [
 // SHIPLINE_CLAUDE_BIN (tests only), otherwise the first `claude` on PATH, or null.
 export function findClaude() {
   if (process.env.SHIPLINE_CLAUDE_BIN) return process.env.SHIPLINE_CLAUDE_BIN;
-  const exts = process.platform === 'win32' ? ['.exe', '.cmd', ''] : [''];
+  const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat'] : [''];
   for (const dir of String(process.env.PATH || '').split(path.delimiter)) {
     if (!dir) continue;
     for (const ext of exts) {
@@ -45,11 +45,33 @@ export function findClaude() {
   return null;
 }
 
+const quoteWin = (s) => `"${String(s).replace(/"/g, '""')}"`;
+
+// How to start `bin` with `args`. On Windows a `.cmd`/`.bat` (an npm install of Claude Code, or the test shim)
+// can only run through a shell (Node refuses with EINVAL otherwise), so the command and every argument are
+// double-quoted by hand (`"` inside is doubled). Anything else is started directly.
+export function startSpec(bin, args, platform = process.platform) {
+  if (platform === 'win32' && /\.(cmd|bat)$/i.test(bin)) {
+    return {
+      command: quoteWin(bin),
+      args: args.map(quoteWin),
+      options: { shell: true, windowsHide: true },
+    };
+  }
+  return { command: bin, args, options: {} };
+}
+
 function run(bin, args, timeoutMs = 15_000) {
+  const spec = startSpec(bin, args);
   return new Promise((resolve) => {
-    execFile(bin, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
-      resolve({ ok: !err, stdout: String(stdout), stderr: String(stderr) });
-    });
+    execFile(
+      spec.command,
+      spec.args,
+      { ...spec.options, timeout: timeoutMs, maxBuffer: 1024 * 1024 },
+      (err, stdout, stderr) => {
+        resolve({ ok: !err, stdout: String(stdout), stderr: String(stderr) });
+      },
+    );
   });
 }
 

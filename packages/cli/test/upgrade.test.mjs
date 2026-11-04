@@ -732,7 +732,7 @@ describe('other layouts', () => {
 // ---------- failure safety ----------
 
 describe('an unwritable store', () => {
-  test('upgrade exits 1 with "Shipline can\'t write its task store" and changes nothing', { skip: process.platform === 'win32' ? 'POSIX paths' : false }, () => {
+  test('upgrade exits 1 with "Shipline can\'t write its task store" and changes nothing', { skip: process.platform === 'win32' && 'blocks the store with a file in the path (POSIX ENOTDIR); no Windows test covers an unwritable store yet' }, () => {
     const dir = legacyRepo();
     const blocker = path.join(tmpDir(), 'a-file');
     dirs.push(path.dirname(blocker));
@@ -746,7 +746,7 @@ describe('an unwritable store', () => {
 });
 
 describe('a failure before VERSION is written', () => {
-  test('while writing files: VERSION, the task folders and .state stay; the store copies stay; the step is named', { skip: isRoot || process.platform === 'win32' ? 'needs a non-root POSIX user' : false }, () => {
+  test('while writing files: VERSION, the task folders and .state stay; the store copies stay; the step is named', { skip: isRoot ? 'needs a non-root user' : process.platform === 'win32' && 'relies on POSIX file modes to make a write fail; no Windows test covers the failed-write path (its logic is platform-neutral)' }, () => {
     const dir = legacyRepo();
     const builder = path.join(dir, '.claude', 'agents', 'builder.md');
     const versionText = read(dir, '.shipline/bin/VERSION');

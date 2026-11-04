@@ -197,7 +197,7 @@ describe('GET /api/file', () => {
     assert.ok(lines.some((l) => l.type === 'add' && l.text === 'export const a = 2;'));
   });
 
-  test('diffs an untracked file against /dev/null', async () => {
+  test('diffs an untracked file against the null device (/dev/null, which git accepts on every platform)', async () => {
     write('src/new.js', 'one\ntwo\n');
     const r = await file('src/new.js', 'diff');
     assert.equal(r.status, 200, r.text);

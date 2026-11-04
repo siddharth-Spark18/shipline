@@ -1,5 +1,5 @@
-// `claude -p --output-format stream-json` lines and the helpers that read them. Copied from
-// packages/shared/src/stream-json.ts. Node 20+, no dependencies.
+// `claude -p --output-format stream-json` lines and the helpers that read them. Ported from the v1 hub (removed).
+// Node 20+, no dependencies.
 
 // Event types the chat forwards. A valid JSON line with another `type` is logged and skipped.
 export const KNOWN_TYPES = new Set(['system', 'assistant', 'user', 'result', 'stream_event']);

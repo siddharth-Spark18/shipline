@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { parseYaml } from '../templates/shipline/bin/lib.mjs';
+import { detectEol, isInside, parseYaml, toEol } from '../templates/shipline/bin/lib.mjs';
 import { INTERFACE } from './interface.mjs';
 import {
   CLAUDE_MD_KEY, HOOK_MARK, PACKAGE_VERSION, SETTINGS_KEY, START, VERSION_FILE,
@@ -295,7 +295,7 @@ export async function runInit({ target, dryRun = false, yes = false, prompts = n
     }
     // A parent that exists as a file would also make the write fail.
     let p = path.dirname(abs);
-    while (p.startsWith(root) && p !== root) {
+    while (isInside(root, p) && p !== root) {
       if (existsSync(p) && !lstatSync(p).isDirectory()) {
         collisions.push(path.relative(root, p));
         break;
@@ -320,7 +320,8 @@ export async function runInit({ target, dryRun = false, yes = false, prompts = n
     return 1;
   }
   const section = claudeMdSection();
-  const newClaudeMd = claudeMd === null ? section : claudeMd.replace(/\s*$/, '\n\n') + section;
+  const newClaudeMd =
+    claudeMd === null ? section : toEol(claudeMd.replace(/\s*$/, '\n\n') + section, detectEol(claudeMd));
   const excluded = excludedPaths(info, selection);
 
   if (!dryRun) {

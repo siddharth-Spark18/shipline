@@ -1,5 +1,5 @@
 // Shared helpers for the CLI tests. Not a test file (no test glob matches it). Node 18+, no dependencies.
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -130,4 +130,53 @@ export function hook(dir, script, payload) {
   let json = null;
   if (r.stdout.trim()) json = JSON.parse(r.stdout);
   return { ...r, json };
+}
+
+// ---------- Windows ----------
+
+export const IS_WIN = process.platform === 'win32';
+export const FAKE_CLAUDE_MJS = path.join(FIXTURES, 'fake-claude.mjs');
+
+// Writes a .cmd shim that runs `script` with node, and returns the shim's path. Windows ignores shebang lines
+// and can't start a .mjs directly, so the chat tests start the fake `claude` through one (cleanup plan, C).
+export function writeCmdShim(shim, script) {
+  writeFileSync(shim, `@node "${script}" %*\r\n`);
+  return shim;
+}
+
+// What SHIPLINE_CLAUDE_BIN points at: test/fixtures/fake-claude.mjs, or on Windows the fake-claude.cmd shim
+// written next to it (`@node "%~dp0fake-claude.mjs" %*`; gitignored).
+export function fakeClaudeBin() {
+  if (!IS_WIN) return FAKE_CLAUDE_MJS;
+  const shim = path.join(FIXTURES, 'fake-claude.cmd');
+  writeFileSync(shim, '@node "%~dp0fake-claude.mjs" %*\r\n');
+  return shim;
+}
+
+// Windows: { pid: image name } of every running process, from `tasklist` (no `ps` there).
+export function tasklist() {
+  const out = execFileSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true });
+  const procs = new Map();
+  for (const line of out.split(/\r?\n/)) {
+    const m = /^"([^"]*)","(\d+)"/.exec(line.trim());
+    if (m) procs.set(Number(m[2]), m[1]);
+  }
+  return procs;
+}
+
+// The pids in `pids` that are still running: `tasklist` on Windows, signal 0 elsewhere.
+export function livePids(pids) {
+  const wanted = pids.filter(Boolean);
+  if (IS_WIN) {
+    const procs = tasklist();
+    return wanted.filter((pid) => procs.has(pid));
+  }
+  return wanted.filter((pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (e) {
+      return e.code === 'EPERM';
+    }
+  });
 }

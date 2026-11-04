@@ -11,6 +11,11 @@
 | 2 | Install: interactive `init` that lets a team choose which Shipline agents and skills to add, bring their own, and resolve name collisions instead of aborting. Also `shipline uninstall`, and a Node preflight with a clear message for repos without Node. | later |
 | 3 | Daily friction: fewer prompts and stages for small changes, including a way to skip the workflow for trivial edits. Jira working in the `-p` browser chat. | later |
 | 4 | Trust: define what "enforced" means, given that stage progress (`--confirmed`, `--force`) is reported by Claude itself. Consider a CI gate check. Run the chat test (item 19 of `.claude/plans/shipline-local-ui.md`) and close the `UNVERIFIED` items. Fix the child process left running after a chat is stopped. | later |
-| 5 | Proof and rollout: usage metrics from the task store, a README centred on the CLI, removing the hub apps (`apps/*`, `packages/shared`), and Windows support. | later |
+| 5 | Proof and rollout: a README centred on the CLI, removing the hub apps (`apps/*`, `packages/shared`, `packages/plugin`), and Windows support. Usage metrics were dropped by the author. | `shipline-cleanup-rollout.md` |
 
 Order chosen by the author: Phase 1, then install, friction, trust, rollout.
+
+**Notes (2026-11-04):**
+- Phase 5 is covered by `shipline-cleanup-rollout.md`, minus metrics (dropped).
+- The rest of Phase 2 (Node preflight) and Phase 3 (Jira in the `-p` chat) move into a separate *Chat reliability* plan.
+- Phase 4 (Trust) is its own plan.

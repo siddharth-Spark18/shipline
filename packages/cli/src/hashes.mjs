@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { detectEol, toEol } from '../templates/shipline/bin/lib.mjs';
 
 export const TEMPLATES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'templates');
 export const PACKAGE_VERSION = JSON.parse(readFileSync(path.join(TEMPLATES, '..', 'package.json'), 'utf8')).version;
@@ -79,7 +80,7 @@ export function claudeMdBlock(text) {
   const a = text.indexOf(START);
   const b = text.indexOf(END, a + START.length);
   if (a < 0 || b < 0) return null;
-  return text.slice(a + START.length, b).trim();
+  return toEol(text.slice(a + START.length, b), '\n').trim(); // CRLF files hash the same as LF ones
 }
 
 // { <repo-relative path>: sha256 } of what a fresh install of this package would write for the owned files
@@ -120,8 +121,14 @@ export function removeShiplineFromSettings(settings) {
 
 // The inverse of the CLAUDE.md append: removes the marked block and the blank line before it. Returns the new
 // text, or null when the text has no block (nothing to remove). An otherwise empty file gives ''.
-export function removeClaudeMdBlock(text) {
-  if (typeof text !== 'string') return null;
+export function removeClaudeMdBlock(original) {
+  if (typeof original !== 'string') return null;
+  const eol = detectEol(original);
+  const out = removeBlockLf(toEol(original, '\n'));
+  return out === null ? null : toEol(out, eol);
+}
+
+function removeBlockLf(text) {
   const a = text.indexOf(START);
   const b = text.indexOf(END, a + START.length);
   if (a < 0 || b < 0) return null;

@@ -6,6 +6,12 @@
 // maps become null; empty lists are `[]`; unchanged values reuse their raw text from disk; new or changed
 // values are quoted only when the parser would read them differently.
 
+import { detectEol, toEol } from '../templates/shipline/bin/lib.mjs';
+
+// Output is built with \n. A file that already exists keeps its own line ending (its first line break wins);
+// a new file (no `raw`) is written with \n.
+const withEol = (text, raw) => (raw ? toEol(text, detectEol(raw)) : toEol(text, '\n'));
+
 // ---------- copied parser pieces (keep in step with lib.mjs) ----------
 
 function stripComment(line) {
@@ -313,7 +319,7 @@ export function emitWorkflow(model, { header = '', raw = '' } = {}) {
   if (!isPlainObject(model)) throw new Error('a workflow must be a map');
   const ctx = makeCtx(raw);
   const body = emitEntries(model, 0, '', ctx);
-  return header + (body.length ? body.join('\n') + '\n' : '');
+  return withEol(header + (body.length ? body.join('\n') + '\n' : ''), raw);
 }
 
 // Parses the shipped layout into top-level items, each with the comment/blank lines directly above it.
@@ -383,5 +389,5 @@ export function emitConfig(model, { layout, raw = '' } = {}) {
     out.push('');
     for (const k of unknown) out.push(...emitEntry(k, model[k], 0, k, ctx));
   }
-  return out.join('\n') + '\n';
+  return withEol(out.join('\n') + '\n', raw);
 }

@@ -69,7 +69,7 @@ Separately, Shipline has never run on Windows, which many teams in an organizati
 **C. Windows support**
 - **Stopping a chat:** `process.kill(-pid)` doesn't exist on Windows. There, the chat stops with `taskkill /PID <pid> /T` (kill the tree), then `taskkill /PID <pid> /T /F` after the existing 5 s. POSIX behaviour is unchanged.
 - **Opening the browser:** `win32` uses `cmd /c start "" <url>` instead of the "open it yourself" message.
-- **Diffing against nothing:** `git diff --no-index` runs against `os.devNull` (`NUL` on Windows) instead of the literal `/dev/null`.
+- **Diffing against nothing:** `git diff --no-index` keeps the literal `/dev/null`. Git recognises that name on every platform, including Windows. Changed during the build: Node's `os.devNull` is `\\.\nul` on Windows, which git doesn't accept.
 - **Path handling:** an audit of every place that builds or compares paths, checking:
   - every `startsWith(root + path.sep)`, `split(path.sep)` and posix conversion;
   - the store path encoding for drive letters (`C:\…` becomes `C--…`, the same as Claude Code);
@@ -140,7 +140,7 @@ Separately, Shipline has never run on Windows, which many teams in an organizati
     - elsewhere it keeps `process.kill(-pid, signal)`.
 - `packages/cli/src/ui/claude.mjs` (**modify**): on `win32`, `findClaude()` resolves `claude.exe`, `claude.cmd` or `claude.bat` on `PATH` (in that order). The health checks (`--version`, auth) use the same start rule as `chat.mjs`.
 - `packages/cli/src/ui/open-browser.mjs` (**modify**): the `win32` case runs `cmd /c start "" <url>` with `windowsHide: true`.
-- `packages/cli/src/ui/git.mjs` and `packages/cli/src/ui/tasks.mjs` (**modify**): use `os.devNull` instead of `'/dev/null'` in the `--no-index` calls.
+- `packages/cli/src/ui/git.mjs` and `packages/cli/src/ui/tasks.mjs` (**modify**): the `--no-index` calls use a `GIT_NULL = '/dev/null'` constant, with a comment saying why not `os.devNull`.
 - `packages/cli/templates/shipline/bin/lib.mjs` (**modify**):
   - **`encodePath`: no change expected.** It already turns every non-alphanumeric character (including `:` and `\`) into `-`, so `C:\Users\x\repo` becomes `C--Users-x-repo`, the same rule `transcript.mjs` uses. Covered by a test only.
   - **New `sameRoot(a, b, platform = process.platform)`:** with `'win32'`, it compares `path.win32.resolve(a).toLowerCase() === path.win32.resolve(b).toLowerCase()`; otherwise it's an exact match. `storeDir(root)` uses it to compare the stored `repo.json` `root` with the current `realpath`. `repo.json` keeps storing the real path unchanged.
@@ -174,7 +174,7 @@ Separately, Shipline has never run on Windows, which many teams in an organizati
   - starting the `fake-claude.cmd` shim through the chat (shell start, quoting a repo path with spaces);
   - stopping a chat leaves no `fake-claude` or child process in `tasklist`;
   - a real repo on a drive-letter path: `init`, a stage, and the store folder name;
-  - `git diff --no-index` against `os.devNull`.
+  - `git diff --no-index` against `/dev/null` (and `nul`).
 
 ## Behavior & Edge Cases
 
@@ -197,6 +197,24 @@ Separately, Shipline has never run on Windows, which many teams in an organizati
 2. The author reads `README.md` from top to bottom and can follow it from install to uninstall, and both images render on GitHub.
 3. `cli.yml` passes on `ubuntu-latest`, `macos-latest` and `windows-latest` (Node 18 hooks, Node 20 `cli + ui`). `npm test` still passes locally on macOS.
 4. **Windows test skips:** the builder fills this list. Each entry has the test, the reason, and the Windows test that covers the same behaviour.
+
+   | Test (file) | Reason on `win32` | Covered on Windows by |
+   |---|---|---|
+   | "SIGINT stops claude's whole process group and removes lock.json" (`test/ui/shutdown.test.mjs`) | Node can't send SIGINT/SIGTERM to a child on Windows (`child.kill` terminates it outright, no handler runs), and there are no process groups. | `windows.test.mjs` "Stop leaves no fake-claude or child process in tasklist" |
+   | "SIGINT with a claude that ignores SIGTERM: SIGKILL follows and nothing is left" (`test/ui/shutdown.test.mjs`) | Same as above. | Same as above (the `/F` after 5 s) |
+   | "SIGTERM does the same" (`test/ui/shutdown.test.mjs`) | Same as above. | Same as above |
+   | "close() stops the process group and releases the lock" (`test/ui/shutdown.test.mjs`) | Checks the POSIX process group with `ps`. | `windows.test.mjs` "close() stops the chat's process tree and releases the lock" |
+   | "prints the tokened URL, and SIGINT shuts down with exit 0" (`test/ui/auth.test.mjs`) | Node can't send SIGINT to a child on Windows, so the exit code is never 0. | **None.** Ctrl+C on `shipline ui` can't be simulated from a Windows test. |
+   | "a spawn ENOENT is handled like an early exit" (`test/ui/chat.test.mjs`) | Starts a self-deleting `.mjs` directly; Windows needs the `.cmd` shim, so there is no ENOENT. | `windows.test.mjs` "a .cmd claude whose script is gone after the health checks ends the chat with a fatal exit event" |
+   | The `0600` mode check inside "the relay secret is only in the MCP config env…" (`test/ui/chat.test.mjs`; only that assertion, the rest of the test runs) | Windows has no POSIX modes (`chmod` is a no-op there). | **None** (by design, plan C "chmod"). |
+   | "the store key is the realpath of the repo root (a symlinked path shares the store)" (`test/store.test.mjs`, existing skip, reason reworded) | Creating symlinks needs extra rights on Windows. | `windows.test.mjs` "a repo on a drive-letter path: init, a stage, and the store folder name" |
+   | "hooks fail open with "Shipline can't write its task store at <path>"" (`test/store.test.mjs`, existing skip, reason reworded) | Blocks the store with a file in its path (POSIX `ENOTDIR`). | **None yet.** Candidate to un-skip after the first Windows CI run. |
+   | "an unwritable SHIPLINE_HOME stops init…" (`test/init-version.test.mjs`, existing skip, reason reworded) | Same as above. | **None yet.** Same as above. |
+   | "upgrade exits 1 with "Shipline can't write its task store"…" (`test/upgrade.test.mjs`, existing skip, reason reworded) | Same as above. | **None yet.** Same as above. |
+   | "if an earlier write fails, VERSION is never written and init rolls back" (`test/init-version.test.mjs`, existing skip) | `chmod 0o555` can't make a folder read-only on Windows. | **None.** The rollback logic is platform-neutral. |
+   | "while writing files: VERSION, the task folders and .state stay…" (`test/upgrade.test.mjs`, existing skip) | Relies on POSIX file modes to make a write fail. | **None.** The failed-write logic is platform-neutral. |
+
+   **Null device:** the suspected Windows bug with `os.devNull` (`\\.\nul`) was fixed by using git's own `/dev/null`. The related tests are no longer marked `todo`.
 
 ## Open Questions
 

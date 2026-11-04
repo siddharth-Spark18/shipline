@@ -1,5 +1,7 @@
 # Shipline: configurable guardrails and workflow templates — Plan
 
+> Historical: describes the v1 hub, which was removed in the cleanup-rollout change (branch `feat/cleanup-rollout`, after `5fb8a72`).
+
 Status: approved 2026-10-29. Builds on `docs/plans/shipline-v1.md` (incl. revision (b), chat-first). This phase brings in what v1 listed as out of scope ("custom workflow-builder UI").
 
 ## Problem & Goal

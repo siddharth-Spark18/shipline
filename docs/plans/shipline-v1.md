@@ -1,5 +1,7 @@
 # Shipline v1 — Plan
 
+> Historical: describes the v1 hub, which was removed in the cleanup-rollout change (branch `feat/cleanup-rollout`, after `5fb8a72`).
+
 Status: approved 2026-10-26; revised and re-approved 2026-10-27 (local app + policy findings); **revised and re-approved 2026-10-28 (continuous flow + unified UI + shadcn), then again 2026-10-28 (b) (chat-first workspace).**
 
 Context:

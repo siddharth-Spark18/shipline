@@ -104,9 +104,10 @@ describe('spawn', () => {
     assert.equal(run.secretInEnv, false, 'no env value of claude contains the secret');
     assert.ok(!run.envKeys.includes('SHIPLINE_UI_RELAY_SECRET'));
     assert.ok(!run.envKeys.includes('SHIPLINE_UI_RELAY_URL'));
-    // The config file is 0600 while the chat runs.
+    // The config file is 0600 while the chat runs. Windows has no POSIX modes (chmod is a no-op there, cleanup
+    // plan C), so that one check is POSIX-only; the rest of this test runs everywhere.
     const mcp = path.join(uiDir(dir), `mcp-${id}.json`);
-    assert.equal(statSync(mcp).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal(statSync(mcp).mode & 0o777, 0o600);
     firstSecret = server.env.SHIPLINE_UI_RELAY_SECRET;
     // Never logged.
     assert.ok(!readFileSync(path.join(uiDir(dir), 'ui.log'), 'utf8').includes(firstSecret));
@@ -399,7 +400,9 @@ describe('failures', () => {
     await stopChat(ui, ev, id);
   });
 
-  test('a spawn ENOENT is handled like an early exit (fatal event, lock released, chat ended)', async () => {
+  test('a spawn ENOENT is handled like an early exit (fatal event, lock released, chat ended)', {
+    skip: process.platform === 'win32' && 'starts a self-deleting .mjs directly (Windows needs a .cmd shim, so no ENOENT); covered by windows.test.mjs "a .cmd claude whose script is gone after the health checks ends the chat with a fatal exit event"',
+  }, async () => {
     const copy = path.join(fake.scratch, 'claude-vanishing.mjs');
     copyFileSync(path.join(CLI_ROOT, 'test', 'fixtures', 'fake-claude.mjs'), copy);
     chmodSync(copy, 0o755);

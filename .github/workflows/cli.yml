@@ -20,16 +20,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      # Windows: keep LF in the checkout so the fixtures and templates match byte for byte.
+      - if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4 # version from package.json "packageManager"
       - uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: pnpm
-      # The CLI has no dependencies; installing only it avoids building the hub apps' native modules on Node 18.
+      # Installing only the CLI keeps Node 18 away from the UI's build tooling, which needs Node 20.
       - run: pnpm install --frozen-lockfile --filter ./packages/cli
       - run: pnpm --filter ./packages/cli test:hooks
 
@@ -39,9 +42,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      # Windows: keep LF in the checkout so the fixtures and templates match byte for byte.
+      - if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -52,6 +58,7 @@ jobs:
       - run: pnpm --filter ./packages/cli test
       - run: pnpm --filter @shipline/ui typecheck
       # Limited to new code so it doesn't reformat the templates or fail on existing files.
-      - run: pnpm exec prettier --check packages/ui/src packages/cli/src/ui
+      - if: runner.os == 'Linux'
+        run: pnpm exec prettier --check packages/ui/src packages/cli/src/ui
       # Build plus the 400 KB gzip size check (check-ui.mjs).
       - run: node packages/cli/scripts/build-ui.mjs

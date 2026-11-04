@@ -20,8 +20,9 @@ const UNSCOPED = /\bnpx\s+(?:(?:--yes|-y)\s+)?shipline(?![\w-])/;
 let packed;
 function packFiles() {
   if (packed) return packed;
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const r = spawnSync(npm, ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: CLI_ROOT, encoding: 'utf8' });
+  // Windows: npm is npm.cmd, which Node only starts through a shell (EINVAL otherwise); the arguments are fixed.
+  const win = process.platform === 'win32';
+  const r = spawnSync(win ? 'npm.cmd' : 'npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: CLI_ROOT, encoding: 'utf8', shell: win });
   assert.equal(r.status, 0, r.stderr);
   const json = JSON.parse(r.stdout.slice(r.stdout.indexOf('[')));
   assert.equal(json[0].name, '@forgeyard/shipline');
@@ -121,26 +122,20 @@ describe('npm pack --dry-run', () => {
     assert.deepEqual(offenders, []);
   });
 
-  // The README's hub section still describes apps/local's own `npx shipline` (apps/* is out of scope for
-  // Phase 1), so only commands of this CLI (init, ui, upgrade) are checked there.
-  test('the plugin uses the scoped name, and so does every README install/run command', () => {
+  // The hub (and its own `npx shipline`) is gone, so the whole README is held to the same rule as the package.
+  test('the README uses the scoped name everywhere', () => {
     const offenders = [];
-    const CLI_COMMAND = /\bnpx\s+(?:(?:--yes|-y)\s+)?shipline(?:@\S+)?\s+(?:init|ui|upgrade)\b/;
-    for (const [f, re] of [
-      ['README.md', CLI_COMMAND],
-      ['packages/plugin/commands/init.md', UNSCOPED],
-      ['packages/plugin/.claude-plugin/plugin.json', UNSCOPED],
-      ['.claude-plugin/marketplace.json', UNSCOPED],
-    ]) {
-      const file = path.join(REPO, f);
-      if (!existsSync(file)) continue;
-      readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
-        if (re.test(line)) offenders.push(`${f}:${i + 1}: ${line.trim()}`);
-      });
-    }
+    readFileSync(path.join(REPO, 'README.md'), 'utf8').split('\n').forEach((line, i) => {
+      if (UNSCOPED.test(line)) offenders.push(`README.md:${i + 1}: ${line.trim()}`);
+    });
     assert.match(readFileSync(path.join(REPO, 'README.md'), 'utf8'), /npx @forgeyard\/shipline init/);
     assert.deepEqual(offenders, []);
-    assert.match(readFileSync(path.join(REPO, 'packages/plugin/commands/init.md'), 'utf8'), /npx --yes @forgeyard\/shipline init/);
+  });
+
+  test('the retired plugin and its marketplace entry are gone', () => {
+    for (const f of ['packages/plugin', '.claude-plugin/marketplace.json', 'turbo.json']) {
+      assert.ok(!existsSync(path.join(REPO, f)), `${f} was removed with the hub`);
+    }
   });
 });
 

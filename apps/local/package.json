@@ -1,0 +1,40 @@
+{
+  "name": "@shipline/local",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shipline Local: runs your own Claude Code on your computer for Shipline ticket work (headless service; tray helper in the desktop app).",
+  "license": "UNLICENSED",
+  "main": "dist/server/index.js",
+  "files": [
+    "dist",
+    "plugin"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "postinstall": "node scripts/fix-node-pty.mjs",
+    "dev": "tsx watch src/server/cli.ts",
+    "build": "tsc -p tsconfig.json && node scripts/copy-plugin.mjs",
+    "start": "node dist/server/cli.js",
+    "desktop": "electron desktop/main.cjs",
+    "desktop:dist": "electron-builder --config desktop/electron-builder.json"
+  },
+  "dependencies": {
+    "@shipline/shared": "workspace:*",
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,13 @@
+# Review workflow, hand-written by the team.
+id: review
+name: Review
+description: code review only
+owner: platform-team
+stages:
+  - id: review
+    name: Review
+    artifact: review.md
+    enforcement: guide
+    confirm_to_advance: false
+    sla_hours: 24
+    reviewers: [alice, bob]

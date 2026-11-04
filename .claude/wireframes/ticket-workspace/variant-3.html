@@ -1,0 +1,63 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Variant C - Chat-first with progress strip</title><style>:root{--background:oklch(1 0 0);--foreground:oklch(.145 0 0);--primary:oklch(.205 0 0);--primary-foreground:oklch(.985 0 0);--secondary:oklch(.97 0 0);--muted:oklch(.97 0 0);--muted-foreground:oklch(.556 0 0);--accent:oklch(.97 0 0);--destructive:oklch(.577 .245 27.325);--border:oklch(.922 0 0);--sidebar:oklch(.985 0 0);--ring:oklch(.708 0 0);--radius:.625rem;--ok:oklch(.5 .15 150);--warn:oklch(.65 .15 70)}
+*{box-sizing:border-box}body{margin:0;padding:24px;font:14px/1.45 'Inter Variable',Inter,system-ui,sans-serif;color:var(--foreground);background:oklch(.94 0 0)}
+h2.t{font-size:13px;margin:28px 0 8px;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.05em}
+.frame{width:1280px;height:720px;background:var(--background);border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;position:relative;box-shadow:0 1px 3px #0001}
+.frame.col{flex-direction:column}.row{display:flex;min-height:0;min-width:0}.fl{flex:1;min-width:0;min-height:0}.cols{flex-direction:column}
+.mut{color:var(--muted-foreground)}.xs{font-size:12px}.mono{font-family:ui-monospace,Menlo,monospace;font-size:12px}.b{font-weight:600}
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:1px 8px;border-radius:99px;background:var(--secondary);font-weight:500;white-space:nowrap}.badge.o{background:#fff;border:1px solid var(--border)}.badge.d{background:var(--destructive);color:#fff}
+.new{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.05em;padding:0 6px;border-radius:99px;background:var(--primary);color:var(--primary-foreground);margin-left:6px;vertical-align:middle}
+.dot{width:8px;height:8px;border-radius:99px;display:inline-block;flex:none}.run{background:var(--ok)}.wait{background:var(--warn)}.idle{background:var(--border)}
+.btn{display:inline-block;padding:5px 12px;border-radius:8px;background:var(--primary);color:var(--primary-foreground);font-size:13px;font-weight:500}.btn.o{background:#fff;color:var(--foreground);border:1px solid var(--border)}
+.card{border:1px solid var(--border);border-radius:var(--radius);padding:12px;background:#fff}
+.msg{background:var(--muted);border-radius:var(--radius);padding:10px 12px}.me{background:var(--primary);color:var(--primary-foreground);align-self:flex-end;max-width:70%}
+.chip{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:2px 8px;font-size:12px;background:#fff}.chip.deny{border-color:var(--destructive);color:var(--destructive)}
+.chat{display:flex;flex-direction:column;gap:10px}
+.comp{border:1px solid var(--border);border-radius:calc(var(--radius)*1.4);padding:12px;display:flex;justify-content:space-between;align-items:center;background:#fff;box-shadow:0 1px 2px #0001}
+.nav{padding:6px 8px;border-radius:8px;display:flex;gap:8px;align-items:center;font-size:13px}.nav.on{background:var(--accent);font-weight:500}
+.lbl{font-size:11px;color:var(--muted-foreground);padding:10px 8px 4px}
+.diff{font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.6}.diff div{padding:0 10px;white-space:pre}.diff .a{background:oklch(.95 .06 150)}.diff .r{background:oklch(.95 .05 25)}.diff .h{color:var(--muted-foreground);background:var(--muted)}
+.add{color:var(--ok);font-weight:600}.del{color:var(--destructive);font-weight:600}
+.pop{position:absolute;background:#fff;border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 8px 24px #0002;padding:12px;z-index:5;width:300px}
+.st{display:flex;gap:8px;align-items:center;padding:4px 0;font-size:13px}.st .ic{width:16px;height:16px;border-radius:99px;border:2px solid var(--border);flex:none;display:grid;place-items:center;font-size:9px}.st .ic.d{background:var(--primary);border-color:var(--primary);color:#fff}.st .ic.c{border-color:var(--primary)}.st .ic.s{border-style:dashed}
+.step{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.step span{font-size:11px;padding:2px 8px;border-radius:99px;background:var(--muted);color:var(--muted-foreground)}.step .d{background:var(--primary);color:#fff}.step .c{border:1px solid var(--primary);color:var(--foreground);background:#fff;font-weight:600}.step .s{text-decoration:line-through}
+.tab{padding:6px 12px;font-size:13px;border-right:1px solid var(--border);display:flex;gap:6px;align-items:center;color:var(--muted-foreground)}.tab.on{background:#fff;color:var(--foreground);border-top:2px solid var(--primary)}
+.note{position:absolute;right:12px;bottom:10px;font-size:11px;background:var(--primary);color:#fff;padding:3px 10px;border-radius:8px;z-index:9;max-width:420px}
+.logo{width:28px;height:28px;border-radius:calc(var(--radius)*.8);background:var(--primary);color:var(--primary-foreground);display:grid;place-items:center;font-size:12px;flex:none}
+</style></head><body>
+<!-- Rationale: Chat-first. No permanent side panels; top bar holds the chat switcher and project, a collapsible progress strip reveals stages, a Changes drawer opens a full-width read-only diff sheet. -->
+<h1 style="font-size:18px">Variant C: Chat-first with collapsible progress strip</h1>
+
+<h2 class="t">1. New chat / project picker</h2>
+<div class="frame col">
+<div class="row" style="padding:8px 16px;border-bottom:1px solid var(--border);align-items:center;gap:8px"><div class="logo">S</div><b>Shipline</b>
+<span class="badge o">SL-14 <i class="dot wait"></i></span><span class="badge o">SL-13 <i class="dot run"></i></span><span class="badge o">SL-12 <i class="dot run"></i></span><span class="badge" style="background:var(--primary);color:#fff">+ New</span><span class="new">switcher chips</span><span style="margin-left:auto" class="mut xs">Cmd-K</span></div>
+<div class="fl" style="display:flex;align-items:center;justify-content:center"><div style="width:760px" class="chat">
+<h1 style="font-size:24px;margin:0;text-align:center">Open a project to begin</h1>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+<div class="card" style="border-color:var(--primary)"><b>learnloop-web</b><div class="mut xs">~/Projects/learnloop</div><span class="badge" style="margin-top:6px">main</span></div>
+<div class="card"><b>shipline</b><div class="mut xs">~/Projects/shipline</div><span class="badge" style="margin-top:6px">main</span></div>
+<div class="card"><b>billing-api</b><div class="mut xs">~/Projects/billing</div><span class="badge" style="margin-top:6px">develop</span></div></div><span class="new" style="align-self:flex-start">NEW project cards</span>
+<div class="mut xs" style="text-align:center">+ Open folder... &nbsp; Jira is optional; Claude will ask.</div>
+<div class="comp"><span class="mut">What are we building in learnloop-web?</span><span class="btn">Start</span></div></div></div></div>
+
+<h2 class="t">2. Active workspace, mid-Build, diff sheet open, strip expanded</h2>
+<div class="frame col" style="position:relative">
+<div class="row" style="padding:8px 16px;border-bottom:1px solid var(--border);align-items:center;gap:8px"><div class="logo">S</div><b>Shipline</b><span class="badge o">SL-14 <i class="dot wait"></i></span><span class="badge o">SL-13 <i class="dot run"></i></span><span class="badge" style="background:var(--primary);color:#fff">SL-12 Streak counter <i class="dot run"></i></span><span class="badge o">SL-9 <i class="dot idle"></i></span><span class="badge o">+ New</span><span style="margin-left:auto" class="mut xs">learnloop-web &middot; feat/sl-12-streak</span></div>
+<!-- Progress strip (expanded) -->
+<div style="padding:8px 16px;background:var(--muted);border-bottom:1px solid var(--border)"><div class="row" style="align-items:center;gap:12px"><b>Build &middot; 4/8</b><span class="mut xs">next: QA</span><span style="margin-left:12px"><div class="step"><span class="d">Research (skipped)</span><span class="d">Plan</span><span class="d">Wireframes</span><span class="c">Build</span><span>QA</span><span>Self-review</span><span>Raise PR</span><span>PR comments</span></div></span><span class="new">NEW strip</span><span style="margin-left:auto" class="mut xs">&#9652; collapse</span></div>
+<div class="row" style="gap:6px;padding-top:8px"><span class="chip">plan.md</span><span class="chip">wireframe-1.html</span><span class="mut xs">deliverables of done stages</span><span class="mut xs" style="margin-left:auto">Collapsed: one line "Build 4/8, next QA". Auto-expands briefly on stage completion.</span></div></div>
+<div class="fl row">
+<div class="fl" style="padding:16px;overflow:hidden;display:flex;justify-content:center"><div style="width:560px"><div class="chat">
+<div class="msg me">Add a streak counter to the lesson page.</div>
+<div class="msg">Is there a Jira ticket for this? If not, I will track it as <b>SL-12</b>.</div>
+<div class="card"><!-- AskUserQuestionCard --><b>Which streak window?</b><div class="mut xs" style="margin:2px 0 8px">Claude is asking</div><span class="btn o">7 days</span> <span class="btn o">30 days</span> <span class="btn o">Other...</span></div>
+<div style="display:flex;gap:6px;flex-wrap:wrap"><span class="chip">Read lesson-page.tsx</span><span class="chip">Edit StreakBadge.tsx</span><span class="chip">Run typecheck</span><span class="chip deny">Edit schema.prisma &middot; Denied: Designers can't edit code</span><span class="new">NEW</span></div>
+<div style="display:flex;gap:6px;flex-wrap:wrap"><span class="chip">plan.md</span><span class="chip">wireframe-1.html</span><span class="new">NEW file chips</span></div>
+
+<div class="card"><!-- TransitionCard --><b>Claude proposes: complete Build</b><div class="mut xs" style="margin:2px 0 8px">4 files changed, +50 -4</div><span class="btn">Confirm</span> <span class="btn o">Not yet</span></div>
+</div></div></div>
+<!-- Diff sheet -->
+<div style="width:520px;border-left:1px solid var(--border);display:flex;flex-direction:column"><div class="row" style="padding:8px 12px;border-bottom:1px solid var(--border);align-items:center;gap:8px"><span class="mut">&larr; back to chat</span><b class="mono">StreakBadge.tsx</b><span class="badge o">Read-only</span><span class="new">NEW</span></div><div style="padding:8px 12px"><div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span class="mono">src/StreakBadge.tsx</span><span><span class="add">+42</span> <span class="del">-3</span></span></div><div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span class="mono">src/lesson-page.tsx</span><span><span class="add">+8</span> <span class="del">-1</span></span></div></div><div style="padding:8px 0"><div class="diff"><div class="h">@@ -1,6 +1,22 @@ StreakBadge.tsx</div><div> import { Badge } from '@/components/ui/badge';</div><div class="a">+export function StreakBadge({ days }: { days: number }) {</div><div class="a">+  return <Badge variant="secondary">{days} day streak</Badge>;</div><div class="a">+}</div><div class="r">-// TODO streak</div><div> export default StreakBadge;</div></div></div></div></div>
+<div style="padding:8px 16px;border-top:1px solid var(--border)" class="row"><div class="comp fl"><span class="mut">Reply to Claude...</span><span class="mut xs">&#9650; Changes drawer: 4 files +50 -4</span></div></div>
+</div>
+</body></html>

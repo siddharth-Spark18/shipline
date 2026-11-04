@@ -1,0 +1,24 @@
+{
+  "name": "shipline",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "build:shared": "pnpm --filter @shipline/shared build",
+    "dev": "pnpm build:shared && turbo dev",
+    "dev:api": "pnpm --filter @shipline/api dev",
+    "dev:web": "pnpm --filter @shipline/web dev",
+    "dev:local": "pnpm --filter @shipline/local dev",
+    "build:ui": "pnpm --filter @shipline/ui build",
+    "test:cli": "pnpm --filter ./packages/cli test",
+    "desktop": "pnpm build:shared && pnpm --filter @shipline/local build && pnpm --filter @shipline/local desktop",
+    "db:make-migration": "pnpm --filter @shipline/api db:make-migration",
+    "db:migrate:deploy": "pnpm --filter @shipline/api db:migrate:deploy",
+    "db:seed": "pnpm --filter @shipline/api db:seed"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "prettier": "^3.8.3",
+    "typescript": "^5.7.2"
+  }
+}

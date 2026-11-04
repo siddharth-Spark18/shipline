@@ -1,0 +1,40 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Baseline - Ticket workspace (current)</title>
+<style>
+:root{--background:oklch(1 0 0);--foreground:oklch(.145 0 0);--primary:oklch(.205 0 0);--primary-foreground:oklch(.985 0 0);--secondary:oklch(.97 0 0);--muted:oklch(.97 0 0);--muted-foreground:oklch(.556 0 0);--accent:oklch(.97 0 0);--destructive:oklch(.577 .245 27.325);--border:oklch(.922 0 0);--sidebar:oklch(.985 0 0);--radius:.625rem}
+*{box-sizing:border-box}body{margin:0;font:14px/1.4 'Inter Variable',Inter,system-ui,sans-serif;color:var(--foreground);background:var(--background);height:100vh;display:flex}
+.sb{width:240px;background:var(--sidebar);border-right:1px solid var(--border);padding:8px;display:flex;flex-direction:column;gap:8px}
+.logo{display:flex;gap:8px;align-items:center;padding:8px}.logo i{width:32px;height:32px;border-radius:calc(var(--radius)*.8);background:var(--primary);color:var(--primary-foreground);display:grid;place-items:center;font-style:normal}
+.nav{padding:8px;border-radius:8px;font-size:14px}.nav.on{background:var(--accent);font-weight:500}.lbl{font-size:12px;color:var(--muted-foreground);padding:8px}
+main{flex:1;display:grid;grid-template-columns:22% 46% 32%;min-width:0}
+.col{border-right:1px solid var(--border);padding:16px;overflow:hidden}.col h3{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-foreground);margin:18px 0 8px}
+.badge{display:inline-block;font-size:12px;padding:1px 8px;border-radius:99px;background:var(--secondary);font-weight:500}.mut{color:var(--muted-foreground);font-size:12px}
+.st{display:flex;gap:8px;align-items:center;padding:4px 0}.dot{width:10px;height:10px;border-radius:99px;background:var(--border)}.dot.d{background:var(--primary)}.dot.c{border:2px solid var(--primary);background:#fff}
+.msg{background:var(--muted);border-radius:var(--radius);padding:10px 12px;margin:10px 0}.card{border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin:10px 0}
+.btn{display:inline-block;padding:4px 12px;border-radius:8px;background:var(--primary);color:var(--primary-foreground);font-size:13px}.btn.o{background:#fff;color:var(--foreground);border:1px solid var(--border)}
+.tabs{display:flex;gap:4px;background:var(--muted);padding:3px;border-radius:10px;width:fit-content}.tabs span{padding:3px 12px;border-radius:8px;font-size:13px}.tabs .on{background:#fff}
+.f{display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px solid var(--border)}code{font-family:ui-monospace,monospace;font-size:12px}.add{color:oklch(.5 .15 150)}.del{color:var(--destructive)}
+</style></head><body>
+<!-- AppSidebar (shadcn Sidebar, collapsible=icon) -->
+<aside class="sb"><div class="logo"><i>R</i><div><b>Shipline</b><div class="mut">Ticket to merged PR</div></div></div>
+<div class="lbl">Work</div><div class="nav on">Tickets <span class="badge" style="float:right">2</span></div>
+<div class="lbl">Admin</div><div class="nav">Projects</div><div class="nav">Settings</div></aside>
+<main>
+<!-- LeftPanel -->
+<section class="col"><span class="mut"><b>LEARN-1</b></span> <span class="badge">Feature</span>
+<h1 style="font-size:16px;margin:4px 0">Add streak counter to lesson page</h1><div class="mut">LearnLoop · assignee Sid<br><code>feat/learn-1-streak</code></div>
+<h3>Stages</h3><!-- StageTimeline -->
+<div class="st"><i class="dot d"></i>Research <span class="mut">skipped</span></div><div class="st"><i class="dot d"></i>Plan</div><div class="st"><i class="dot d"></i>Wireframes</div><div class="st"><i class="dot c"></i><b>Build</b></div><div class="st"><i class="dot"></i>QA</div><div class="st"><i class="dot"></i>Self-review</div><div class="st"><i class="dot"></i>Raise PR</div><div class="st"><i class="dot"></i>Resolve PR comments</div>
+<h3>This stage</h3><div class="mut">PolicySummary: edits allowed in src/</div>
+<h3>Pull request</h3><!-- PrStatus --><div class="mut">No PR yet</div><span class="badge">shipline/gates: not satisfied</span>
+<h3>My tickets</h3><!-- TicketSwitcher --><div class="f"><span>LEARN-1</span><span class="mut">running</span></div><div class="f"><span>LEARN-4</span><span class="mut">waiting</span></div></section>
+<!-- CenterPanel / ChatView -->
+<section class="col"><div class="msg">Plan is approved. Starting Build.</div>
+<!-- AssetChip --><span class="badge">plan.md</span> <span class="badge">wireframe-1.html</span>
+<div class="msg">Editing StreakBadge.tsx...</div>
+<!-- TransitionCard --><div class="card"><b>Claude proposes: complete Build</b><div class="mut" style="margin:4px 0 8px">Artifact: 4 files changed</div><span class="btn">Confirm</span> <span class="btn o">Not yet</span></div>
+<!-- QuestionCard --><div class="card"><b>Which streak window?</b><div class="mut">( ) 7 days &nbsp; ( ) 30 days</div></div>
+<div class="card" style="margin-top:auto">Message Claude...</div></section>
+<!-- RightPanel Tabs -->
+<section class="col" style="border:0"><div class="tabs"><span class="on">Changes</span><span>Asset</span></div>
+<!-- ChangesTab / DiffFileView --><div class="f"><code>src/StreakBadge.tsx</code><span><b class="add">+42</b> <b class="del">-3</b></span></div><div class="f"><code>src/lesson-page.tsx</code><span><b class="add">+8</b> <b class="del">-1</b></span></div></section>
+</main></body></html>

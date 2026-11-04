@@ -1,0 +1,5 @@
+artifact_root: docs/shipline
+folder_pattern: "{key}-{slug}"
+branch_pattern: "{type}/{key}-{slug}"
+tracker: jira
+commands:

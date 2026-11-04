@@ -1,0 +1,25 @@
+{
+  "name": "shipline",
+  "version": "0.6.0",
+  "description": "Install a repo-committed Claude Code workflow (stages, rules, enforcement hooks, saved artifacts) with `npx shipline init`.",
+  "type": "module",
+  "bin": {
+    "shipline": "bin/shipline.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "templates",
+    "ui-dist"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs test/ui/*.test.mjs",
+    "test:hooks": "node --test test/*.test.mjs",
+    "prepack": "node scripts/build-ui.mjs",
+    "check:ui": "node scripts/check-ui.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED"
+}

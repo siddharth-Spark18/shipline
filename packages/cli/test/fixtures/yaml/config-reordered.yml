@@ -1,0 +1,8 @@
+tracker: jira
+commands:
+  build: ""
+  test: ""
+  lint: ""
+branch_pattern: "{type}/{key}-{slug}"
+folder_pattern: "{key}-{slug}"
+artifact_root: work/tasks

@@ -1,0 +1,7 @@
+id: numbered
+name: Numbered
+stages:
+  - id: step
+    name: Step
+    artifact: "123"
+    enforcement: guide

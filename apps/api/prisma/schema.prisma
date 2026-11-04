@@ -1,0 +1,574 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  DEVELOPER
+  DESIGNER
+  PM
+  QA
+}
+
+enum SessionMode {
+  CHAT
+  TERMINAL
+}
+
+enum GuardrailScope {
+  ORG
+  PROJECT
+  ROLE
+}
+
+enum GuardrailKind {
+  PATH
+  BASH
+  TOOL
+}
+
+enum RuleEffect {
+  ALLOW
+  ASK
+  DENY
+}
+
+enum RuleAction {
+  READ
+  EDIT
+}
+
+enum StageStatus {
+  PENDING
+  IN_PROGRESS
+  DONE
+  SKIPPED
+}
+
+enum ArtifactType {
+  MARKDOWN
+  HTML
+  FIGMA_LINK
+  QA_REPORT
+  PR_LINK
+}
+
+enum TicketStatus {
+  ACTIVE
+  DONE
+}
+
+enum TransitionKind {
+  COMPLETE
+  SKIP
+  REOPEN
+}
+
+enum TransitionProposer {
+  CLAUDE
+  USER
+}
+
+enum TransitionDecision {
+  PENDING
+  CONFIRMED
+  DECLINED
+  SUPERSEDED
+}
+
+enum PrState {
+  OPEN
+  CLOSED
+  MERGED
+}
+
+enum PrCommentKind {
+  REVIEW
+  REVIEW_COMMENT
+}
+
+enum ToolDecisionValue {
+  ALLOW
+  DENY
+  PENDING
+}
+
+enum DecidedBy {
+  POLICY
+  USER
+  TIMEOUT
+}
+
+enum OverrideKind {
+  GATES
+  HOTFIX
+}
+
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String
+  googleId    String?  @unique
+  githubLogin String?
+  githubId    String?
+  isAdmin     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  memberships        ProjectMember[]
+  ownedTickets       Ticket[]                  @relation("TicketOwner")
+  artifacts          Artifact[]
+  transitionsDecided StageTransition[]
+  toolDecisions      ToolDecision[]
+  overrides          Override[]
+  auditEvents        AuditEvent[]
+  oauthCodes         OAuthCode[]
+  oauthRefreshTokens OAuthRefreshToken[]
+  templateVersions   WorkflowTemplateVersion[]
+  guardrailRules     GuardrailRule[]
+  customAgents       CustomAgent[]
+  templateSwitches   TemplateSwitch[]
+}
+
+model Project {
+  id                    String      @id @default(cuid())
+  name                  String
+  githubRepo            String      @unique // "owner/name"
+  githubInstallationId  String?
+  jiraProjectKey        String
+  // Prefix of this project's chat keys (`LL` -> LL-12), set by an admin. The counter only goes up.
+  keyPrefix             String
+  ticketCounter         Int         @default(0)
+  commitArtifactsToRepo Boolean     @default(false)
+  // OPEN-QUESTION #9: repo path and branch for committed artifacts are per-project settings.
+  artifactRepoPath      String      @default("docs/shipline")
+  artifactBranch        String?
+  qaTarget              Json? // { kind: "preview_url" | "local_run" | "staging", url?, command?, notes? }
+  minPluginVersion      String?
+  minClaudeCliVersion   String?
+  sessionMode           SessionMode @default(CHAT)
+  editPolicy            Json // Record<Role, "deny" | "ask" | "allow">
+  // OPEN-QUESTION #12: the branch chat worktrees start from and diffs are measured against is a
+  // per-project setting (default "main").
+  baseBranch            String      @default("main")
+  createdAt             DateTime    @default(now())
+
+  members          ProjectMember[]
+  tickets          Ticket[]
+  pullRequests     PullRequest[]
+  auditEvents      AuditEvent[]
+  enabledTemplates ProjectTemplate[]
+  guardrailRules   GuardrailRule[]
+}
+
+model ProjectMember {
+  id        String  @id @default(cuid())
+  userId    String
+  projectId String
+  // OPEN-QUESTION #5: a person may hold several roles.
+  roles     Role[]
+  isAdmin   Boolean @default(false)
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+}
+
+// Single org-level Jira connection (read-only). One row, key = "default".
+model JiraConnection {
+  id                String   @id @default(cuid())
+  key               String   @unique @default("default")
+  connectedByUserId String
+  accessToken       String // encrypted
+  refreshToken      String // encrypted
+  expiresAt         DateTime
+  cloudId           String
+  siteUrl           String
+  siteName          String?
+  updatedAt         DateTime @updatedAt
+}
+
+// The org's library of workflow templates. Saving creates a new immutable version; a chat is pinned
+// to the version it started on. A template with chats on any version can only be archived.
+model WorkflowTemplate {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  description String    @default("")
+  // Feature and Hotfix are seeded as built-in templates; they are edited like any other.
+  builtIn     Boolean   @default(false)
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  versions WorkflowTemplateVersion[]
+  projects ProjectTemplate[]
+}
+
+model WorkflowTemplateVersion {
+  id          String   @id @default(cuid())
+  templateId  String
+  version     Int
+  // Snapshot of the template's name and description when this version was saved.
+  name        String
+  description String   @default("")
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  template  WorkflowTemplate  @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  createdBy User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  stages    StageDefinition[]
+  tickets   Ticket[]
+  switches  TemplateSwitch[]
+
+  @@unique([templateId, version])
+}
+
+model StageDefinition {
+  id              String         @id @default(cuid())
+  versionId       String
+  order           Int
+  key             String
+  name            String
+  // What the server and Shipline Local treat specially: research | plan | wireframes | build | qa |
+  // self_review | raise_pr | resolve_comments | custom (see STAGE_TYPES in packages/shared).
+  type            String         @default("custom")
+  // Roles the stage is designed for (informational: no stage is ever blocked for a role).
+  allowedRoles    Role[]
+  optional        Boolean        @default(false)
+  artifactTypes   ArtifactType[]
+  requiredForGate Boolean        @default(false)
+  toolPolicy      Json
+  instructions    String         @default("")
+  // `plugin:<agent name>` or `custom:<custom agent id>`; agentName is the name at save time.
+  agentRef        String?
+  agentName       String?
+  // Stage-level guardrail rules: GuardrailRuleInput[].
+  stageRules      Json           @default("[]")
+
+  version   WorkflowTemplateVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  stageRuns StageRun[]
+
+  @@unique([versionId, key])
+}
+
+// Which templates a project offers for new chats, and which one is preselected.
+model ProjectTemplate {
+  id         String  @id @default(cuid())
+  projectId  String
+  templateId String
+  isDefault  Boolean @default(false)
+
+  project  Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  template WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, templateId])
+}
+
+// Path, Bash and tool rules at the org, project and role level (stage rules live on the stage
+// definition). Not versioned: they always apply live.
+model GuardrailRule {
+  id          String         @id @default(cuid())
+  scope       GuardrailScope
+  // PROJECT and ROLE rules belong to a project; ROLE rules also name the role.
+  projectId   String?
+  role        Role?
+  kind        GuardrailKind
+  // path: a glob. bash: `Bash(prefix:*)` / `Bash(command)`. tool: a tool name or `prefix*`.
+  pattern     String
+  // PATH rules only.
+  actions     RuleAction[]
+  effect      RuleEffect
+  reason      String
+  createdById String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([scope, projectId])
+}
+
+// Agents org admins define for stages to use; Shipline Local passes them to `claude --agents`.
+model CustomAgent {
+  id          String   @id @default(cuid())
+  // Fixed once created: stages and Claude address the agent by it.
+  name        String   @unique
+  description String
+  prompt      String
+  tools       String[]
+  model       String?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+}
+
+// A chat-backed work item. The person who started the chat owns it; Jira is optional.
+model Ticket {
+  id                String       @id @default(cuid())
+  projectId         String
+  // The template version the chat is pinned to (stages, instructions, stage rules, stage agent).
+  templateVersionId String
+  // Per-project key (`LL-12`): Project.keyPrefix plus a per-project counter.
+  key               String
+  // Set from the first message; editable.
+  title             String
+  // Optional Jira link (read-only). Linking pulls the issue's details into these fields.
+  jiraKey           String?
+  jiraSummary       String?
+  description       String       @default("")
+  jiraUrl           String?
+  jiraStatus        String?
+  status            TicketStatus @default(ACTIVE)
+  ownerId           String
+  // Named branch (`<JIRA-KEY>-<slug>` or `<KEY>-<slug>`): null until the first file edit. The
+  // worktree is created detached at chat start; its path is per machine (the local service owns it).
+  branch            String?
+  worktreePath      String?
+  // One Claude conversation per chat (per machine), resumed with `--resume`.
+  claudeSessionId   String?
+  prNumber          Int?
+  prState           PrState?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  project         Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  templateVersion WorkflowTemplateVersion @relation(fields: [templateVersionId], references: [id])
+  owner           User                    @relation("TicketOwner", fields: [ownerId], references: [id])
+  stageRuns       StageRun[]
+  transitions     StageTransition[]
+  overrides       Override[]
+  pullRequests    PullRequest[]
+  auditEvents     AuditEvent[]
+  switches        TemplateSwitch[]
+
+  @@unique([projectId, key])
+  @@unique([projectId, jiraKey])
+  @@index([ownerId])
+}
+
+// Claude's proposal to move a chat to another template (propose_template_switch). Allowed only
+// before the branch exists; the owner confirms or declines it inline in the chat.
+model TemplateSwitch {
+  id          String             @id @default(cuid())
+  ticketId    String
+  toVersionId String
+  reason      String             @default("")
+  decision    TransitionDecision @default(PENDING)
+  createdAt   DateTime           @default(now())
+  decidedAt   DateTime?
+  decidedById String?
+
+  ticket    Ticket                  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  toVersion WorkflowTemplateVersion @relation(fields: [toVersionId], references: [id])
+  decidedBy User?                   @relation(fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, decision])
+}
+
+model StageRun {
+  id            String      @id @default(cuid())
+  ticketId      String
+  stageDefId    String
+  status        StageStatus @default(PENDING)
+  completedAt   DateTime?
+  skippedReason String?
+  // How many times a later stage sent the ticket back to this one.
+  reopenedCount Int         @default(0)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  ticket        Ticket            @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  stageDef      StageDefinition   @relation(fields: [stageDefId], references: [id])
+  artifacts     Artifact[]
+  toolDecisions ToolDecision[]
+  transitions   StageTransition[]
+
+  @@unique([ticketId, stageDefId])
+}
+
+model Artifact {
+  id            String       @id @default(cuid())
+  stageRunId    String
+  version       Int
+  type          ArtifactType
+  // Stored in the DB behind apps/api/src/lib/artifact-storage.ts (OPEN-QUESTION #7).
+  content       String?
+  storageRef    String?
+  submittedById String
+  pluginVersion String?
+  appVersion    String?
+  clientKind    String?
+  committedPath String?
+  createdAt     DateTime     @default(now())
+
+  stageRun    StageRun @relation(fields: [stageRunId], references: [id], onDelete: Cascade)
+  submittedBy User     @relation(fields: [submittedById], references: [id])
+
+  @@unique([stageRunId, version])
+}
+
+// Audit trail of every stage-change proposal (Claude proposes, the chat owner confirms or declines).
+// At most one PENDING proposal per ticket: a new one marks the old one SUPERSEDED.
+model StageTransition {
+  id             String             @id @default(cuid())
+  ticketId       String
+  // The stage that was current when the proposal was made.
+  stageRunId     String
+  kind           TransitionKind
+  // For REOPEN: key of the stage to go back to.
+  targetStageKey String?
+  proposedBy     TransitionProposer
+  reason         String             @default("")
+  decision       TransitionDecision @default(PENDING)
+  createdAt      DateTime           @default(now())
+  decidedAt      DateTime?
+  decidedById    String?
+
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  stageRun  StageRun @relation(fields: [stageRunId], references: [id], onDelete: Cascade)
+  decidedBy User?    @relation(fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, decision])
+}
+
+model ToolDecision {
+  id            String            @id @default(cuid())
+  stageRunId    String
+  userId        String
+  tool          String
+  toolUseId     String?
+  inputSummary  String
+  decision      ToolDecisionValue
+  decidedBy     DecidedBy
+  reason        String            @default("")
+  pluginVersion String?
+  appVersion    String?
+  createdAt     DateTime          @default(now())
+  decidedAt     DateTime?
+
+  stageRun StageRun @relation(fields: [stageRunId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@index([stageRunId, decision])
+}
+
+model Override {
+  id        String       @id @default(cuid())
+  ticketId  String
+  adminId   String
+  kind      OverrideKind @default(GATES)
+  reason    String
+  createdAt DateTime     @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  admin  User   @relation(fields: [adminId], references: [id])
+}
+
+model AuditEvent {
+  id         String   @id @default(cuid())
+  projectId  String?
+  ticketId   String?
+  stageRunId String?
+  actorId    String?
+  type       String
+  data       Json     @default("{}")
+  createdAt  DateTime @default(now())
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  ticket  Ticket?  @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  actor   User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+}
+
+model PullRequest {
+  id        String    @id @default(cuid())
+  projectId String
+  ticketId  String?
+  number    Int
+  headSha   String
+  branch    String
+  title     String
+  state     PrState   @default(OPEN)
+  htmlUrl   String?
+  mergedAt  DateTime?
+  updatedAt DateTime  @updatedAt
+
+  project  Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ticket   Ticket?     @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  comments PrComment[]
+
+  @@unique([projectId, number])
+}
+
+// Review and review-comment webhooks land here (deduplicated by GitHub's id). Comments made
+// outdated by a force-push stay listed and are flagged `outdated`.
+model PrComment {
+  id             String        @id @default(cuid())
+  pullRequestId  String
+  kind           PrCommentKind
+  githubId       String
+  author         String
+  body           String        @default("")
+  path           String?
+  line           Int?
+  reviewState    String?
+  outdated       Boolean       @default(false)
+  htmlUrl        String?
+  commitId       String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  sentToClaudeAt DateTime?
+
+  pullRequest PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+
+  @@unique([pullRequestId, kind, githubId])
+}
+
+// --- OAuth authorization server (used by the MCP connector and Shipline Local) ---
+
+model OAuthClient {
+  id           String   @id // client_id
+  name         String
+  redirectUris String[]
+  createdAt    DateTime @default(now())
+
+  codes         OAuthCode[]
+  refreshTokens OAuthRefreshToken[]
+}
+
+model OAuthCode {
+  id            String    @id @default(cuid())
+  codeHash      String    @unique
+  clientId      String
+  userId        String
+  redirectUri   String
+  codeChallenge String
+  scope         String    @default("")
+  resource      String?
+  expiresAt     DateTime
+  usedAt        DateTime?
+
+  client OAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model OAuthRefreshToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  clientId  String
+  userId    String
+  scope     String    @default("")
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  client OAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

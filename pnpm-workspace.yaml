@@ -1,0 +1,10 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+onlyBuiltDependencies:
+  - '@prisma/client'
+  - prisma
+  - esbuild
+  - node-pty
+  - electron

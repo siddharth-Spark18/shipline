@@ -1,0 +1,9 @@
+# NOT A REAL CAPTURE. Hand-made stand-in for `claude -p --output-format stream-json` output, read by
+# test/fixtures/fake-claude.mjs (lines starting with # are comments, @ lines are fake-claude directives, see its
+# header). Field shapes follow packages/shared/src/stream-json.ts; replace with real captures from the chat test
+# (plan item 19, question 8) when they exist.
+# A resumed session whose system/init reports a different session id than the one passed with --resume.
+@wait-user
+{"type":"system","subtype":"init","session_id":"{{OTHER_SESSION_ID}}","cwd":"{{CWD}}","model":"fake-model","tools":["Bash"],"mcp_servers":[{"name":"shipline_ui","status":"connected"}],"permissionMode":"default"}
+{"type":"assistant","session_id":"{{OTHER_SESSION_ID}}","message":{"id":"msg_r1","role":"assistant","content":[{"type":"text","text":"Resumed under a new id."}]}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"{{OTHER_SESSION_ID}}","result":"Resumed.","total_cost_usd":0.001}

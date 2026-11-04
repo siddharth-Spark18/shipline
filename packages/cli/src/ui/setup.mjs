@@ -1,0 +1,496 @@
+// The setup screen's API: read, preview and save config.yml, workflows/<id>.yml and rules/<id>.md.
+// Node 20+, no dependencies. Parsing always uses the repo's own vendored parser (repo.lib.parseYaml).
+import crypto from 'node:crypto';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import path from 'node:path';
+import { emitConfig, emitWorkflow } from '../yaml-emit.mjs';
+import { configLayout, headerFor, validateConfig, validateWorkflow } from '../setup-schema.mjs';
+import { HttpError } from './http.mjs';
+import { textDiff } from './git.mjs';
+import { log } from './log.mjs';
+import { readOpenTasks } from './tasks.mjs';
+
+const ID_RE = /^[A-Za-z0-9_-]+$/;
+const KINDS = ['config', 'workflow', 'rules'];
+
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
+
+// ---------- paths ----------
+
+// The only paths the server ever writes. A client-supplied path is never used.
+export function targetPath(root, kind, id) {
+  const base = path.join(root, '.shipline');
+  if (kind === 'config') return path.join(base, 'config.yml');
+  if ((kind === 'workflow' || kind === 'rules') && typeof id === 'string' && ID_RE.test(id)) {
+    return kind === 'workflow'
+      ? path.join(base, 'workflows', `${id}.yml`)
+      : path.join(base, 'rules', `${id}.md`);
+  }
+  throw new HttpError(
+    400,
+    'bad-target',
+    `Not a writable target: ${kind}${id !== undefined ? ` ${JSON.stringify(id)}` : ''}`,
+  );
+}
+
+function readText(file) {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  }
+}
+
+function listIds(dir, ext) {
+  try {
+    return readdirSync(dir)
+      .filter((f) => f.endsWith(ext) && ID_RE.test(f.slice(0, -ext.length)))
+      .map((f) => f.slice(0, -ext.length))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+function listAgents(root) {
+  return listIds(path.join(root, '.claude', 'agents'), '.md');
+}
+
+// ---------- parsing ----------
+
+// Returns { model } or { error }.
+function parseModel(app, text) {
+  try {
+    const model = app.repo.lib.parseYaml(text);
+    if (!isObj(model)) return { error: 'must be a map of keys' };
+    return { model };
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+function loadFile(app, kind, id) {
+  const raw = readText(targetPath(app.repo.root, kind, id));
+  const base = id === undefined ? { kind } : { kind, id };
+  if (raw === null) return { ...base, raw: null, parseError: 'file not found' };
+  if (kind === 'rules') return { ...base, raw, hash: sha256(raw) };
+  const parsed = parseModel(app, raw);
+  if (parsed.error !== undefined) return { ...base, raw, parseError: parsed.error };
+  return { ...base, model: parsed.model, raw, hash: sha256(raw) };
+}
+
+// ---------- model helpers ----------
+
+// Empty maps become null before emitting: the parser reads `key:` with nothing nested as null.
+function normalize(v) {
+  if (Array.isArray(v)) return v.map(normalize);
+  if (isObj(v)) {
+    const keys = Object.keys(v);
+    if (keys.length === 0) return null;
+    const out = {};
+    for (const k of keys) out[k] = normalize(v[k]);
+    return out;
+  }
+  return v;
+}
+
+// The path of the first difference, or null when equal.
+function firstDiff(a, b, p = '') {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return p || '(root)';
+    if (a.length !== b.length) return p || '(root)';
+    for (let i = 0; i < a.length; i++) {
+      const d = firstDiff(a[i], b[i], `${p}[${i}]`);
+      if (d !== null) return d;
+    }
+    return null;
+  }
+  if (isObj(a) || isObj(b)) {
+    if (!isObj(a) || !isObj(b)) return p || '(root)';
+    for (const k of Object.keys(a)) {
+      const here = p ? `${p}.${k}` : k;
+      if (!(k in b)) return here;
+      const d = firstDiff(a[k], b[k], here);
+      if (d !== null) return d;
+    }
+    for (const k of Object.keys(b)) if (!(k in a)) return p ? `${p}.${k}` : k;
+    return null;
+  }
+  return a === b ? null : p || '(root)';
+}
+
+// Comment text (from `#` to the end of the line) of every line, using the parser's quote rules.
+function commentsOf(text) {
+  const out = [];
+  for (const line of text.split(/\r?\n/)) {
+    let q = null;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (q) {
+        if (c === q) q = null;
+        else if (c === '\\' && q === '"') i++;
+      } else if ((c === '"' || c === "'") && (i === 0 || /[\s\[,:]/.test(line[i - 1]))) {
+        q = c;
+      } else if (c === '#' && (i === 0 || /\s/.test(line[i - 1]))) {
+        out.push(line.slice(i).trim());
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+// Comments on disk that the new text no longer has (a moved comment doesn't count).
+function removedComments(oldText, newText) {
+  const kept = new Map();
+  for (const c of commentsOf(newText)) kept.set(c, (kept.get(c) || 0) + 1);
+  const removed = [];
+  for (const c of commentsOf(oldText)) {
+    const n = kept.get(c) || 0;
+    if (n > 0) kept.set(c, n - 1);
+    else removed.push(c);
+  }
+  return removed;
+}
+
+function stageIds(model) {
+  return model && Array.isArray(model.stages) ? model.stages.filter(isObj).map((s) => s.id) : [];
+}
+
+// ---------- the save pipeline ----------
+
+function badRequest(message) {
+  return new HttpError(400, 'bad-request', message);
+}
+
+// Validates one { kind, id?, model?, text?, baseHash } entry and builds its new text. Never writes.
+// override: { raw, existingStageIds } for a copy, whose source text supplies the quoting to keep.
+function prepare(app, entry, override = {}) {
+  if (!isObj(entry) || !KINDS.includes(entry.kind))
+    throw new HttpError(400, 'bad-target', 'Unknown file kind');
+  const { root } = app.repo;
+  const file = targetPath(root, entry.kind, entry.id);
+  if (entry.baseHash !== null && typeof entry.baseHash !== 'string')
+    throw badRequest('baseHash must be a string or null');
+  const current = readText(file);
+  const out = {
+    kind: entry.kind,
+    file,
+    current,
+    baseHash: entry.baseHash,
+    errors: [],
+    warnings: [],
+    notes: [],
+    roundTrip: null,
+  };
+  if (entry.kind !== 'config') out.id = entry.id;
+
+  if (entry.kind === 'rules') {
+    if (typeof entry.text !== 'string') throw badRequest('rules entries need "text"');
+    out.text = entry.text;
+    out.removedComments = [];
+    return out;
+  }
+
+  if (!isObj(entry.model)) {
+    out.errors.push({ path: '', message: 'a model is required' });
+    out.text = current ?? '';
+    out.removedComments = [];
+    return out;
+  }
+  const model = normalize(entry.model) ?? {};
+  const disk = current !== null ? parseModel(app, current) : { model: null };
+  const existingStageIds = override.existingStageIds ?? stageIds(disk.model);
+
+  const issues =
+    entry.kind === 'config'
+      ? validateConfig(model)
+      : validateWorkflow(model, { id: entry.id, agents: listAgents(root), existingStageIds });
+  out.errors = issues.filter((i) => i.severity !== 'warning');
+  if (disk.error !== undefined)
+    out.errors.push({
+      path: '',
+      message: `the file on disk does not parse (${disk.error}); fix it by hand first`,
+    });
+  out.warnings = issues.filter((i) => i.severity === 'warning');
+
+  let text = current ?? '';
+  if (out.errors.length === 0) {
+    const raw = override.raw ?? current ?? '';
+    try {
+      text =
+        entry.kind === 'config'
+          ? emitConfig(model, { layout: configLayout(), raw })
+          : emitWorkflow(model, { header: headerFor(entry.id), raw });
+      const parsed = parseModel(app, text);
+      if (parsed.error !== undefined) {
+        out.roundTrip = { path: '', message: `the written file would not parse: ${parsed.error}` };
+      } else {
+        const d = firstDiff(model, normalize(parsed.model) ?? {});
+        if (d !== null)
+          out.roundTrip = { path: d, message: `"${d}" would not read back the same after writing` };
+      }
+    } catch (e) {
+      out.roundTrip = { path: '', message: e.message };
+    }
+  }
+  out.text = text;
+  out.removedComments = removedComments(current ?? '', text);
+
+  if (entry.kind === 'workflow') {
+    const oldIds = stageIds(disk.model);
+    const newIds = stageIds(model);
+    out.stageChange = oldIds.length > 0 && oldIds.join('\0') !== newIds.join('\0');
+    out.newIds = newIds;
+    for (const id of oldIds) {
+      if (
+        !newIds.includes(id) &&
+        typeof id === 'string' &&
+        existsSync(path.join(root, '.shipline', 'rules', `${id}.md`))
+      ) {
+        out.notes.push(
+          `Stage "${id}" is removed; its rules file .shipline/rules/${id}.md stays in place.`,
+        );
+      }
+    }
+  }
+  return out;
+}
+
+function openTasksOf(app) {
+  const { cfg } = app.repo.getConfig();
+  return cfg ? readOpenTasks(app.repo.root, cfg) : [];
+}
+
+// Open tasks whose manifest keeps a stage list different from the new one.
+function impactFor(app, workflowId, newIds) {
+  const impact = [];
+  for (const t of openTasksOf(app)) {
+    if (t.workflow !== workflowId) continue;
+    const old = t.manifest.stages.map((s) => s.id);
+    const added = newIds.filter((id) => !old.includes(id));
+    const removed = old.filter((id) => !newIds.includes(id));
+    const common = old.filter((id) => newIds.includes(id));
+    const reordered = common.join('\0') !== newIds.filter((id) => old.includes(id)).join('\0');
+    if (added.length || removed.length || reordered) {
+      impact.push({
+        task: t.dir,
+        title: t.manifest.task.title ?? t.slug,
+        added,
+        removed,
+        reordered,
+      });
+    }
+  }
+  return impact;
+}
+
+function entriesOf(body) {
+  if (!isObj(body) || !Array.isArray(body.files) || body.files.length === 0)
+    throw badRequest('Expected { files: [...] }');
+  return body.files;
+}
+
+function tagged(p, e) {
+  return { kind: p.kind, ...(p.id !== undefined ? { id: p.id } : {}), ...e };
+}
+
+async function preview(app, body) {
+  const files = [];
+  const impact = [];
+  const seen = new Set();
+  const prepared = entriesOf(body).map((e) => prepare(app, e));
+  for (const p of prepared) {
+    if (seen.has(p.file)) throw badRequest('The same file appears twice');
+    seen.add(p.file);
+    const errors = [...p.errors];
+    if (p.roundTrip) errors.push(p.roundTrip);
+    const out = {
+      kind: p.kind,
+      ...(p.id !== undefined ? { id: p.id } : {}),
+      text: p.text,
+      diff: await textDiff(app.repo.root, p.current ?? '', p.text),
+      removedComments: p.removedComments,
+      errors,
+    };
+    if (p.warnings.length) out.warnings = p.warnings;
+    if (p.notes.length) out.notes = p.notes;
+    files.push(out);
+    if (p.kind === 'workflow' && p.stageChange && p.errors.length === 0)
+      impact.push(...impactFor(app, p.id, p.newIds).map((i) => ({ workflow: p.id, ...i })));
+  }
+  return { files, impact };
+}
+
+function writeAtomic(file, text) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, text);
+    renameSync(tmp, file);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
+}
+
+function writeNew(file, text) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  try {
+    writeFileSync(file, text, { flag: 'wx' });
+  } catch (e) {
+    if (e.code === 'EEXIST') throw new HttpError(409, 'exists', 'File already exists');
+    throw e;
+  }
+}
+
+// Validates, checks every hash, then writes. Nothing is written unless every entry passes.
+function commit(app, prepared) {
+  const seen = new Set();
+  for (const p of prepared) {
+    if (seen.has(p.file)) throw badRequest('The same file appears twice');
+    seen.add(p.file);
+  }
+  const bad = prepared.flatMap((p) => p.errors.map((e) => tagged(p, e)));
+  if (bad.length) throw new HttpError(400, 'invalid', 'The files have errors', bad);
+  const rt = prepared.find((p) => p.roundTrip);
+  if (rt)
+    throw new HttpError(400, 'round-trip', `${rt.roundTrip.message}`, tagged(rt, rt.roundTrip));
+
+  // Step 4: every hash, before the first write.
+  for (const p of prepared) {
+    if (p.baseHash === null) {
+      if (p.current !== null)
+        throw new HttpError(409, 'exists', 'A file you are creating already exists', tagged(p, {}));
+    } else if (p.current === null || sha256(p.current) !== p.baseHash) {
+      throw new HttpError(
+        409,
+        'changed',
+        'A file changed on disk since it was loaded',
+        tagged(p, {}),
+      );
+    }
+  }
+
+  const written = [];
+  let configSaved = false;
+  for (const p of prepared) {
+    if (p.current !== null && p.text === p.current) continue; // nothing to write
+    const hash = sha256(p.text);
+    if (p.current === null) writeNew(p.file, p.text);
+    else writeAtomic(p.file, p.text);
+    log('save', {
+      kind: p.kind,
+      ...(p.id !== undefined ? { id: p.id } : {}),
+      file: path.relative(app.repo.root, p.file),
+      hashBefore: p.current === null ? null : sha256(p.current),
+      hashAfter: hash,
+    });
+    written.push(tagged(p, { hash }));
+    if (p.kind === 'config') configSaved = true;
+  }
+  if (configSaved) app.repo.reloadConfig();
+  return { written };
+}
+
+async function save(app, body) {
+  app.repo.requireWritable();
+  return commit(
+    app,
+    entriesOf(body).map((e) => prepare(app, e)),
+  );
+}
+
+async function workflows(app, body) {
+  app.repo.requireWritable();
+  const { root } = app.repo;
+  if (!isObj(body)) throw badRequest('Expected { action, ... }');
+
+  if (body.action === 'copy') {
+    const source = targetPath(root, 'workflow', body.from);
+    const target = targetPath(root, 'workflow', body.id);
+    const raw = readText(source);
+    if (raw === null)
+      throw new HttpError(400, 'bad-target', `Workflow "${body.from}" does not exist`);
+    if (existsSync(target))
+      throw new HttpError(409, 'exists', `Workflow "${body.id}" already exists`);
+    const parsed = parseModel(app, raw);
+    if (parsed.error !== undefined)
+      throw new HttpError(
+        400,
+        'bad-target',
+        `Workflow "${body.from}" does not parse: ${parsed.error}`,
+      );
+    // The file's own id decides what `stage.mjs start` records.
+    const model = { ...parsed.model, id: body.id };
+    const p = prepare(
+      app,
+      { kind: 'workflow', id: body.id, model, baseHash: null },
+      { raw, existingStageIds: stageIds(parsed.model) },
+    );
+    commit(app, [p]);
+    return { ok: true };
+  }
+
+  if (body.action === 'delete') {
+    const target = targetPath(root, 'workflow', body.id);
+    if (!existsSync(target))
+      throw new HttpError(400, 'bad-target', `Workflow "${body.id}" does not exist`);
+    if (!app.repo.getConfig().cfg) {
+      throw new HttpError(
+        409,
+        'in-use',
+        "Open tasks can't be checked while config.yml does not parse; fix it first",
+      );
+    }
+    const using = openTasksOf(app)
+      .filter((t) => t.workflow === body.id)
+      .map((t) => t.dir);
+    if (using.length)
+      throw new HttpError(409, 'in-use', `Open tasks still use workflow "${body.id}"`, {
+        tasks: using,
+      });
+    const hash = sha256(readText(target));
+    unlinkSync(target); // its rules files stay in place
+    log('delete-workflow', { id: body.id, hashBefore: hash });
+    return { ok: true };
+  }
+
+  throw new HttpError(400, 'bad-target', 'action must be "copy" or "delete"');
+}
+
+// ---------- GET /api/setup ----------
+
+function setup(app) {
+  const { root } = app.repo;
+  return {
+    config: loadFile(app, 'config'),
+    workflows: listIds(path.join(root, '.shipline', 'workflows'), '.yml').map((id) =>
+      loadFile(app, 'workflow', id),
+    ),
+    rules: listIds(path.join(root, '.shipline', 'rules'), '.md').map((id) =>
+      loadFile(app, 'rules', id),
+    ),
+    agents: listAgents(root),
+  };
+}
+
+export function routes(app) {
+  return [
+    { method: 'GET', path: '/api/setup', handler: () => setup(app) },
+    { method: 'POST', path: '/api/setup/preview', handler: ({ body }) => preview(app, body) },
+    { method: 'POST', path: '/api/setup/save', handler: ({ body }) => save(app, body) },
+    { method: 'POST', path: '/api/setup/workflows', handler: ({ body }) => workflows(app, body) },
+  ];
+}

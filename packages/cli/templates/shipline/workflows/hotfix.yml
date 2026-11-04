@@ -1,0 +1,31 @@
+# Hotfix workflow: the short path (a default; edit freely or via /shipline-setup).
+id: hotfix
+name: Hotfix
+description: urgent production fix, shortest safe path
+stages:
+  - id: jira
+    name: Jira ticket
+    artifact: ticket.md
+    optional: true
+    enforcement: guide
+    confirm_to_advance: false
+  - id: fix
+    name: Fix
+    artifact: fix.md
+    agent: builder
+    enforcement: guide
+    confirm_to_advance: false
+  - id: verify
+    name: Verify
+    artifact: verification.md
+    agent: qa-bug-hunter
+    enforcement: block
+    confirm_to_advance: true
+    blocks:
+      - bash: '\bgit\s+commit\b|\bgh\s+pr\s+create\b'
+  - id: pr
+    name: Commit and PR
+    artifact: pr.md
+    agent: builder
+    enforcement: guide
+    confirm_to_advance: false

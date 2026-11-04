@@ -86,7 +86,12 @@ export function readHistory(root, sessionId) {
         if (b.type === 'text' && typeof b.text === 'string' && b.text.trim())
           out.push({ kind: 'assistant', text: b.text });
         else if (b.type === 'tool_use')
-          out.push({ kind: 'tool-use', id: b.id, name: b.name, summary: summarize(b.name, b.input) });
+          out.push({
+            kind: 'tool-use',
+            id: b.id,
+            name: b.name,
+            summary: summarize(b.name, b.input),
+          });
       }
     } else if (entry.type === 'user') {
       if (Array.isArray(content)) {

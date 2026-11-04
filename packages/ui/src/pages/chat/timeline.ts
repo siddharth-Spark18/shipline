@@ -147,7 +147,8 @@ function assistantEvent(out: Item[], ev: Rec) {
   const msg = ev.message;
   if (!isRec(msg)) return;
   const msgId = asStr(msg.id);
-  const blocks = typeof msg.content === 'string' ? [{ type: 'text', text: msg.content }] : msg.content;
+  const blocks =
+    typeof msg.content === 'string' ? [{ type: 'text', text: msg.content }] : msg.content;
   if (!Array.isArray(blocks)) return;
   for (const block of blocks) {
     if (!isRec(block)) continue;
@@ -156,7 +157,11 @@ function assistantEvent(out: Item[], ev: Rec) {
       if (!text.trim()) continue;
       // The final text replaces the finished partial it was streamed as.
       const at = out.findIndex(
-        (i) => i.kind === 'text' && i.streaming !== undefined && i.streaming.msgId === msgId && i.streaming.done,
+        (i) =>
+          i.kind === 'text' &&
+          i.streaming !== undefined &&
+          i.streaming.msgId === msgId &&
+          i.streaming.done,
       );
       if (at >= 0) out.splice(at, 1);
       out.push({ kind: 'text', id: nextId('a'), text });
@@ -165,7 +170,12 @@ function assistantEvent(out: Item[], ev: Rec) {
       }
     } else if (block.type === 'tool_use') {
       const id = asStr(block.id) ?? nextId('t');
-      const item: Item = { kind: 'tool', id, name: asStr(block.name) ?? 'tool', input: block.input };
+      const item: Item = {
+        kind: 'tool',
+        id,
+        name: asStr(block.name) ?? 'tool',
+        input: block.input,
+      };
       const at = out.findIndex((i) => i.kind === 'tool' && i.id === id);
       if (at >= 0) replaceAt(out, at, item);
       else out.push(item);
@@ -178,7 +188,8 @@ function userEvent(out: Item[], ev: Rec, ctx: StreamCtx) {
   if (!isRec(msg) || ev.isMeta === true) return;
   if (typeof msg.content === 'string') {
     // Live: the composer already added the message. History: this is the real thing.
-    if (ctx.history && msg.content.trim()) out.push({ kind: 'user', id: nextId('u'), text: msg.content });
+    if (ctx.history && msg.content.trim())
+      out.push({ kind: 'user', id: nextId('u'), text: msg.content });
     return;
   }
   if (!Array.isArray(msg.content)) return;
@@ -212,11 +223,17 @@ function userEvent(out: Item[], ev: Rec, ctx: StreamCtx) {
       }
     }
 
-    if (tool && tool.kind === 'tool') replaceAt(out, at, { ...tool, result: { text, isError }, outcome });
+    if (tool && tool.kind === 'tool')
+      replaceAt(out, at, { ...tool, result: { text, isError }, outcome });
     if (outcome === 'blocked') {
       out.push({ kind: 'notice', id: nextId('n'), level: 'blocked', text });
     } else if (outcome === 'denied') {
-      out.push({ kind: 'notice', id: nextId('n'), level: 'denied', text: name ? `You denied ${name}.` : 'You denied this call.' });
+      out.push({
+        kind: 'notice',
+        id: nextId('n'),
+        level: 'denied',
+        text: name ? `You denied ${name}.` : 'You denied this call.',
+      });
     } else if (isError && text.includes('No answer within')) {
       out.push({ kind: 'notice', id: nextId('n'), level: 'notice', text });
     }
@@ -234,7 +251,12 @@ function resultEvent(out: Item[], ev: Rec) {
       text,
     });
   } else if (isError) {
-    out.push({ kind: 'notice', id: nextId('n'), level: 'info', text: `Turn ended: ${asStr(ev.subtype) ?? 'error'}` });
+    out.push({
+      kind: 'notice',
+      id: nextId('n'),
+      level: 'info',
+      text: `Turn ended: ${asStr(ev.subtype) ?? 'error'}`,
+    });
   }
   // Any partial that never got its final message stops being "streaming".
   for (let i = 0; i < out.length; i++) {
@@ -359,7 +381,8 @@ export function normalizeHistory(history: unknown[] | null | undefined): Item[] 
       const at = items.findIndex((it) => it.kind === 'tool' && it.id === entry.toolUseId);
       const tool = at >= 0 ? items[at] : undefined;
       if (tool && tool.kind === 'tool') items[at] = { ...tool, result: { text, isError }, outcome };
-      if (outcome === 'blocked') items.push({ kind: 'notice', id: nextId('n'), level: 'blocked', text });
+      if (outcome === 'blocked')
+        items.push({ kind: 'notice', id: nextId('n'), level: 'blocked', text });
     } else if (entry.kind === 'tool_use' || entry.kind === 'tool-use' || entry.kind === 'tool') {
       items.push({
         kind: 'tool',

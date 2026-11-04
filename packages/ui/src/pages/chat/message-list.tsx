@@ -47,7 +47,10 @@ export function MessageList({ items, prompts }: { items: Item[]; prompts: Prompt
         switch (item.kind) {
           case 'user':
             return (
-              <div key={item.id} className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-sm border border-primary/25 bg-primary/10 px-3.5 py-2 text-sm whitespace-pre-wrap break-words text-foreground">
+              <div
+                key={item.id}
+                className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-sm border border-primary/25 bg-primary/10 px-3.5 py-2 text-sm whitespace-pre-wrap break-words text-foreground"
+              >
                 {item.text}
               </div>
             );

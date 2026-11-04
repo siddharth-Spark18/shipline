@@ -134,7 +134,9 @@ export function AppSidebar({
   const waiting = useMemo(() => new Set(prompts.map((p) => p.chatId)), [prompts]);
   const groups = useMemo(() => groupChats(chats, tasks.data?.tasks), [chats, tasks.data]);
 
-  const repoName = status?.root ? (status.root.split(/[\\/]/).filter(Boolean).pop() ?? 'Shipline') : 'Shipline';
+  const repoName = status?.root
+    ? (status.root.split(/[\\/]/).filter(Boolean).pop() ?? 'Shipline')
+    : 'Shipline';
   // Close the mobile drawer after a navigation; no-op on desktop.
   const done = () => isMobile && setOpenMobile(false);
 
@@ -143,7 +145,11 @@ export function AppSidebar({
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" className="pointer-events-none" tooltip={status?.root ?? 'Shipline'}>
+            <SidebarMenuButton
+              size="lg"
+              className="pointer-events-none"
+              tooltip={status?.root ?? 'Shipline'}
+            >
               <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">
                 S
               </div>
@@ -221,8 +227,12 @@ export function AppSidebar({
                             status={active ? 'in_progress' : 'done'}
                             className="size-2 ring-2"
                           />
-                          <span className="min-w-0 flex-1 truncate">{c.title || 'Untitled chat'}</span>
-                          {waiting.has(c.id) && <Badge className="h-4 px-1.5 text-[10px]">Needs answer</Badge>}
+                          <span className="min-w-0 flex-1 truncate">
+                            {c.title || 'Untitled chat'}
+                          </span>
+                          {waiting.has(c.id) && (
+                            <Badge className="h-4 px-1.5 text-[10px]">Needs answer</Badge>
+                          )}
                         </div>
                         {g.task && <StageTrail stages={g.task.stages} className="pl-4" />}
                       </div>
@@ -240,7 +250,11 @@ export function AppSidebar({
           <SidebarMenuItem>
             <SidebarMenuButton
               variant="outline"
-              tooltip={warnings === 0 ? 'Status: all good' : `Status: ${warnings} warning${warnings === 1 ? '' : 's'}`}
+              tooltip={
+                warnings === 0
+                  ? 'Status: all good'
+                  : `Status: ${warnings} warning${warnings === 1 ? '' : 's'}`
+              }
               onClick={onOpenDiagnostics}
             >
               <span
@@ -250,7 +264,8 @@ export function AppSidebar({
                 )}
               />
               <span>
-                Status: {warnings === 0 ? 'all good' : `${warnings} warning${warnings === 1 ? '' : 's'}`}
+                Status:{' '}
+                {warnings === 0 ? 'all good' : `${warnings} warning${warnings === 1 ? '' : 's'}`}
               </span>
             </SidebarMenuButton>
           </SidebarMenuItem>

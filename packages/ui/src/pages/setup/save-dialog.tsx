@@ -53,10 +53,7 @@ function Issues({ issues }: { issues: ValidationIssue[] }) {
   return (
     <ul className="flex flex-col gap-1 text-sm">
       {issues.map((i, k) => (
-        <li
-          key={k}
-          className={isError(i) ? 'text-destructive' : 'text-enf-warn'}
-        >
+        <li key={k} className={isError(i) ? 'text-destructive' : 'text-enf-warn'}>
           {i.path && <span className="font-mono">{i.path}: </span>}
           {i.message}
         </li>

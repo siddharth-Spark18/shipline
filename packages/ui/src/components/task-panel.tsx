@@ -166,9 +166,7 @@ export function StageTimeline({ task }: { task: Task }) {
 
   return (
     <div className="flex flex-col gap-3">
-      {curIdx < 0 && (
-        <p className="rounded-md bg-muted px-3 py-2 text-sm">All stages are done.</p>
-      )}
+      {curIdx < 0 && <p className="rounded-md bg-muted px-3 py-2 text-sm">All stages are done.</p>}
       <ol className="flex flex-col">
         {task.stages.map((s, i) => {
           const current = i === curIdx;

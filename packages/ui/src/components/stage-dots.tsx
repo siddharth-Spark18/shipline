@@ -40,13 +40,7 @@ export function StageDot({
 }
 
 /** A row of small dots, one per stage: the compact "where is this task" trail. */
-export function StageTrail({
-  stages,
-  className,
-}: {
-  stages: TaskStage[];
-  className?: string;
-}) {
+export function StageTrail({ stages, className }: { stages: TaskStage[]; className?: string }) {
   return (
     <span className={cn('flex items-center gap-0.5', className)} aria-hidden>
       {stages.map((s) => (

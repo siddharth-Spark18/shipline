@@ -20,7 +20,8 @@ export const ASK_USER_QUESTION = 'AskUserQuestion';
 const MCP_SERVER_NAME = 'shipline_ui';
 const RELAY_PATH = fileURLToPath(new URL('./relay.mjs', import.meta.url));
 
-export const timeoutMessage = (ms) => `No answer within ${Number((ms / 60_000).toFixed(2))} minutes`;
+export const timeoutMessage = (ms) =>
+  `No answer within ${Number((ms / 60_000).toFixed(2))} minutes`;
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -198,7 +199,9 @@ export function createPrompts(app) {
     // A tool result for a call the developer denied on a card: matched by tool_use_id, or, when the prompt had
     // none, to the most recent denied prompt for the same tool name. Each denial matches once.
     takeDenied(chatId, toolUseId, toolName) {
-      let hit = denied.find((d) => !d.used && d.chatId === chatId && d.toolUseId && d.toolUseId === toolUseId);
+      let hit = denied.find(
+        (d) => !d.used && d.chatId === chatId && d.toolUseId && d.toolUseId === toolUseId,
+      );
       if (!hit && toolName) {
         for (let i = denied.length - 1; i >= 0; i--) {
           const d = denied[i];

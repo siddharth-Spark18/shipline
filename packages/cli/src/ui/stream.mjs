@@ -43,8 +43,7 @@ export const isResult = (e) => !!e && e.type === 'result';
 
 // A string, or a `result` event (its `result` text).
 export function isUsageLimit(textOrEvent) {
-  const text =
-    typeof textOrEvent === 'string' ? textOrEvent : textOrEvent && textOrEvent.result;
+  const text = typeof textOrEvent === 'string' ? textOrEvent : textOrEvent && textOrEvent.result;
   return typeof text === 'string' && USAGE_LIMIT.test(text);
 }
 
@@ -83,7 +82,12 @@ function asObject(v) {
 // `output`/`stdout`/`data` (an object or a JSON string). Returns the text or null.
 export function hookSystemMessage(event) {
   if (!event || event.type !== 'system') return null;
-  for (const holder of [event, asObject(event.output), asObject(event.stdout), asObject(event.data)]) {
+  for (const holder of [
+    event,
+    asObject(event.output),
+    asObject(event.stdout),
+    asObject(event.data),
+  ]) {
     if (holder && typeof holder.systemMessage === 'string' && holder.systemMessage)
       return holder.systemMessage;
   }

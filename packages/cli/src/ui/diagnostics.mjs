@@ -43,7 +43,12 @@ export function routes(app) {
           logTail: tail(50),
           claude,
           activeChatId: app.chats ? app.chats.activeId() : null,
-          lock: lock && { pid: lock.pid, hostname: lock.hostname, port: lock.port, sessionId: lock.session_id },
+          lock: lock && {
+            pid: lock.pid,
+            hostname: lock.hostname,
+            port: lock.port,
+            sessionId: lock.session_id,
+          },
         });
       },
     },

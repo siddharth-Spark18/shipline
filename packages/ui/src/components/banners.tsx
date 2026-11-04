@@ -63,7 +63,11 @@ function BannerItem({
         {onOpenDiagnostics && (
           <>
             {' '}
-            <button type="button" className="underline underline-offset-2" onClick={onOpenDiagnostics}>
+            <button
+              type="button"
+              className="underline underline-offset-2"
+              onClick={onOpenDiagnostics}
+            >
               Open diagnostics
             </button>
           </>
@@ -101,7 +105,8 @@ export function useBanners(status: Status | undefined) {
   const derived = versionBanner(status);
   if (derived && !all.some((b) => b.kind === 'version')) all.unshift(derived);
 
-  const isDestructive = (b: BannerEvent) => b.kind !== 'version' || status?.versionState === 'repo-newer';
+  const isDestructive = (b: BannerEvent) =>
+    b.kind !== 'version' || status?.versionState === 'repo-newer';
   const dismiss = (id: string) => setDismissed((prev) => new Set(prev).add(id));
   return { all, visible: all.filter((b) => !dismissed.has(b.id)), isDestructive, dismiss };
 }

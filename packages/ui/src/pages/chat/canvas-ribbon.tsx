@@ -45,7 +45,10 @@ export function CanvasRibbon({ task, changes }: { task?: Task; changes: Change[]
         <ListChecksIcon className="size-4 text-muted-foreground" aria-label="No task yet" />
       )}
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent side="right" className="gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-md">
+        <SheetContent
+          side="right"
+          className="gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-md"
+        >
           <SheetHeader>
             <SheetTitle>Task canvas</SheetTitle>
             <SheetDescription>Progress, artifacts and changes for this chat.</SheetDescription>

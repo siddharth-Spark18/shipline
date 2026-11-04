@@ -141,7 +141,10 @@ export default function SetupPage({ versionState }: { versionState: VersionState
       </div>
 
       <div className="grid gap-4 md:grid-cols-[14rem_1fr]">
-        <nav className="flex flex-row flex-wrap gap-1 md:flex-col md:self-start" aria-label="Setup files">
+        <nav
+          className="flex flex-row flex-wrap gap-1 md:flex-col md:self-start"
+          aria-label="Setup files"
+        >
           <Button
             variant={current === 'config' ? 'secondary' : 'ghost'}
             className="justify-start"

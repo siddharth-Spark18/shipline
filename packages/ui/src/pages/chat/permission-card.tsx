@@ -31,7 +31,10 @@ export function Countdown({ expiresAt }: { expiresAt: number | string }) {
   const m = Math.floor(secs / 60);
   const s = String(secs % 60).padStart(2, '0');
   return (
-    <span className="text-xs text-muted-foreground tabular-nums" title="Denied automatically when the time runs out">
+    <span
+      className="text-xs text-muted-foreground tabular-nums"
+      title="Denied automatically when the time runs out"
+    >
       Denied in {m}:{s}
     </span>
   );

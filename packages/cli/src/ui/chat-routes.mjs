@@ -25,7 +25,11 @@ function requireChat(app, id) {
 async function requireClaude() {
   const h = await claudeHealth(MIN_CLAUDE_VERSION);
   if (!h.installed) throw new HttpError(412, 'claude-missing', h.guidance);
-  if (!h.meetsMinVersion) throw new HttpError(412, 'claude-too-old', h.guidance, { version: h.version, minVersion: h.minVersion });
+  if (!h.meetsMinVersion)
+    throw new HttpError(412, 'claude-too-old', h.guidance, {
+      version: h.version,
+      minVersion: h.minVersion,
+    });
   if (!h.loggedIn) throw new HttpError(412, 'claude-signed-out', h.guidance);
   return h;
 }
@@ -37,7 +41,9 @@ export function routes(app) {
     app.repo.requireWritable();
     const activeId = app.chats.activeId();
     if (activeId)
-      throw new HttpError(409, 'chat-active', 'A chat is already active here.', { chatId: activeId });
+      throw new HttpError(409, 'chat-active', 'A chat is already active here.', {
+        chatId: activeId,
+      });
     return requireClaude();
   };
 
@@ -68,7 +74,9 @@ export function routes(app) {
       handler: ({ params }) => {
         const chat = withStatus(app, requireChat(app, params.id));
         const h = readHistory(root, chat.id);
-        return h.unavailable ? { chat, history: null, unavailable: true } : { chat, history: h.history };
+        return h.unavailable
+          ? { chat, history: null, unavailable: true }
+          : { chat, history: h.history };
       },
     },
     {

@@ -68,7 +68,10 @@ export async function copyText(text: string) {
 export function ResumeCommand({ command }: { command: string }) {
   return (
     <div className="flex items-center gap-2">
-      <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-xs" title={command}>
+      <code
+        className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-xs"
+        title={command}
+      >
         {command}
       </code>
       <Button variant="outline" size="xs" onClick={() => void copyText(command)}>
@@ -132,9 +135,13 @@ export function ClaudeMissingNotice({ code, message }: { code: string; message: 
   return (
     <Alert variant="destructive">
       <BanIcon />
-      <AlertTitle>{code === 'claude-missing' ? 'Claude Code not found' : 'Claude Code problem'}</AlertTitle>
+      <AlertTitle>
+        {code === 'claude-missing' ? 'Claude Code not found' : 'Claude Code problem'}
+      </AlertTitle>
       <AlertDescription>
-        {code === 'claude-missing' ? 'Install Claude Code and sign in, then reload.' : `${message} Fix it, then reload.`}
+        {code === 'claude-missing'
+          ? 'Install Claude Code and sign in, then reload.'
+          : `${message} Fix it, then reload.`}
       </AlertDescription>
     </Alert>
   );
@@ -144,15 +151,14 @@ export function ClaudeMissingNotice({ code, message }: { code: string; message: 
 export function LockHeldNotice({ heldBy, message }: { heldBy: unknown; message: string }) {
   let port: string | null = null;
   if (typeof heldBy === 'number' || typeof heldBy === 'string') port = String(heldBy);
-  else if (heldBy && typeof heldBy === 'object' && 'port' in heldBy) port = String((heldBy as { port: unknown }).port);
+  else if (heldBy && typeof heldBy === 'object' && 'port' in heldBy)
+    port = String((heldBy as { port: unknown }).port);
   return (
     <Alert variant="destructive">
       <BanIcon />
       <AlertTitle>Chat is locked</AlertTitle>
       <AlertDescription>
-        {port
-          ? `A chat is active in another Shipline UI on port ${port}; stop it there.`
-          : message}
+        {port ? `A chat is active in another Shipline UI on port ${port}; stop it there.` : message}
       </AlertDescription>
     </Alert>
   );

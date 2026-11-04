@@ -33,7 +33,9 @@ export function DiagnosticsSheet({
       <SheetContent className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Diagnostics</SheetTitle>
-          <SheetDescription>Redacted by the server. Safe to paste into a bug report.</SheetDescription>
+          <SheetDescription>
+            Redacted by the server. Safe to paste into a bug report.
+          </SheetDescription>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
           {open && <DiagnosticsBody />}
@@ -46,7 +48,9 @@ export function DiagnosticsSheet({
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{title}</h3>
+      <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+        {title}
+      </h3>
       {children}
     </section>
   );

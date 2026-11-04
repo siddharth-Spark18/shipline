@@ -39,7 +39,9 @@ export function createChats(app) {
   function bindTask(chat) {
     let taskDir = null;
     try {
-      const j = JSON.parse(readFileSync(path.join(root, '.shipline', '.state', `${chat.id}.json`), 'utf8'));
+      const j = JSON.parse(
+        readFileSync(path.join(root, '.shipline', '.state', `${chat.id}.json`), 'utf8'),
+      );
       if (j && typeof j.task_dir === 'string') taskDir = j.task_dir;
     } catch {
       return;
@@ -194,11 +196,16 @@ export function createChats(app) {
   // Takes the lock and spawns claude. `message` is the first user message for a new chat.
   // `claudeVersion` is only for the log.
   async function begin({ id, resume, message, claudeVersion }) {
-    if (active) throw new HttpError(409, 'chat-active', 'A chat is already active here.', { chatId: active.id });
+    if (active)
+      throw new HttpError(409, 'chat-active', 'A chat is already active here.', {
+        chatId: active.id,
+      });
     const lock = acquireLock(root, { sessionId: id, port: app.port });
     if (!lock.acquired) {
       if (lock.heldBy === 'self')
-        throw new HttpError(409, 'chat-active', 'A chat is already active here.', { chatId: lock.sessionId });
+        throw new HttpError(409, 'chat-active', 'A chat is already active here.', {
+          chatId: lock.sessionId,
+        });
       throw new HttpError(
         409,
         'lock-held',
@@ -229,7 +236,8 @@ export function createChats(app) {
     chat.exited = new Promise((resolve) => (chat.resolveExited = resolve));
     try {
       const bin = findClaude();
-      if (!bin) throw new HttpError(412, 'claude-missing', 'Install Claude Code and sign in, then reload.');
+      if (!bin)
+        throw new HttpError(412, 'claude-missing', 'Install Claude Code and sign in, then reload.');
       const mcpConfig = app.prompts.writeMcpConfig(id, app.port);
       const argv = buildArgs({ sessionId: id, resume, mcpConfig });
       const env = { ...process.env, SHIPLINE_SESSION: id };
@@ -272,7 +280,8 @@ export function createChats(app) {
     });
     child.stderr.on('data', (data) => {
       chat.stderr = Buffer.concat([chat.stderr, data]);
-      if (chat.stderr.length > STDERR_TAIL_BYTES) chat.stderr = chat.stderr.subarray(-STDERR_TAIL_BYTES);
+      if (chat.stderr.length > STDERR_TAIL_BYTES)
+        chat.stderr = chat.stderr.subarray(-STDERR_TAIL_BYTES);
     });
     child.on('error', (e) => finish(chat, null, null, e && e.message));
     child.on('exit', (code, signal) => {
@@ -310,8 +319,10 @@ export function createChats(app) {
         if (getChat(root, id)) throw new HttpError(409, 'chat-ended', 'This chat has ended.');
         throw new HttpError(404, 'not-found', 'No such chat');
       }
-      if (chat.stopping || chat.done) throw new HttpError(409, 'chat-ended', 'This chat has ended.');
-      if (chat.busy) throw new HttpError(409, 'busy', 'Claude is still answering the last message.');
+      if (chat.stopping || chat.done)
+        throw new HttpError(409, 'chat-ended', 'This chat has ended.');
+      if (chat.busy)
+        throw new HttpError(409, 'busy', 'Claude is still answering the last message.');
       writeUser(chat, text);
     },
 

@@ -20,7 +20,8 @@ function pretty(v: unknown): string {
 }
 
 const MAX = 4000;
-const clip = (s: string) => (s.length > MAX ? `${s.slice(0, MAX)}\n... (${s.length - MAX} more characters)` : s);
+const clip = (s: string) =>
+  s.length > MAX ? `${s.slice(0, MAX)}\n... (${s.length - MAX} more characters)` : s;
 
 /** A collapsible tool call: name and one-line summary, then the input and the result. */
 export function ToolCall({ item }: { item: ToolItem }) {
@@ -31,10 +32,24 @@ export function ToolCall({ item }: { item: ToolItem }) {
         <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
         <WrenchIcon className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="font-medium">{item.name}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{summary}</span>
-        {item.outcome === 'blocked' && <Badge variant="outline" className={TONE.blocked}>Blocked</Badge>}
-        {item.outcome === 'denied' && <Badge variant="outline" className={TONE.denied}>Denied</Badge>}
-        {!item.outcome && item.result?.isError && <Badge variant="outline" className={TONE.blocked}>Error</Badge>}
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
+          {summary}
+        </span>
+        {item.outcome === 'blocked' && (
+          <Badge variant="outline" className={TONE.blocked}>
+            Blocked
+          </Badge>
+        )}
+        {item.outcome === 'denied' && (
+          <Badge variant="outline" className={TONE.denied}>
+            Denied
+          </Badge>
+        )}
+        {!item.outcome && item.result?.isError && (
+          <Badge variant="outline" className={TONE.blocked}>
+            Error
+          </Badge>
+        )}
         {!item.result && <Badge variant="outline">Running</Badge>}
       </CollapsibleTrigger>
       <CollapsibleContent className="flex flex-col gap-2 border-t px-3 py-2">

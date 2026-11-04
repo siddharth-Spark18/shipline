@@ -51,7 +51,11 @@ export function relayRequestOptions(url, secret, contentLength) {
 }
 
 // POSTs the approve arguments; resolves with the answer, or a deny when the UI can't be reached.
-export function askUi(args, url = process.env.SHIPLINE_UI_RELAY_URL, secret = process.env.SHIPLINE_UI_RELAY_SECRET) {
+export function askUi(
+  args,
+  url = process.env.SHIPLINE_UI_RELAY_URL,
+  secret = process.env.SHIPLINE_UI_RELAY_SECRET,
+) {
   return new Promise((resolve) => {
     if (!url || !secret) return resolve(UNREACHABLE);
     let body;
@@ -73,7 +77,10 @@ export function askUi(args, url = process.env.SHIPLINE_UI_RELAY_URL, secret = pr
         } catch {
           // Falls through to the deny below.
         }
-        resolve({ behavior: 'deny', message: `Shipline UI refused the request (HTTP ${res.statusCode})` });
+        resolve({
+          behavior: 'deny',
+          message: `Shipline UI refused the request (HTTP ${res.statusCode})`,
+        });
       });
       res.on('error', () => resolve(UNREACHABLE));
     });
@@ -88,7 +95,8 @@ const failure = (id, code, message) => ({ jsonrpc: '2.0', id, error: { code, mes
 
 // One JSON-RPC message in, the response out (null for a notification).
 export async function handleMessage(msg, ask = askUi) {
-  if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return failure(null, -32600, 'Invalid Request');
+  if (!msg || typeof msg !== 'object' || Array.isArray(msg))
+    return failure(null, -32600, 'Invalid Request');
   const hasId = msg.id !== undefined && msg.id !== null;
   switch (msg.method) {
     case 'initialize':
@@ -135,7 +143,8 @@ function main() {
 
 // Run as a server only when started directly, so a test can import relayRequestOptions.
 try {
-  if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) main();
+  if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href)
+    main();
 } catch {
   // Not started directly.
 }

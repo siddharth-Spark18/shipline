@@ -39,8 +39,8 @@ function TerminalNote() {
   if (hidden) return null;
   return (
     <div className="rounded-md border p-2 text-xs text-muted-foreground">
-      Chats started in a terminal or an IDE are not listed here, and are not blocked while a chat
-      is active.{' '}
+      Chats started in a terminal or an IDE are not listed here, and are not blocked while a chat is
+      active.{' '}
       <button
         type="button"
         className="underline"
@@ -124,65 +124,64 @@ export default function ChatPage({
   const expanded = wide && !!task;
 
   const stream = (
-      <section className="flex h-full min-h-0 min-w-0 flex-col gap-3 p-4">
-        <TerminalNote />
-        {chats.error && (
-          <Alert variant="destructive">
-            <AlertTitle>Could not load chats</AlertTitle>
-            <AlertDescription>{chats.error.message}</AlertDescription>
-          </Alert>
-        )}
-        {readOnly && (
-          <Alert variant="destructive">
-            <AlertTitle>Chat is disabled</AlertTitle>
-            <AlertDescription>
-              This repo was set up with a newer Shipline, so chats can't be started or continued
-              here.
-            </AlertDescription>
-          </Alert>
-        )}
-        {blocker?.code === 'lock-held' && (
-          <LockHeldNotice heldBy={blocker.heldBy} message={blocker.message} />
-        )}
-        {blocker?.code === 'repo-newer' && (
-          <Alert variant="destructive">
-            <AlertTitle>Chat is disabled</AlertTitle>
-            <AlertDescription>{blocker.message}</AlertDescription>
-          </Alert>
-        )}
+    <section className="flex h-full min-h-0 min-w-0 flex-col gap-3 p-4">
+      <TerminalNote />
+      {chats.error && (
+        <Alert variant="destructive">
+          <AlertTitle>Could not load chats</AlertTitle>
+          <AlertDescription>{chats.error.message}</AlertDescription>
+        </Alert>
+      )}
+      {readOnly && (
+        <Alert variant="destructive">
+          <AlertTitle>Chat is disabled</AlertTitle>
+          <AlertDescription>
+            This repo was set up with a newer Shipline, so chats can't be started or continued here.
+          </AlertDescription>
+        </Alert>
+      )}
+      {blocker?.code === 'lock-held' && (
+        <LockHeldNotice heldBy={blocker.heldBy} message={blocker.message} />
+      )}
+      {blocker?.code === 'repo-newer' && (
+        <Alert variant="destructive">
+          <AlertTitle>Chat is disabled</AlertTitle>
+          <AlertDescription>{blocker.message}</AlertDescription>
+        </Alert>
+      )}
 
-        {selectedId ? (
-          <ChatView
-            key={selectedId}
-            id={selectedId}
-            summary={selected}
-            prompts={prompts.filter((p) => p.chatId === selectedId)}
-            readOnly={readOnly}
-            blocker={blocker}
-            onNewChat={() => select(null)}
-            onError={handleError}
-            onOk={() => setBlocker(null)}
-          />
-        ) : blocker?.code.startsWith('claude-') ? (
-          <ClaudeMissingNotice code={blocker.code} message={blocker.message} />
-        ) : (
-          <div className="flex flex-1 flex-col justify-end gap-3">
-            <div className="flex-1">
-              <h2 className="text-base font-medium">New chat</h2>
-              <p className="text-sm text-muted-foreground">
-                Describe the work. This runs your own installed <code>claude</code> in this
-                checkout, with the repo's Shipline hooks.
-              </p>
-            </div>
-            <Composer
-              disabled={readOnly}
-              placeholder="Describe the work to start a chat"
-              onSend={startChat}
-            />
+      {selectedId ? (
+        <ChatView
+          key={selectedId}
+          id={selectedId}
+          summary={selected}
+          prompts={prompts.filter((p) => p.chatId === selectedId)}
+          readOnly={readOnly}
+          blocker={blocker}
+          onNewChat={() => select(null)}
+          onError={handleError}
+          onOk={() => setBlocker(null)}
+        />
+      ) : blocker?.code.startsWith('claude-') ? (
+        <ClaudeMissingNotice code={blocker.code} message={blocker.message} />
+      ) : (
+        <div className="flex flex-1 flex-col justify-end gap-3">
+          <div className="flex-1">
+            <h2 className="text-base font-medium">New chat</h2>
+            <p className="text-sm text-muted-foreground">
+              Describe the work. This runs your own installed <code>claude</code> in this checkout,
+              with the repo's Shipline hooks.
+            </p>
           </div>
-        )}
-      </section>
-    );
+          <Composer
+            disabled={readOnly}
+            placeholder="Describe the work to start a chat"
+            onSend={startChat}
+          />
+        </div>
+      )}
+    </section>
+  );
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -192,7 +191,12 @@ export default function ChatPage({
             {stream}
           </ResizablePanel>
           <ResizableHandle withHandle />
-          <ResizablePanel defaultSize="32" minSize="280px" maxSize="50" className="min-h-0 bg-sidebar">
+          <ResizablePanel
+            defaultSize="32"
+            minSize="280px"
+            maxSize="50"
+            className="min-h-0 bg-sidebar"
+          >
             <TaskCanvas task={task} changes={changes} />
           </ResizablePanel>
         </ResizablePanelGroup>
@@ -343,7 +347,9 @@ function ChatView({
         <div className="flex flex-col gap-2 rounded-md border p-3">
           <p className="text-sm">
             This chat has ended and is read-only.
-            {live.fatal?.reason === 'resume-failed' ? '' : ' You can continue it here or in a terminal.'}
+            {live.fatal?.reason === 'resume-failed'
+              ? ''
+              : ' You can continue it here or in a terminal.'}
           </p>
           {!live.fatal && <ResumeCommand command={resumeCommand} />}
           {live.fatal?.reason !== 'resume-failed' && (
@@ -357,7 +363,11 @@ function ChatView({
       ) : (
         <Composer
           disabled={readOnly || busy}
-          hint={busy ? 'Claude is working. You can send the next message when this turn finishes.' : undefined}
+          hint={
+            busy
+              ? 'Claude is working. You can send the next message when this turn finishes.'
+              : undefined
+          }
           onSend={send}
         />
       )}

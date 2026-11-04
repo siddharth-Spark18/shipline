@@ -58,7 +58,13 @@ interface Selection {
  * AskUserQuestion as choices, one block per question. A filled-in "Other" replaces the chosen
  * labels. The answer is `{ [question text]: label }`, multi-select labels joined by ", ".
  */
-export function QuestionCard({ prompt, questions }: { prompt: PromptEvent; questions: QuestionItem[] }) {
+export function QuestionCard({
+  prompt,
+  questions,
+}: {
+  prompt: PromptEvent;
+  questions: QuestionItem[];
+}) {
   const { answer, pending } = useAnswerPrompt(prompt);
   const [sel, setSel] = useState<Record<string, Selection>>({});
 
@@ -88,7 +94,9 @@ export function QuestionCard({ prompt, questions }: { prompt: PromptEvent; quest
           return (
             <fieldset key={q.question} className="flex flex-col gap-2">
               <legend className="mb-1 text-sm font-medium">
-                {q.header && <span className="mr-2 rounded bg-muted px-1.5 py-0.5 text-xs">{q.header}</span>}
+                {q.header && (
+                  <span className="mr-2 rounded bg-muted px-1.5 py-0.5 text-xs">{q.header}</span>
+                )}
                 {q.question}
               </legend>
               {q.multiSelect ? (
@@ -100,14 +108,18 @@ export function QuestionCard({ prompt, questions }: { prompt: PromptEvent; quest
                       onCheckedChange={(on) =>
                         set(q, {
                           other: '',
-                          labels: on ? [...s.labels, o.label] : s.labels.filter((l) => l !== o.label),
+                          labels: on
+                            ? [...s.labels, o.label]
+                            : s.labels.filter((l) => l !== o.label),
                         })
                       }
                     />
                     <Label htmlFor={`${name}-${oi}`} className="flex flex-col items-start gap-0">
                       {o.label}
                       {o.description && (
-                        <span className="text-xs font-normal text-muted-foreground">{o.description}</span>
+                        <span className="text-xs font-normal text-muted-foreground">
+                          {o.description}
+                        </span>
                       )}
                     </Label>
                   </div>
@@ -123,7 +135,9 @@ export function QuestionCard({ prompt, questions }: { prompt: PromptEvent; quest
                       <Label htmlFor={`${name}-${oi}`} className="flex flex-col items-start gap-0">
                         {o.label}
                         {o.description && (
-                          <span className="text-xs font-normal text-muted-foreground">{o.description}</span>
+                          <span className="text-xs font-normal text-muted-foreground">
+                            {o.description}
+                          </span>
                         )}
                       </Label>
                     </div>

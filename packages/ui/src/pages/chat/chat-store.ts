@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
-import { subscribeChat } from '@/lib/events';
-import type { ChatEvent } from '@/lib/types';
+import { subscribeChat, subscribeShell } from '@/lib/events';
+import type { ChatEvent, ImageData, ShellEvent } from '@/lib/types';
 import {
   applyEvent,
   newCtx,
@@ -67,11 +67,53 @@ function ingest(e: ChatEvent) {
 
 subscribeChat(ingest);
 
+function ingestShell(e: ShellEvent) {
+  update(e.chatId, (s) => {
+    const at = s.items.findIndex((i) => i.kind === 'shell' && i.id === e.runId);
+    const cur = at >= 0 ? s.items[at] : undefined;
+    const put = (item: Item) => {
+      const items = [...s.items];
+      if (at >= 0) items[at] = item;
+      else items.push(item);
+      return { items };
+    };
+    if (e.kind === 'start') {
+      if (cur) return {};
+      return put({
+        kind: 'shell',
+        id: e.runId,
+        command: e.command ?? '',
+        startedAt: e.startedAt,
+        output: '',
+        truncated: false,
+        running: true,
+      });
+    }
+    if (!cur || cur.kind !== 'shell') return {};
+    if (e.kind === 'output') return put({ ...cur, output: cur.output + (e.data ?? '') });
+    if (e.kind === 'truncated') return put({ ...cur, truncated: true });
+    return put({
+      ...cur,
+      running: false,
+      code: e.code ?? null,
+      signal: e.signal ?? null,
+      durationMs: e.durationMs,
+    });
+  });
+}
+
+subscribeShell(ingestShell);
+
 export const chatStore = {
   get: (id: string): ChatLive => states.get(id) ?? EMPTY,
   /** The composer echoes the user's message; stream-json does not. `prepend` is for a new chat. */
-  addUser(id: string, text: string, prepend = false): string {
-    const item: Item = { kind: 'user', id: `u-local-${Date.now()}-${Math.random()}`, text };
+  addUser(id: string, text: string, prepend = false, images: ImageData[] = []): string {
+    const item: Item = {
+      kind: 'user',
+      id: `u-local-${Date.now()}-${Math.random()}`,
+      text,
+      ...(images.length > 0 ? { images } : {}),
+    };
     update(id, (s) => ({
       items: prepend ? [item, ...s.items] : [...s.items, item],
       busy: true,

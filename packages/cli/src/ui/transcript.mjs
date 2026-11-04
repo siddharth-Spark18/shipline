@@ -50,6 +50,7 @@ function summarize(name, input) {
 }
 
 // History items:
+//   { kind: 'image', media_type, data }   (before the user text it came with)
 //   { kind: 'user', text }
 //   { kind: 'assistant', text }
 //   { kind: 'tool-use', id, name, summary }
@@ -106,6 +107,14 @@ export function readHistory(root, sessionId) {
             };
             if (guardDenial(b)) item.notice = 'shipline-block';
             out.push(item);
+          } else if (
+            b &&
+            b.type === 'image' &&
+            b.source &&
+            b.source.type === 'base64' &&
+            typeof b.source.data === 'string'
+          ) {
+            out.push({ kind: 'image', media_type: b.source.media_type, data: b.source.data });
           }
         }
       }

@@ -2,11 +2,13 @@ import type {
   AgentsChange,
   AgentsPreviewResponse,
   ApiErrorEnvelope,
+  ChatCommand,
   ChatDetail,
   ChatsResponse,
   Diagnostics,
   FileMode,
   FileResponse,
+  ImageData,
   PreviewResponse,
   PromptAnswer,
   SaveRequest,
@@ -84,9 +86,24 @@ export const api = {
   diagnostics: () => request<Diagnostics>('GET', '/api/diagnostics'),
   chats: () => request<ChatsResponse>('GET', '/api/chats'),
   chat: (id: string) => request<ChatDetail>('GET', `/api/chats/${encodeURIComponent(id)}`),
-  createChat: (message: string) => request<{ id: string }>('POST', '/api/chats', { message }),
-  sendMessage: (id: string, text: string) =>
-    request<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/message`, { text }),
+  createChat: (message: string, images: ImageData[] = []) =>
+    request<{ id: string }>('POST', '/api/chats', {
+      message,
+      ...(images.length > 0 ? { images } : {}),
+    }),
+  sendMessage: (id: string, text: string, images: ImageData[] = []) =>
+    request<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/message`, {
+      text,
+      ...(images.length > 0 ? { images } : {}),
+    }),
+  listCommands: () => request<{ commands: ChatCommand[] }>('GET', '/api/chat/commands'),
+  startShell: (id: string, command: string) =>
+    request<{ runId: string }>('POST', `/api/chats/${encodeURIComponent(id)}/shell`, { command }),
+  stopShell: (id: string, runId: string) =>
+    request<{ stopped: true }>(
+      'POST',
+      `/api/chats/${encodeURIComponent(id)}/shell/${encodeURIComponent(runId)}/stop`,
+    ),
   stopChat: (id: string) =>
     request<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/stop`),
   continueChat: (id: string) =>

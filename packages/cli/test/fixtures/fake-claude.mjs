@@ -31,6 +31,8 @@
 //                              arguments. The parsed answer is appended to $FAKE_CLAUDE_RELAY_OUT and a stream-json
 //                              tool_result for arguments.tool_use_id is emitted (is_error for a deny).
 //   After the script, every further user message gets a short default turn (assistant text + result).
+//   With $FAKE_CLAUDE_STDIN_OUT set, every stream-json user message read from stdin is appended there as one
+//   JSON line, exactly as received (the image tests check the content blocks).
 //   Exits 0 when stdin closes.
 import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from 'node:fs';
@@ -116,6 +118,7 @@ rl.on('line', (line) => {
     return;
   }
   if (msg.type !== 'user') return;
+  if (process.env.FAKE_CLAUDE_STDIN_OUT) appendFileSync(process.env.FAKE_CLAUDE_STDIN_OUT, JSON.stringify(msg) + '\n');
   if (userWaiter) {
     const w = userWaiter;
     userWaiter = null;

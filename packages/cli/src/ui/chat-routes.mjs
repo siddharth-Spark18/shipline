@@ -1,11 +1,39 @@
 // Chat API handlers: GET/POST /api/chats, GET /api/chats/<id>, and <id>/message, /stop, /continue.
 // Node 20+, no dependencies.
 import { MIN_CLAUDE_VERSION, claudeHealth } from './claude.mjs';
-import { HttpError } from './http.mjs';
+import { listCommands } from './commands.mjs';
+import { HttpError, MAX_IMAGE_BODY } from './http.mjs';
 import { getChat, listChats, readLock } from './sessions.mjs';
+import { startShell, stopRun } from './shell.mjs';
 import { readHistory } from './transcript.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const MAX_IMAGES = 5;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+
+const badImage = (reason) => new HttpError(400, 'bad-image', reason);
+
+// `images` from a request body -> [{ media_type, data }] (empty when absent). Throws 400 bad-image.
+function parseImages(images) {
+  if (images === undefined || images === null) return [];
+  if (!Array.isArray(images)) throw badImage('images must be a list');
+  if (images.length > MAX_IMAGES) throw badImage(`At most ${MAX_IMAGES} images per message`);
+  return images.map((img, n) => {
+    const at = `Image ${n + 1}`;
+    if (!img || typeof img !== 'object') throw badImage(`${at}: not an image`);
+    if (!IMAGE_TYPES.has(img.media_type))
+      throw badImage(`${at}: only PNG, JPEG, GIF or WebP images are accepted`);
+    const data = img.data;
+    if (typeof data !== 'string' || !data || data.length % 4 !== 0 || !BASE64.test(data))
+      throw badImage(`${at}: data must be base64 with no data: prefix`);
+    const pad = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+    if ((data.length / 4) * 3 - pad > MAX_IMAGE_BYTES) throw badImage(`${at}: larger than 5 MB`);
+    return { media_type: img.media_type, data };
+  });
+}
 
 // A chat counts as active only when this server runs it, or another live server's lock names it.
 function withStatus(app, chat) {
@@ -61,11 +89,19 @@ export function routes(app) {
     {
       method: 'POST',
       path: '/api/chats',
+      maxBody: MAX_IMAGE_BODY,
       handler: async ({ body }) => {
-        if (!body || typeof body.message !== 'string' || !body.message.trim())
+        if (!body || typeof body.message !== 'string')
+          throw new HttpError(400, 'bad-request', 'message is required');
+        const images = parseImages(body.images);
+        if (!body.message.trim() && images.length === 0)
           throw new HttpError(400, 'bad-request', 'message is required');
         const health = await preflight();
-        const id = await app.chats.start({ message: body.message, claudeVersion: health.version });
+        const id = await app.chats.start({
+          message: body.message,
+          images,
+          claudeVersion: health.version,
+        });
         return { id };
       },
     },
@@ -83,14 +119,52 @@ export function routes(app) {
     {
       method: 'POST',
       path: '/api/chats/:id/message',
+      maxBody: MAX_IMAGE_BODY,
       handler: ({ params, body }) => {
         app.repo.requireUpgraded();
         requireChat(app, params.id);
-        if (!body || typeof body.text !== 'string' || !body.text.trim())
+        if (!body || typeof body.text !== 'string')
           throw new HttpError(400, 'bad-request', 'text is required');
-        app.chats.send(params.id, body.text);
+        const images = parseImages(body.images);
+        if (!body.text.trim() && images.length === 0)
+          throw new HttpError(400, 'bad-request', 'text is required');
+        app.chats.send(params.id, body.text, images);
         return { ok: true };
       },
+    },
+    {
+      method: 'POST',
+      path: '/api/chats/:id/shell',
+      handler: ({ params, body }) => {
+        requireChat(app, params.id);
+        if (!body || typeof body.command !== 'string' || !body.command.trim())
+          throw new HttpError(400, 'bad-request', 'command is required');
+        app.repo.requireWritable();
+        if (app.chats.activeId() !== params.id)
+          throw new HttpError(409, 'chat-ended', 'This chat has ended.');
+        const run = startShell({
+          chatId: params.id,
+          root,
+          command: body.command,
+          onEvent: (payload) => app.hub.send('shell', payload),
+        });
+        return { runId: run.runId };
+      },
+    },
+    {
+      method: 'POST',
+      path: '/api/chats/:id/shell/:runId/stop',
+      handler: ({ params }) => {
+        requireChat(app, params.id);
+        if (!stopRun(params.id, params.runId))
+          throw new HttpError(404, 'not-found', 'No such running command');
+        return { stopped: true };
+      },
+    },
+    {
+      method: 'GET',
+      path: '/api/chat/commands',
+      handler: () => ({ commands: listCommands(root, { parseYaml: app.repo.lib.parseYaml }) }),
     },
     {
       method: 'POST',

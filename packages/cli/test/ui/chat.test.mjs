@@ -491,3 +491,130 @@ describe('needs-upgrade (interface-2 repo)', () => {
     }
   });
 });
+
+// Chat input plan (docs/plans/shipline-chat-input.md), B. Images: the message and start-chat routes take
+// base64 images, checked on the server, and claude gets one stream-json user message with the image blocks
+// first, then the text block (left out when the text is empty).
+describe('images', () => {
+  const MB = 1024 * 1024;
+  const b64 = (bytes, fill = 7) => Buffer.alloc(bytes, fill).toString('base64');
+  const img = (media_type, bytes = 16) => ({ media_type, data: b64(bytes) });
+  const block = (i) => ({ type: 'image', source: { type: 'base64', media_type: i.media_type, data: i.data } });
+  const stdinFile = () => process.env.FAKE_CLAUDE_STDIN_OUT;
+  const stdinMessages = () =>
+    existsSync(stdinFile()) ? readFileSync(stdinFile(), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+  let endedId;
+
+  test('a message with images reaches claude as image blocks first, then the text block', async () => {
+    const png = img('image/png');
+    const jpeg = img('image/jpeg', 32);
+    fake.script('normal-turn', { FAKE_CLAUDE_STDIN_OUT: path.join(fake.scratch, 'stdin-images.jsonl') });
+    const since = ev.mark();
+    const r = await api(ui, 'POST', '/api/chats', { body: { message: 'What is this?', images: [png, jpeg] } });
+    assert.equal(r.status, 200, r.text);
+    const id = r.json.id;
+    try {
+      await ev.waitFor(isEventType(id, 'result'), 10_000, since);
+      assert.deepEqual(stdinMessages()[0], {
+        type: 'user',
+        message: { role: 'user', content: [block(png), block(jpeg), { type: 'text', text: 'What is this?' }] },
+      });
+
+      // Images only: no text block at all. A 5 MB image makes the body far bigger than the 1 MB default.
+      const gif = img('image/gif', 5 * MB);
+      const webp = img('image/webp');
+      let mark = ev.mark();
+      const onlyImages = await api(ui, 'POST', `/api/chats/${id}/message`, { body: { text: '', images: [gif, webp] } });
+      assert.equal(onlyImages.status, 200, onlyImages.text);
+      await ev.waitFor(isEventType(id, 'result'), 10_000, mark);
+      assert.deepEqual(stdinMessages()[1].message.content, [block(gif), block(webp)]);
+
+      // Text only: unchanged, one text block.
+      mark = ev.mark();
+      const textOnly = await api(ui, 'POST', `/api/chats/${id}/message`, { body: { text: 'plain' } });
+      assert.equal(textOnly.status, 200, textOnly.text);
+      await ev.waitFor(isEventType(id, 'result'), 10_000, mark);
+      assert.deepEqual(stdinMessages()[2].message.content, [{ type: 'text', text: 'plain' }]);
+
+      // Image data is never logged.
+      assert.ok(!readFileSync(path.join(uiDir(dir), 'ui.log'), 'utf8').includes(gif.data.slice(0, 64)));
+    } finally {
+      delete process.env.FAKE_CLAUDE_STDIN_OUT;
+      await stopChat(ui, ev, id);
+    }
+    endedId = id;
+  });
+
+  test('a chat started with images only is titled "Image" and claude gets no text block', async () => {
+    const png = img('image/png');
+    fake.script('normal-turn', { FAKE_CLAUDE_STDIN_OUT: path.join(fake.scratch, 'stdin-image-only.jsonl') });
+    const since = ev.mark();
+    const r = await api(ui, 'POST', '/api/chats', { body: { message: '', images: [png] } });
+    assert.equal(r.status, 200, r.text);
+    try {
+      await ev.waitFor(isEventType(r.json.id, 'result'), 10_000, since);
+      assert.equal(sessionOf(r.json.id).title, 'Image');
+      assert.deepEqual(stdinMessages()[0].message.content, [block(png)]);
+    } finally {
+      delete process.env.FAKE_CLAUDE_STDIN_OUT;
+      await stopChat(ui, ev, r.json.id);
+    }
+  });
+
+  test('400 bad-image: wrong type, over 5 MB, more than 5 images, a data: prefix, not base64', async () => {
+    assert.ok(endedId, 'needs the chat from the first images test');
+    const png = img('image/png');
+    const cases = [
+      ['svg', [img('image/svg+xml')]],
+      ['bmp', [img('image/bmp')]],
+      ['no type', [{ data: png.data }]],
+      ['over 5 MB', [img('image/png', 5 * MB + 1)]],
+      ['6 images', Array.from({ length: 6 }, () => png)],
+      ['data: prefix', [{ media_type: 'image/png', data: `data:image/png;base64,${png.data}` }]],
+      ['not base64', [{ media_type: 'image/png', data: 'not base64!' }]],
+      ['empty data', [{ media_type: 'image/png', data: '' }]],
+      ['not a list', png],
+      ['not an object', ['x']],
+    ];
+    const argvFile = fake.script('normal-turn');
+    for (const [what, images] of cases) {
+      // On the message route (checked before the chat-ended check) and on start-chat (before anything spawns).
+      const m = await api(ui, 'POST', `/api/chats/${endedId}/message`, { body: { text: 'hi', images } });
+      assert.equal(m.status, 400, `message, ${what}: ${m.text}`);
+      assert.equal(m.json.error.code, 'bad-image', what);
+      const s = await api(ui, 'POST', '/api/chats', { body: { message: 'hi', images } });
+      assert.equal(s.status, 400, `start, ${what}: ${s.text}`);
+      assert.equal(s.json.error.code, 'bad-image', what);
+    }
+    assert.deepEqual(fake.records(argvFile), [], 'nothing was spawned');
+    assert.equal(existsSync(lockPath(dir)), false);
+  });
+
+  test('exactly 5 images of exactly 5 MB pass the checks (the ~33 MB body is accepted on the message route)', async () => {
+    const big = Array.from({ length: 5 }, (_, n) => ({ media_type: 'image/png', data: b64(5 * MB, n) }));
+    const r = await api(ui, 'POST', `/api/chats/${endedId}/message`, { body: { text: 'hi', images: big } });
+    // Past the body limit and the image checks; the chat itself has ended.
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.json.error.code, 'chat-ended');
+  });
+
+  test('the 40 MB limit holds on the message and start-chat routes; 1 MB stays the limit elsewhere (413)', async () => {
+    const over40 = JSON.stringify({ text: 'hi', pad: 'x'.repeat(40 * MB + 1) });
+    for (const p of [`/api/chats/${endedId}/message`, '/api/chats']) {
+      const r = await api(ui, 'POST', p, { body: over40 });
+      assert.equal(r.status, 413, `${p}: ${r.text}`);
+      assert.equal(r.json.error.code, 'too-large');
+    }
+    const under40 = JSON.stringify({ text: 'hi', pad: 'x'.repeat(39 * MB) });
+    const ok = await api(ui, 'POST', `/api/chats/${endedId}/message`, { body: under40 });
+    assert.equal(ok.status, 409, 'a 39 MB body is read and handled (the chat has ended)');
+
+    const two = JSON.stringify({ command: 'echo hi', pad: 'x'.repeat(2 * MB) });
+    for (const p of [`/api/chats/${endedId}/stop`, `/api/chats/${endedId}/shell`, `/api/chats/${endedId}/continue`]) {
+      const r = await api(ui, 'POST', p, { body: two });
+      assert.equal(r.status, 413, `${p}: ${r.text}`);
+      assert.equal(r.json.error.code, 'too-large');
+      assert.match(r.json.error.message, /1 MB/);
+    }
+  });
+});

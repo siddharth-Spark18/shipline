@@ -4,6 +4,7 @@ import type {
   ChatEvent,
   PromptEvent,
   PromptResolvedEvent,
+  ShellEvent,
   TasksData,
 } from '@/lib/types';
 
@@ -26,6 +27,15 @@ const chatListeners = new Set<ChatListener>();
 export function subscribeChat(listener: ChatListener): () => void {
   chatListeners.add(listener);
   return () => chatListeners.delete(listener);
+}
+
+type ShellListener = (event: ShellEvent) => void;
+const shellListeners = new Set<ShellListener>();
+
+/** The chat store subscribes here too: `shell` events are streams of `!` command output. */
+export function subscribeShell(listener: ShellListener): () => void {
+  shellListeners.add(listener);
+  return () => shellListeners.delete(listener);
 }
 
 const MIN_DELAY = 1000;
@@ -94,6 +104,11 @@ export function connectEvents(queryClient: QueryClient): () => void {
           void queryClient.invalidateQueries({ queryKey: queryKeys.chat(data.chatId) });
         }
       }
+    });
+
+    es.addEventListener('shell', (e) => {
+      const data = parse<ShellEvent>(e as MessageEvent);
+      if (data) shellListeners.forEach((fn) => fn(data));
     });
 
     es.addEventListener('prompt', (e) => {

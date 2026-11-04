@@ -314,6 +314,34 @@ export interface ChatEvent {
   resumeCommand?: string;
 }
 
+/** An image on the wire: base64 with no `data:` prefix. */
+export interface ImageData {
+  media_type: string;
+  data: string;
+}
+
+/** One entry of GET /api/chat/commands. */
+export interface ChatCommand {
+  name: string;
+  description: string;
+  source: 'repo' | 'user' | 'builtin';
+  kind: 'command' | 'skill';
+}
+
+/** SSE `shell` event: one step of a `!` command run. */
+export interface ShellEvent {
+  chatId: string;
+  runId: string;
+  kind: 'start' | 'output' | 'truncated' | 'exit';
+  command?: string;
+  startedAt?: number | string;
+  stream?: 'stdout' | 'stderr';
+  data?: string;
+  code?: number | null;
+  signal?: string | null;
+  durationMs?: number;
+}
+
 // --- Chat (Phase 2) ---
 
 /** An entry of sessions.json, as returned by GET /api/chats. */

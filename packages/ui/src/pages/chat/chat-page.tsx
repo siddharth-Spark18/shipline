@@ -17,7 +17,7 @@ import { TaskCanvas } from '@/components/task-panel';
 import { ApiError, api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
 import { findTask, useMediaQuery, usePrompts, useTasks } from '@/lib/queries';
-import type { ChatSummary, ChatsResponse, PromptEvent, VersionState } from '@/lib/types';
+import type { ChatSummary, ChatsResponse, ImageData, PromptEvent, VersionState } from '@/lib/types';
 import { chatStore, useChatLive } from '@/pages/chat/chat-store';
 import { Composer } from '@/pages/chat/composer';
 import { MessageList } from '@/pages/chat/message-list';
@@ -132,10 +132,10 @@ export default function ChatPage({
     }
   };
 
-  const startChat = async (text: string): Promise<boolean> => {
+  const startChat = async (text: string, images: ImageData[]): Promise<boolean> => {
     try {
-      const { id } = await api.createChat(text);
-      chatStore.addUser(id, text, true);
+      const { id } = await api.createChat(text, images);
+      chatStore.addUser(id, text, true, images);
       setBlocker(null);
       select(id);
       void queryClient.invalidateQueries({ queryKey: queryKeys.chats });
@@ -214,6 +214,7 @@ export default function ChatPage({
           </div>
           <Composer
             disabled={readOnly}
+            chatId={null}
             placeholder="Describe the work to start a chat"
             onSend={startChat}
           />
@@ -334,10 +335,10 @@ function ChatView({
     void queryClient.invalidateQueries({ queryKey: queryKeys.chat(id) });
   };
 
-  const send = async (text: string): Promise<boolean> => {
-    const itemId = chatStore.addUser(id, text);
+  const send = async (text: string, images: ImageData[] = []): Promise<boolean> => {
+    const itemId = chatStore.addUser(id, text, false, images);
     try {
-      await api.sendMessage(id, text);
+      await api.sendMessage(id, text, images);
       onOk();
       return true;
     } catch (e) {
@@ -410,7 +411,14 @@ function ChatView({
         </p>
       )}
 
-      <MessageList items={items} prompts={prompts} />
+      <MessageList
+        items={items}
+        prompts={prompts}
+        chatId={id}
+        busy={busy}
+        ended={Boolean(ended)}
+        onSendToClaude={(text) => send(text)}
+      />
 
       {live.fatal && <FatalNotice chatId={id} fatal={live.fatal} onNewChat={onNewChat} />}
       {live.result && <ResultLine result={live.result} />}
@@ -436,7 +444,13 @@ function ChatView({
         </div>
       ) : (
         <Composer
-          disabled={readOnly || busy}
+          disabled={readOnly}
+          busy={busy}
+          chatId={id}
+          onShellError={(e) => {
+            if (e instanceof ApiError && e.code === 'chat-ended') refresh();
+            onError(e);
+          }}
           hint={
             busy
               ? 'Claude is working. You can send the next message when this turn finishes.'

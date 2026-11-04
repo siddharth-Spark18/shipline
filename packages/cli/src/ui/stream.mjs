@@ -30,12 +30,15 @@ export function parseLine(line) {
   }
 }
 
-// The line written to stdin with --input-format stream-json.
-export function userMessage(text) {
-  return (
-    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } }) +
-    '\n'
-  );
+// The line written to stdin with --input-format stream-json. Image blocks come first, then the text block
+// (left out when the text is empty). `images` is [{ media_type, data }] with base64 data.
+export function userMessage(text, images = []) {
+  const content = images.map((i) => ({
+    type: 'image',
+    source: { type: 'base64', media_type: i.media_type, data: i.data },
+  }));
+  if (text || content.length === 0) content.push({ type: 'text', text });
+  return JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n';
 }
 
 export const isInit = (e) => !!e && e.type === 'system' && e.subtype === 'init';

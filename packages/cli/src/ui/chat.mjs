@@ -8,6 +8,7 @@ import { MCP_TOOL_TIMEOUT_ENV, buildArgs, findClaude, startSpec } from './claude
 import { HttpError } from './http.mjs';
 import { stateDir } from '../store.mjs';
 import { log } from './log.mjs';
+import { stopAll as stopShells } from './shell.mjs';
 import { acquireLock, addChat, getChat, releaseLock, updateChat } from './sessions.mjs';
 import {
   KNOWN_TYPES,
@@ -26,6 +27,34 @@ const STDERR_TAIL_BYTES = 4096;
 const KILL_AFTER_MS = 5000;
 const EXIT_GRACE_MS = 1000;
 const TITLE_LIMIT = 60;
+
+// Signals a process group (POSIX, the child leads its own group) or tree (Windows). `child` is the fallback handle.
+export function killProcessTree(pid, signal, child) {
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    // No process groups on Windows: taskkill /T takes down the whole tree (the shell and the claude under it).
+    // The polite stop often needs /F for console-less processes, so a stop usually takes the full 5 s.
+    try {
+      const args = ['/PID', String(pid), '/T'];
+      if (signal === 'SIGKILL') args.push('/F');
+      const tk = spawn('taskkill', args, { stdio: 'ignore', windowsHide: true });
+      tk.on('error', () => {});
+      tk.unref();
+    } catch {
+      // Already gone.
+    }
+    return;
+  }
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try {
+      if (child) child.kill(signal);
+    } catch {
+      // Already gone.
+    }
+  }
+}
 
 export const resumeCommand = (id) => `claude --resume ${id}`;
 
@@ -124,6 +153,7 @@ export function createChats(app) {
     const stderrTail = chat.stderr.toString('utf8');
     log('chat-exit', { chatId: chat.id, code, signal, stopping: chat.stopping, stderrTail });
     if (chat.stateWatch) chat.stateWatch.close();
+    stopShells(chat.id).catch(() => {});
     bindTask(chat);
     app.prompts.denyAll(chat.id);
     app.prompts.removeMcpConfig(chat.id);
@@ -156,29 +186,7 @@ export function createChats(app) {
 
   function killGroup(chat, signal) {
     if (!chat.child || !chat.child.pid) return;
-    if (process.platform === 'win32') {
-      // No process groups on Windows: taskkill /T takes down the whole tree (the shell and the claude under it).
-      // The polite stop often needs /F for console-less processes, so a stop usually takes the full 5 s.
-      try {
-        const args = ['/PID', String(chat.child.pid), '/T'];
-        if (signal === 'SIGKILL') args.push('/F');
-        const tk = spawn('taskkill', args, { stdio: 'ignore', windowsHide: true });
-        tk.on('error', () => {});
-        tk.unref();
-      } catch {
-        // Already gone.
-      }
-      return;
-    }
-    try {
-      process.kill(-chat.child.pid, signal); // the child leads its own process group
-    } catch {
-      try {
-        chat.child.kill(signal);
-      } catch {
-        // Already gone.
-      }
-    }
+    killProcessTree(chat.child.pid, signal, chat.child);
   }
 
   // Closes stdin, SIGTERM to the process group, SIGKILL after 5 s, then (in finish) denies pending prompts and
@@ -186,6 +194,7 @@ export function createChats(app) {
   async function stopChat(chat) {
     if (chat.done) return;
     chat.stopping = true;
+    stopShells(chat.id).catch(() => {}); // `!` commands end with their chat
     try {
       try {
         chat.child.stdin.end();
@@ -206,9 +215,9 @@ export function createChats(app) {
     }
   }
 
-  // Takes the lock and spawns claude. `message` is the first user message for a new chat.
+  // Takes the lock and spawns claude. `message` (and `images`) is the first user message for a new chat.
   // `claudeVersion` is only for the log.
-  async function begin({ id, resume, message, claudeVersion }) {
+  async function begin({ id, resume, message, images, claudeVersion }) {
     if (active)
       throw new HttpError(409, 'chat-active', 'A chat is already active here.', {
         chatId: active.id,
@@ -278,7 +287,7 @@ export function createChats(app) {
     else
       addChat(root, {
         id,
-        title: message.replace(/\r\n|\r|\n/g, ' ').slice(0, TITLE_LIMIT),
+        title: (message.replace(/\r\n|\r|\n/g, ' ').trim() || 'Image').slice(0, TITLE_LIMIT),
         created: now,
         last_active: now,
         task_dir: null,
@@ -311,21 +320,21 @@ export function createChats(app) {
     child.on('close', (code, signal) => finish(chat, code, signal));
 
     chat.stateWatch = watchState(root, id, () => bindTask(chat));
-    if (!resume) writeUser(chat, message);
+    if (!resume) writeUser(chat, message, images);
     return id;
   }
 
-  function writeUser(chat, text) {
+  function writeUser(chat, text, images) {
     chat.busy = true;
-    chat.child.stdin.write(userMessage(text));
+    chat.child.stdin.write(userMessage(text, images));
   }
 
   return {
     activeId: () => (active ? active.id : null),
 
     // New chat; the UI makes the session uuid.
-    start({ message, claudeVersion }) {
-      return begin({ id: crypto.randomUUID(), resume: false, message, claudeVersion });
+    start({ message, images, claudeVersion }) {
+      return begin({ id: crypto.randomUUID(), resume: false, message, images, claudeVersion });
     },
 
     // Existing chat, same uuid, --resume.
@@ -333,7 +342,7 @@ export function createChats(app) {
       return begin({ id, resume: true, claudeVersion });
     },
 
-    send(id, text) {
+    send(id, text, images) {
       const chat = state(id);
       if (!chat) {
         if (getChat(root, id)) throw new HttpError(409, 'chat-ended', 'This chat has ended.');
@@ -343,7 +352,7 @@ export function createChats(app) {
         throw new HttpError(409, 'chat-ended', 'This chat has ended.');
       if (chat.busy)
         throw new HttpError(409, 'busy', 'Claude is still answering the last message.');
-      writeUser(chat, text);
+      writeUser(chat, text, images);
     },
 
     async stop(id) {

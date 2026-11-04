@@ -1,0 +1,10 @@
+{"type":"summary","summary":"Add export","leafUuid":"u-9"}
+{"type":"user","uuid":"u-1","sessionId":"SESSION","isSidechain":false,"message":{"role":"user","content":"Add a CSV export to the reports page"}}
+{"type":"assistant","uuid":"u-2","sessionId":"SESSION","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"I'll start the task."},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"node .shipline/bin/stage.mjs start --workflow feature --title \"Add export\""}}]}}
+{"type":"user","uuid":"u-3","sessionId":"SESSION","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","is_error":false,"content":"Started Feature task in docs/shipline/add-export"}]}}
+{"type":"assistant","uuid":"u-4","sessionId":"SESSION","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"sub-agent chatter that must not show"}]}}
+{"type":"user","uuid":"u-5","sessionId":"SESSION","isMeta":true,"message":{"role":"user","content":"<command-name>meta</command-name>"}}
+this line is not json {
+{"type":"assistant","uuid":"u-6","sessionId":"SESSION","isSidechain":false,"message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_2","name":"Edit","input":{"file_path":"src/a.js","old_string":"a","new_string":"b"}}]}}
+{"type":"user","uuid":"u-7","sessionId":"SESSION","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","is_error":true,"content":"Shipline (Feature workflow, task add-export): Edit on src/a.js needs the \"Plan\" stage to be done first. Finish it, then record it with: node .shipline/bin/stage.mjs advance Do not work around this; tell the developer what is missing."}]}}
+{"type":"assistant","uuid":"u-8","sessionId":"SESSION","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"The Plan stage has to be done first."}]}}

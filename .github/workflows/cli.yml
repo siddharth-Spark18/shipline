@@ -1,0 +1,57 @@
+name: cli
+
+on:
+  push:
+    paths:
+      - 'packages/cli/**'
+      - 'packages/ui/**'
+      - '.github/workflows/cli.yml'
+  pull_request:
+    paths:
+      - 'packages/cli/**'
+      - 'packages/ui/**'
+      - '.github/workflows/cli.yml'
+
+jobs:
+  # The vendored hook scripts and `init` must keep working on Node 18 (engines.node >=18).
+  # Runs the Phase 0 tests only: packages/cli/test/*.test.mjs.
+  node18:
+    name: hooks (Node 18, ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # version from package.json "packageManager"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: pnpm
+      # The CLI has no dependencies; installing only it avoids building the hub apps' native modules on Node 18.
+      - run: pnpm install --frozen-lockfile --filter ./packages/cli
+      - run: pnpm --filter ./packages/cli test:hooks
+
+  # Everything else needs Node 20: the UI server tests, the browser package and the bundle size budget.
+  node20:
+    name: cli + ui (Node 20, ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter ./packages/cli test
+      - run: pnpm --filter @shipline/ui typecheck
+      # Limited to new code so it doesn't reformat the templates or fail on existing files.
+      - run: pnpm exec prettier --check packages/ui/src packages/cli/src/ui
+      # Build plus the 400 KB gzip size check (check-ui.mjs).
+      - run: node packages/cli/scripts/build-ui.mjs

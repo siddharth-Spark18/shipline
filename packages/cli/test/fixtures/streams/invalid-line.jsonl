@@ -1,0 +1,10 @@
+# NOT A REAL CAPTURE. Hand-made stand-in for `claude -p --output-format stream-json` output, read by
+# test/fixtures/fake-claude.mjs (lines starting with # are comments, @ lines are fake-claude directives, see its
+# header). Field shapes follow packages/shared/src/stream-json.ts; replace with real captures from the chat test
+# (plan item 19, question 8) when they exist.
+# A line that is not valid JSON in the middle of a turn. The server must stop the session; the fake hangs so
+# only the server's stop can end it.
+@wait-user
+{"type":"system","subtype":"init","session_id":"{{SESSION_ID}}","cwd":"{{CWD}}","model":"fake-model","tools":["Bash","Edit","Write","AskUserQuestion"],"mcp_servers":[{"name":"shipline_ui","status":"connected"}],"permissionMode":"default"}
+@raw {"type":"assistant", this is not json
+@hang

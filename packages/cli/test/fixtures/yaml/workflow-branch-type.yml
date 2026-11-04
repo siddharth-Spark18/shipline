@@ -1,0 +1,8 @@
+id: chore
+name: Chore
+description: maintenance work
+branch_type: maint
+stages:
+  - id: do
+    name: Do it
+    enforcement: guide

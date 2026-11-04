@@ -1,0 +1,13 @@
+id: design
+name: Design
+stages:
+  - id: wireframes
+    name: Wireframes
+    artifact: wireframes.html
+    agent: wireframe-proposer
+    condition: ui_only
+    enforcement: guide
+    confirm_to_advance: true
+  - id: build
+    name: Build
+    enforcement: guide

@@ -1,0 +1,12 @@
+# A hand-edited header that is not the shipped one.
+id: spike
+name: Spike # time-boxed
+stages:
+  - id: explore # try things out
+    name: Explore
+    artifact: notes.md
+    enforcement: warn
+    # Edits are only a reminder during a spike.
+    blocks:
+      - tools: 'Edit|Write'
+        allow_paths: ["{artifact_root}/**"]

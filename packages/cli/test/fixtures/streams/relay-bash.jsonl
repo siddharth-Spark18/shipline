@@ -1,0 +1,11 @@
+# NOT A REAL CAPTURE. Hand-made stand-in for `claude -p --output-format stream-json` output, read by
+# test/fixtures/fake-claude.mjs (lines starting with # are comments, @ lines are fake-claude directives, see its
+# header). Field shapes follow packages/shared/src/stream-json.ts; replace with real captures from the chat test
+# (plan item 19, question 8) when they exist.
+# Claude asks the permission-prompt tool (the shipline_ui relay, over MCP stdio) about a Bash call, then reports
+# the answer as the tool_result.
+@wait-user
+{"type":"system","subtype":"init","session_id":"{{SESSION_ID}}","cwd":"{{CWD}}","model":"fake-model","tools":["Bash","Edit","Write","AskUserQuestion"],"mcp_servers":[{"name":"shipline_ui","status":"connected"}],"permissionMode":"default"}
+{"type":"assistant","session_id":"{{SESSION_ID}}","message":{"id":"msg_p1","role":"assistant","content":[{"type":"tool_use","id":"toolu_bash_1","name":"Bash","input":{"command":"npm test"}}]}}
+@approve {"tool_name":"Bash","input":{"command":"npm test"},"tool_use_id":"toolu_bash_1"}
+{"type":"result","subtype":"success","is_error":false,"session_id":"{{SESSION_ID}}","duration_ms":1200,"num_turns":1,"result":"Done.","total_cost_usd":0.0123,"usage":{"input_tokens":10,"output_tokens":20}}

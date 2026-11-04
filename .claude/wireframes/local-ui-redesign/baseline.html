@@ -1,0 +1,115 @@
+<!doctype html>
+<!-- BASELINE: Shipline local UI as built today (packages/ui, code-only capture from source, 2026-11-04).
+     Tokens: packages/ui/src/index.css (stock shadcn neutral oklch, converted to hex), font Inter Variable, --radius .625rem.
+     Component names in comments map to real files. Tabs: Setup | Tasks | Chat | Diagnostics. Theme: next-themes class="dark", default system. -->
+<html lang="en"><head><meta charset="utf-8"><title>Baseline - Shipline UI</title>
+<style>
+:root{--background:#fff;--foreground:#0a0a0a;--card:#fff;--primary:#171717;--primary-foreground:#fafafa;--muted:#f5f5f5;--muted-foreground:#737373;--border:#e5e5e5;--destructive:#e7000b;--amber:#f59e0b;--radius:10px}
+.dark{--background:#0a0a0a;--foreground:#fafafa;--card:#171717;--primary:#e5e5e5;--primary-foreground:#171717;--muted:#262626;--muted-foreground:#a1a1a1;--border:#ffffff1a;--destructive:#ff6467}
+*{box-sizing:border-box}body{margin:0;background:var(--background);color:var(--foreground);font:14px/1.45 "Inter",system-ui,sans-serif}
+.app{max-width:1152px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:16px}
+header{display:flex;justify-content:space-between;align-items:baseline}h1{font-size:18px;margin:0;font-weight:600}
+.mut{color:var(--muted-foreground)}.xs{font-size:12px}.mono{font-family:ui-monospace,Menlo,monospace}
+.tabs{display:inline-flex;background:var(--muted);border-radius:10px;padding:3px;gap:2px}
+.tabs button{border:0;background:none;color:var(--muted-foreground);padding:4px 12px;border-radius:8px;font:inherit;font-weight:500;cursor:pointer}
+.tabs button.on{background:var(--background);color:var(--foreground);box-shadow:0 1px 2px #0002}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px}
+.btn{border:1px solid var(--border);background:none;color:var(--foreground);border-radius:8px;padding:4px 10px;font:inherit;font-size:13px}
+.btn.p{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary)}
+.badge{display:inline-block;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:500;background:var(--muted)}
+.badge.d{background:var(--primary);color:var(--primary-foreground)}.badge.r{background:var(--destructive);color:#fff}.badge.o{border:1px solid var(--border);background:none}
+.chat{display:grid;grid-template-columns:13rem minmax(0,1fr) 19rem;gap:16px;height:760px}
+.chat>*{min-height:0;overflow:auto}.col{display:flex;flex-direction:column;gap:12px}
+.row{padding:6px 8px;border-radius:8px;display:flex;gap:8px;align-items:center}.row.on{background:var(--muted);font-weight:500}
+.tool{border:1px solid var(--border);border-radius:8px;background:color-mix(in srgb,var(--muted) 30%,transparent);padding:6px 12px;display:flex;gap:8px;font-size:13px}
+.q{border:1px solid #f59e0b99;border-radius:12px;padding:12px;background:var(--card)}
+.alert{border:1px solid var(--border);border-radius:10px;padding:8px 12px}.alert.x{border-color:var(--destructive);color:var(--destructive)}
+.user{align-self:flex-end;background:var(--muted);padding:8px 12px;border-radius:12px;max-width:80%}
+table{border-collapse:collapse;font-size:12px;width:100%}td,th{border:1px solid var(--border);padding:3px 6px;text-align:left;vertical-align:top}
+.now{background:var(--muted);border-radius:8px;padding:8px 12px;font-size:13px;display:flex;flex-direction:column;gap:6px}
+.stage{display:flex;gap:8px;font-size:13px;margin:6px 0}.ic{width:14px;height:14px;border-radius:50%;margin-top:3px;flex:none}
+.g{background:#16a34a}.b{background:#2563eb}.n{border:2px solid var(--muted-foreground)}
+.comp{margin-top:auto;border:1px solid var(--border);border-radius:12px;padding:10px;min-height:70px}
+.grid2{display:grid;grid-template-columns:14rem 1fr;gap:16px}
+input,select{background:none;border:1px solid var(--border);border-radius:8px;padding:5px 8px;color:inherit;font:inherit;width:100%}
+.hide{display:none}pre{background:var(--muted);padding:8px;border-radius:6px;font-size:12px;overflow:auto;margin:0}
+</style></head><body><div class="app">
+<!-- app.tsx: header -->
+<header><h1>Shipline</h1><span class="xs mut">/Users/siddharth/Projects/pocs/brown-bg-tracker</span>
+<span style="display:flex;gap:6px"><button class="btn xs" onclick="document.documentElement.classList.toggle('dark')">Toggle dark (wireframe only; app follows system)</button></span></header>
+<!-- Banners (components/banners.tsx) omitted: none active -->
+<!-- Tabs (components/ui/tabs.tsx) -->
+<div><div class="tabs" id="tabs"><button data-t="setup">Setup</button><button data-t="tasks">Tasks</button><button class="on" data-t="chat">Chat</button><button data-t="diag">Diagnostics</button></div></div>
+
+<!-- ChatPage: grid lg:grid-cols-[13rem_1fr_19rem] -->
+<div id="chat" class="chat">
+ <aside class="col"><!-- ChatList -->
+  <button class="btn">+ New chat</button>
+  <div><div class="xs mut" style="padding:0 8px 4px">Active</div>
+   <div class="row on"><span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Add CSV export to reports</span><span class="badge r">Needs answer</span></div>
+   <div class="row">Fix flaky login test</div></div>
+  <div><div class="xs mut" style="padding:0 8px 4px">Ended</div><div class="row">Rename bg-tracker env vars</div></div>
+  <p class="xs mut">TerminalNote</p>
+ </aside>
+ <section class="col"><!-- ChatView -->
+  <div style="display:flex;gap:8px;align-items:center"><b style="flex:1">Add CSV export to reports</b><span class="badge d">Active</span><button class="btn xs">Stop</button></div>
+  <div class="col" style="flex:1;overflow:auto"><!-- MessageList -->
+   <div class="user">Add a CSV export button to the reports page. Keep it behind the existing feature flag.</div>
+   <div class="alert"><b>Shipline reminder</b><div class="xs">Research is not finished: docs/tasks/csv-export/research.md has not been written.</div></div>
+   <div>I'll start by looking at how reports are rendered. Here is what I found:
+    <table style="margin-top:6px"><tr><th>File</th><th>Role</th><th>Needs change</th></tr>
+    <tr><td class="mono">src/reports/ReportTable.tsx</td><td>Renders rows</td><td>Yes: add toolbar</td></tr>
+    <tr><td class="mono">src/lib/flags.ts</td><td>Feature flags</td><td>No</td></tr></table></div>
+   <!-- ToolCall --><div class="tool"><span>›</span><b>Read</b><span class="mono xs mut" style="flex:1">src/reports/ReportTable.tsx</span></div>
+   <div class="tool"><span>›</span><b>Edit</b><span class="mono xs mut" style="flex:1">src/reports/ReportTable.tsx</span><span class="badge r">Blocked</span></div>
+   <div class="alert x"><b>Shipline blocked</b><div class="xs">Edits outside docs/ are blocked until the Research stage is done.</div></div>
+   <!-- QuestionCard -->
+   <div class="q"><b class="xs">? Which export format?</b><div class="xs mut" style="margin:6px 0">Choose one</div>
+    <div>( ) CSV only &nbsp; (o) CSV + JSON &nbsp; ( ) Excel</div><div style="margin-top:8px"><button class="btn p">Send answer</button> <span class="xs mut">Expires in 4:32</span></div></div>
+  </div>
+  <div class="comp mut"><!-- Composer -->Claude is working. You can send the next message when this turn finishes.</div>
+ </section>
+ <aside class="col"><!-- SidePanel / TaskPanel -->
+  <div class="card col"><b>Add CSV export to reports <span class="badge">feature</span></b><span class="mono xs mut">feat/csv-export</span>
+   <div class="now"><div><span class="mut">Now: </span><b>Research</b></div>
+    <ul class="xs mut" style="margin:0;padding-left:18px"><li>Finishes when <span class="mono">research.md</span> exists (not written yet).</li><li>Claude asks you before moving on.</li><li>Until it is done, Edit, Write outside docs/ are blocked.</li></ul>
+    <div><span class="mut">Next: </span>Plan</div></div>
+   <div class="stage"><span class="ic b"></span><div><b>Research</b> <span class="xs mut">In progress</span></div></div>
+   <div class="stage"><span class="ic n"></span><div>Plan <span class="xs mut">Pending</span></div></div>
+   <div class="stage"><span class="ic n"></span><div>Wireframes <span class="xs mut">Pending</span></div></div>
+   <div class="stage"><span class="ic n"></span><div>Build <span class="xs mut">Pending</span></div></div>
+   <div class="stage"><span class="ic n"></span><div>QA <span class="xs mut">Pending</span></div></div>
+   <b class="xs">Artifacts</b><span class="xs mut">No files in the task folder yet.</span></div>
+  <div class="card"><b>Working tree changes</b><div class="xs mt" style="margin-top:6px"><span class="badge o mono">M</span> <span class="mono">src/reports/ReportTable.tsx</span></div></div>
+  <div style="flex:1"></div><!-- empty space below -->
+ </aside>
+</div>
+
+<!-- SetupPage -->
+<div id="setup" class="hide col">
+ <div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px"><span class="mut">1 changed file: workflows/feature.yml</span><span><button class="btn">Discard and reload</button> <button class="btn p">Review and save</button></span></div>
+ <div class="grid2"><nav class="col" style="gap:4px"><div class="row">config.yml</div><div class="xs mut" style="padding:8px 8px 0">Workflows</div><div class="row on">feature *</div><div class="row">hotfix</div></nav>
+ <div class="col"><!-- WorkflowEditor / StageList / StageEditor -->
+  <div class="card"><b>feature</b><div class="xs mut">Name, description</div><input value="Feature" style="margin-top:8px"></div>
+  <div class="card" style="padding:8px;gap:6px;display:flex;flex-direction:column">
+   <div class="row" style="border:1px solid var(--border)">⋮⋮ › <b>Research</b> <span class="mono xs mut">research</span><span class="badge r">block</span></div>
+   <div class="row" style="border:1px solid var(--border)">⋮⋮ › <b>Plan</b> <span class="mono xs mut">plan</span><span class="badge">warn</span></div>
+   <div style="border:1px solid var(--border);border-radius:8px;padding:8px"><div class="row">⋮⋮ ⌄ <b>Build</b> <span class="mono xs mut">build</span></div>
+    <div class="grid2" style="grid-template-columns:1fr 1fr;margin-top:8px"><label class="xs mut">Name<input value="Build"></label><label class="xs mut">Enforcement<select><option>guide</option></select></label><label class="xs mut">Artifact<input value="build-notes.md"></label><label class="xs mut">Confirm to advance <input type="checkbox"></label></div>
+    <div class="xs mut" style="margin-top:8px">Blocks (BlocksEditor) / Rules markdown (RulesEditor)</div></div>
+   <button class="btn" style="width:90px">+ Add stage</button></div>
+  <div class="card"><b>Preview of the files as they will be written</b> <span class="xs mut">(YAML diff, collapsible)</span></div>
+ </div></div></div>
+
+<div id="tasks" class="hide card"><!-- TasksPage: TaskPanel per open task + ChangesList --><b>Add CSV export to reports</b> <span class="badge">feature</span><div class="xs mut">Same TaskPanel card as the chat side panel, one per task.</div></div>
+
+<div id="diag" class="hide col"><!-- DiagnosticsPage -->
+ <div><button class="btn p">Copy for a bug report</button> <button class="btn">Refresh</button></div>
+ <div class="card"><b>Summary</b><div class="xs" style="display:grid;grid-template-columns:auto 1fr;gap:4px 16px;margin-top:8px"><span class="mut">Shipline UI version</span><span class="mono">0.4.2 (interface 3)</span><span class="mut">Repo version</span><span class="mono">0.4.2 (interface 3)</span><span class="mut">Version check</span><span class="mono">same</span><span class="mut">Watch mode</span><span class="mono">fs-events</span></div></div>
+ <div class="card"><b>Last log lines</b><pre class="mono" style="margin-top:8px">12:01:44 hook pre-tool allow Read
+12:01:51 hook pre-tool block Edit (stage research)</pre></div>
+ <div class="card"><b>Raw data (redacted)</b></div></div>
+</div>
+<script>
+const t=document.getElementById('tabs');t.onclick=e=>{const k=e.target.dataset.t;if(!k)return;[...t.children].forEach(b=>b.classList.toggle('on',b===e.target));['setup','tasks','chat','diag'].forEach(i=>document.getElementById(i).classList.toggle('hide',i!==k));document.getElementById('chat').style.display=k==='chat'?'grid':'none'}
+</script></body></html>

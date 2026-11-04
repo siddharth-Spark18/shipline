@@ -1,0 +1,146 @@
+// The chat session index (sessions.json) and the one-chat-per-checkout lock (lock.json), both in
+// .shipline/.state/ui/ (gitignored). Node 20+, no dependencies.
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { log } from './log.mjs';
+
+const STALE_EMPTY_LOCK_MS = 10_000;
+
+export const uiStateDir = (root) => path.join(root, '.shipline', '.state', 'ui');
+const sessionsFile = (root) => path.join(uiStateDir(root), 'sessions.json');
+const lockFile = (root) => path.join(uiStateDir(root), 'lock.json');
+
+function writeAtomic(file, text) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, text);
+  renameSync(tmp, file);
+}
+
+// [{ id, title, created, last_active, task_dir | null, status: 'active' | 'ended' }]
+export function listChats(root) {
+  try {
+    const list = JSON.parse(readFileSync(sessionsFile(root), 'utf8'));
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+export function getChat(root, id) {
+  return listChats(root).find((c) => c.id === id) || null;
+}
+
+export function addChat(root, chat) {
+  const list = listChats(root).filter((c) => c.id !== chat.id);
+  list.push(chat);
+  writeAtomic(sessionsFile(root), JSON.stringify(list, null, 2) + '\n');
+  return chat;
+}
+
+// Returns the updated entry, or null when the id is unknown.
+export function updateChat(root, id, patch) {
+  const list = listChats(root);
+  const i = list.findIndex((c) => c.id === id);
+  if (i < 0) return null;
+  list[i] = { ...list[i], ...patch };
+  writeAtomic(sessionsFile(root), JSON.stringify(list, null, 2) + '\n');
+  return list[i];
+}
+
+export function readLock(root) {
+  try {
+    return JSON.parse(readFileSync(lockFile(root), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return !(e && e.code === 'ESRCH'); // EPERM: it exists, we just can't signal it
+  }
+}
+
+// Takes lock.json with the `wx` flag. Returns { acquired: true }, or { acquired: false, heldBy, sessionId }
+// where heldBy is 'self' (this server already has a chat active; POST /api/chats turns that into 409
+// chat-active), or the port of the other UI server (409 lock-held). heldBy is null when the holder is unknown.
+export function acquireLock(root, { sessionId, port }) {
+  const file = lockFile(root);
+  mkdirSync(path.dirname(file), { recursive: true });
+  const mine = { pid: process.pid, hostname: os.hostname(), port, session_id: sessionId };
+  let held = { acquired: false, heldBy: null, sessionId: null };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      writeFileSync(file, JSON.stringify(mine), { flag: 'wx', mode: 0o600 });
+      log('lock-taken', { sessionId, port });
+      return { acquired: true };
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+    let raw;
+    try {
+      raw = readFileSync(file, 'utf8');
+    } catch {
+      continue; // released between our write and read: retry
+    }
+    let lock = null;
+    try {
+      lock = JSON.parse(raw);
+    } catch {
+      // A crash between creating and writing the file leaves it empty or partial.
+    }
+    let stale = false;
+    if (!lock || typeof lock !== 'object') {
+      let age = 0;
+      try {
+        age = Date.now() - statSync(file).mtimeMs;
+      } catch {
+        continue;
+      }
+      if (age > STALE_EMPTY_LOCK_MS) stale = true;
+      else return held;
+    } else if (lock.pid === process.pid && lock.port === port) {
+      return { acquired: false, heldBy: 'self', sessionId: lock.session_id };
+    } else if (lock.hostname === os.hostname() && lock.pid !== process.pid && !pidAlive(lock.pid)) {
+      stale = true;
+    }
+    if (!stale) {
+      return { acquired: false, heldBy: lock.port ?? null, sessionId: lock.session_id ?? null };
+    }
+    log('lock-stale', { lock });
+    try {
+      unlinkSync(file);
+    } catch {
+      // Someone else removed it first.
+    }
+  }
+  return held;
+}
+
+// Removes lock.json only when it is this process's (and, when given, this server's port).
+export function releaseLock(root, port) {
+  const file = lockFile(root);
+  const lock = readLock(root);
+  if (!lock || lock.pid !== process.pid) return false;
+  if (port !== undefined && lock.port !== port) return false;
+  try {
+    if (existsSync(file)) unlinkSync(file);
+  } catch {
+    return false;
+  }
+  log('lock-released', { sessionId: lock.session_id });
+  return true;
+}

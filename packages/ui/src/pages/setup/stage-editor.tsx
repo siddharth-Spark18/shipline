@@ -1,0 +1,223 @@
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+import { BlocksEditor } from '@/pages/setup/blocks-editor';
+import { OtherFields } from '@/pages/setup/other-fields';
+import { RulesEditor } from '@/pages/setup/rules-editor';
+import { ID_RE, setOptional } from '@/pages/setup/draft';
+import type { Enforcement, StageModel } from '@/lib/types';
+
+const NONE = '__none__';
+const STAGE_KEYS = [
+  'id',
+  'name',
+  'artifact',
+  'description',
+  'optional',
+  'confirm_to_advance',
+  'condition',
+  'agent',
+  'enforcement',
+  'blocks',
+];
+
+export interface StageEditorProps {
+  stage: StageModel;
+  /** True for a stage added in this session: only then can the id be edited. */
+  isFresh: boolean;
+  /** Ids of the other stages in this workflow. */
+  otherIds: string[];
+  agents: string[];
+  rules: { text: string; exists: boolean };
+  onChange: (stage: StageModel) => void;
+  onRulesChange: (text: string) => void;
+}
+
+export function StageEditor({
+  stage,
+  isFresh,
+  otherIds,
+  agents,
+  rules,
+  onChange,
+  onRulesChange,
+}: StageEditorProps) {
+  const base = `stage-${stage.id || 'new'}`;
+  const setText = (key: string, value: string) => {
+    const next = { ...stage };
+    setOptional(next, key, value);
+    onChange(next);
+  };
+  const setField = (key: string, value: unknown) => onChange({ ...stage, [key]: value });
+
+  const idError = !stage.id
+    ? 'Required'
+    : !ID_RE.test(stage.id)
+      ? 'Use letters, digits, - and _ only'
+      : otherIds.includes(stage.id)
+        ? 'Another stage already has this id'
+        : null;
+
+  const agentOptions =
+    stage.agent && !agents.includes(stage.agent) ? [...agents, stage.agent] : agents;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${base}-id`}>Id</Label>
+          <Input
+            id={`${base}-id`}
+            className="font-mono"
+            value={stage.id}
+            readOnly={!isFresh}
+            disabled={!isFresh}
+            aria-invalid={idError ? true : undefined}
+            onChange={(e) => setField('id', e.target.value)}
+          />
+          {isFresh ? (
+            idError && <p className="text-xs text-destructive">{idError}</p>
+          ) : (
+            <p className="text-xs text-muted-foreground">A saved stage id can't change.</p>
+          )}
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${base}-name`}>Name</Label>
+          <Input
+            id={`${base}-name`}
+            value={stage.name ?? ''}
+            onChange={(e) => setText('name', e.target.value)}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${base}-artifact`}>Artifact (file name in the task folder)</Label>
+          <Input
+            id={`${base}-artifact`}
+            className="font-mono"
+            value={stage.artifact ?? ''}
+            onChange={(e) => setText('artifact', e.target.value)}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${base}-description`}>Description</Label>
+          <Input
+            id={`${base}-description`}
+            value={stage.description ?? ''}
+            onChange={(e) => setText('description', e.target.value)}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${base}-enforcement`}>Enforcement</Label>
+          <Select
+            value={stage.enforcement ?? ''}
+            onValueChange={(v) => setField('enforcement', v as Enforcement)}
+          >
+            <SelectTrigger id={`${base}-enforcement`} className="w-full">
+              <SelectValue placeholder="Choose guide, warn or block" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="guide">guide: rules are ignored</SelectItem>
+              <SelectItem value="warn">warn: allowed, with a reminder</SelectItem>
+              <SelectItem value="block">block: denied</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${base}-condition`}>Condition</Label>
+          <Select
+            value={stage.condition ?? NONE}
+            onValueChange={(v) => {
+              const next = { ...stage };
+              if (v === NONE) delete next.condition;
+              else next.condition = v as 'ui_only';
+              onChange(next);
+            }}
+          >
+            <SelectTrigger id={`${base}-condition`} className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NONE}>none</SelectItem>
+              <SelectItem value="ui_only">ui_only: runs only for UI work</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${base}-agent`}>Agent</Label>
+          <Select
+            value={stage.agent ?? NONE}
+            onValueChange={(v) => {
+              const next = { ...stage };
+              if (v === NONE) delete next.agent;
+              else next.agent = v;
+              onChange(next);
+            }}
+          >
+            <SelectTrigger id={`${base}-agent`} className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NONE}>none</SelectItem>
+              {agentOptions.map((a) => (
+                <SelectItem key={a} value={a}>
+                  {a}
+                  {agents.includes(a) ? '' : ' (no such agent file)'}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex flex-col justify-end gap-3">
+          <div className="flex items-center gap-2">
+            <Switch
+              id={`${base}-optional`}
+              checked={stage.optional === true}
+              onCheckedChange={(v) => setField('optional', v)}
+            />
+            <Label htmlFor={`${base}-optional`}>Optional (may be skipped)</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              id={`${base}-confirm`}
+              checked={stage.confirm_to_advance === true}
+              onCheckedChange={(v) => setField('confirm_to_advance', v)}
+            />
+            <Label htmlFor={`${base}-confirm`}>Confirm to advance</Label>
+          </div>
+        </div>
+      </div>
+
+      <BlocksEditor
+        stageId={stage.id || 'new'}
+        blocks={stage.blocks ?? []}
+        enforcement={stage.enforcement}
+        onChange={(blocks) => {
+          const next = { ...stage };
+          if (blocks.length === 0) delete next.blocks;
+          else next.blocks = blocks;
+          onChange(next);
+        }}
+      />
+
+      {stage.id && ID_RE.test(stage.id) && (
+        <RulesEditor
+          stageId={stage.id}
+          exists={rules.exists}
+          value={rules.text}
+          onChange={onRulesChange}
+        />
+      )}
+
+      <OtherFields value={stage} known={STAGE_KEYS} />
+    </div>
+  );
+}

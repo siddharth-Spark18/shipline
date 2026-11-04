@@ -1,0 +1,15 @@
+id: guarded
+name: Guarded
+stages:
+  - id: plan
+    name: Plan
+    artifact: plan.md
+    enforcement: block
+    confirm_to_advance: true
+    blocks:
+      - tools: 'Edit|Write|MultiEdit|NotebookEdit'
+        allow_paths: ["{artifact_root}/**", "docs/**"]
+      - bash: '\bgit\s+commit\b|\bgh\s+pr\s+create\b'
+  - id: build
+    name: Build
+    enforcement: guide

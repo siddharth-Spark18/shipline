@@ -1,0 +1,129 @@
+<!doctype html>
+<!-- VARIANT 1: Command Rail. Slim icon rail + wide readable chat; stage progress as a pipeline bar under the title; diagnostics as a Sheet from a rail status dot.
+     Palette: shared "Chart-paper and ink" tokens (see :root/[data-theme=dark]); font Inter Variable (project font). New-vs-baseline elements are flagged with the indigo accent.
+     Theme: System/Light/Dark segmented control (System follows prefers-color-scheme). -->
+<html lang="en"><head><meta charset="utf-8"><title>Variant 1 - Command Rail</title><style>
+:root,[data-theme=light]{--bg:#F5F3EE;--surface:#FBFAF7;--raised:#FFFFFF;--line:#DDD9CF;--t1:#16191F;--t2:#444B55;--t3:#5E6672;--pri:#4B3FD6;--on-pri:#FFFFFF;--pri-soft:#4B3FD61A;
+--done:#2B7A3E;--prog:#0A6F85;--pend:#5E6672;--skip:#7A6F5A;--guide:#3F6590;--warn:#8F5700;--block:#B3261E;--n-blocked:#B3261E;--n-rem:#8F5700;--n-den:#8A3F68;--shadow:0 6px 24px #16191F26}
+[data-theme=dark]{--bg:#0F1318;--surface:#151B22;--raised:#1C242D;--line:#2A333E;--t1:#ECEFF3;--t2:#B4BCC7;--t3:#8D96A3;--pri:#A9A1FF;--on-pri:#14102E;--pri-soft:#A9A1FF22;
+--done:#5CCB7A;--prog:#4FC7E0;--pend:#8D96A3;--skip:#A79C84;--guide:#8DB4E2;--warn:#F0B452;--block:#FF8F85;--n-blocked:#FF8F85;--n-rem:#F0B452;--n-den:#E8A0C8;--shadow:0 6px 24px #000a}
+
+*{box-sizing:border-box}html,body{height:100%}body{margin:0;background:var(--bg);color:var(--t1);font:14px/1.5 "Inter Variable","Inter",system-ui,sans-serif}
+.mono{font-family:ui-monospace,Menlo,monospace}.t2{color:var(--t2)}.t3{color:var(--t3)}.xs{font-size:12px}.b{font-weight:600}
+button{font:inherit;color:inherit;cursor:pointer}
+.btn{border:1px solid var(--line);background:var(--raised);border-radius:8px;padding:4px 11px;font-size:13px}
+.btn.p{background:var(--pri);color:var(--on-pri);border-color:var(--pri);font-weight:500}.btn.sm{padding:2px 8px;font-size:12px}
+.ico{border:1px solid transparent;background:none;border-radius:8px;width:32px;height:32px;display:grid;place-items:center;color:var(--t2)}.ico:hover,.ico.on{background:var(--pri-soft);color:var(--pri)}
+.chip{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:0 8px;font-size:11.5px;font-weight:600;line-height:20px;border:1px solid currentColor;background:transparent}
+.chip.guide{color:var(--guide)}.chip.warn{color:var(--warn)}.chip.block{color:var(--block)}.chip.new{color:var(--pri)}.chip.pri{background:var(--pri);color:var(--on-pri);border-color:var(--pri)}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none}.d-done{background:var(--done)}.d-prog{background:var(--prog);box-shadow:0 0 0 3px color-mix(in srgb,var(--prog) 30%,transparent)}.d-pend{border:2px solid var(--pend)}.d-skip{border:2px dashed var(--skip)}
+.d-ok{background:var(--done)}.d-amber{background:var(--warn)}.d-red{background:var(--block)}
+.seg{display:inline-flex;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:2px;gap:2px}.seg button{border:0;background:none;padding:3px 11px;border-radius:8px;color:var(--t2);font-size:13px;font-weight:500}.seg button.on{background:var(--pri);color:var(--on-pri)}
+.card{background:var(--raised);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.tool{border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:5px 12px;display:flex;gap:8px;align-items:center;font-size:13px}
+.tool .s{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.note{border-left:3px solid;border-radius:6px;padding:7px 12px;background:var(--surface);font-size:13px;border-top:1px solid var(--line);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.note b{display:block}.note.blocked{border-left-color:var(--n-blocked)}.note.blocked b{color:var(--n-blocked)}.note.rem{border-left-color:var(--n-rem)}.note.rem b{color:var(--n-rem)}.note.den{border-left-color:var(--n-den)}.note.den b{color:var(--n-den)}
+.user{align-self:flex-end;background:var(--pri-soft);border:1px solid color-mix(in srgb,var(--pri) 25%,transparent);padding:8px 13px;border-radius:14px 14px 4px 14px;max-width:78%}
+.qcard{border:1px solid var(--pri);border-radius:12px;background:var(--raised);padding:12px 14px;box-shadow:0 0 0 3px var(--pri-soft)}
+.opt{display:flex;gap:8px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;margin-top:6px;font-size:13px}.opt.sel{border-color:var(--pri);background:var(--pri-soft)}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:8px;margin:8px 0}table{border-collapse:collapse;font-size:12.5px;width:100%;min-width:560px}th{background:var(--surface);text-align:left;color:var(--t2);font-weight:600}td,th{padding:5px 10px;border-bottom:1px solid var(--line);white-space:nowrap}tr:last-child td{border-bottom:0}
+.comp{border:1px solid var(--line);background:var(--raised);border-radius:12px;padding:10px 12px;color:var(--t3);font-size:13px;display:flex;justify-content:space-between;align-items:center}
+.pipe{display:flex;gap:4px}.pipe i{flex:1;height:6px;border-radius:3px;background:var(--pend);opacity:.35}.pipe i.done{background:var(--done);opacity:1}.pipe i.prog{background:var(--prog);opacity:1}.pipe i.skip{background:var(--skip);opacity:.6}
+.pop{position:absolute;z-index:20;background:var(--raised);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:12px 14px;display:none}.pop.open{display:block}
+.sheet{position:fixed;top:0;right:0;bottom:0;width:380px;background:var(--raised);border-left:1px solid var(--line);box-shadow:var(--shadow);z-index:30;padding:16px;overflow:auto;display:none}.sheet.open{display:block}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;font-size:12.5px}.kv dt{color:var(--t3)}.kv dd{margin:0;font-family:ui-monospace,Menlo,monospace}
+pre{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:11.5px;margin:6px 0 0;overflow:auto}
+input,select{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 9px;color:var(--t1);font:inherit;width:100%}
+label{font-size:12px;color:var(--t3);display:flex;flex-direction:column;gap:3px}
+.hide{display:none!important}.row{display:flex;align-items:center;gap:8px}.col{display:flex;flex-direction:column;gap:10px}
+.li{padding:6px 9px;border-radius:8px;display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;color:var(--t2)}.li.on{background:var(--pri-soft);color:var(--t1);font-weight:600}
+.badge-q{background:var(--pri);color:var(--on-pri);border-radius:999px;font-size:11px;padding:0 7px;font-weight:600;line-height:18px}
+.stage-row{border:1px solid var(--line);border-radius:10px;background:var(--raised);padding:7px 10px;display:flex;align-items:center;gap:8px;font-size:13px}
+.savebar{display:flex;justify-content:space-between;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--line);border-radius:12px;padding:8px 12px;font-size:13px}
+.diffl{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;padding:0 8px}.add{background:color-mix(in srgb,var(--done) 16%,transparent);color:var(--t1)}.del{background:color-mix(in srgb,var(--block) 16%,transparent)}
+
+body{display:grid;grid-template-columns:56px auto 1fr auto;height:100vh;overflow:hidden}
+.rail{background:var(--surface);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:6px}
+.rail .logo{width:32px;height:32px;border-radius:9px;background:var(--pri);color:var(--on-pri);display:grid;place-items:center;font-weight:700;margin-bottom:10px}
+.rail .sp{flex:1}.statusbtn{position:relative}.statusbtn .dot{position:absolute;right:5px;top:5px;border:2px solid var(--surface);width:12px;height:12px}
+.list{width:220px;background:var(--surface);border-right:1px solid var(--line);padding:12px 10px;display:flex;flex-direction:column;gap:10px;overflow:auto}
+main{min-width:0;display:flex;flex-direction:column;overflow:hidden}.view{flex:1;min-height:0;display:flex;flex-direction:column}
+.head{padding:12px 24px 10px;border-bottom:1px solid var(--line);background:var(--bg);display:flex;flex-direction:column;gap:8px}
+.scroll{flex:1;overflow:auto;padding:18px 24px}.col.read{max-width:880px;margin:0 auto}.scroll .tw{max-width:100%}
+.foot{padding:0 24px 16px}.foot .comp{max-width:880px;margin:0 auto}
+.drawer{width:320px;background:var(--surface);border-left:1px solid var(--line);padding:14px;overflow:auto;display:flex;flex-direction:column;gap:12px}
+.pipeline{display:flex;gap:14px;flex-wrap:wrap;cursor:pointer}
+</style></head><body>
+<nav class="rail"><div class="logo">S</div>
+ <button class="ico on" data-view="chat" title="Chat">&#9993;</button><button class="ico" data-view="setup" title="Setup">&#9881;</button><button class="ico" data-view="tasks" title="Tasks">&#9776;</button>
+ <div class="sp"></div><div class="seg themeseg hide" role="group" aria-label="Theme"><button data-m="system">System</button><button data-m="light">Light</button><button data-m="dark">Dark</button></div>
+ <button class="ico" title="Theme: System (click cycles)" onclick="document.querySelector('.themeseg').classList.toggle('hide')">&#9680;</button>
+ <button class="ico statusbtn" data-toggle="sheet" title="Status: 1 warning"><span class="t2">&#9432;</span><span class="dot d-amber"></span></button></nav>
+<aside class="list" id="list"><button class="btn p">+ New chat</button>
+ <div class="xs t3 b" style="padding:0 6px">ACTIVE</div>
+ <div class="li on"><span class="dot d-prog"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Add CSV export to reports</span><span class="badge-q">1</span></div>
+ <div class="li"><span class="dot d-pend"></span>Fix flaky login test</div>
+ <div class="xs t3 b" style="padding:6px 6px 0">ENDED</div><div class="li"><span class="dot d-done"></span>Rename bg-tracker env vars</div></aside>
+<main>
+ <div class="view" id="v-chat">
+  <div class="head"><div class="row"><b style="font-size:15px;flex:1">Add CSV export to reports</b><span class="chip pri">Active</span><button class="btn sm">Stop</button><button class="btn sm" data-toggle="drawer">Task panel &#9656;</button></div>
+   <!-- NEW: StagePipeline -->
+   <div class="pipeline" data-toggle="drawer"><div class="pipe"><i class="done" title="Research"></i><i class="prog" title="Plan"></i><i class="skip" title="Wireframes"></i><i class="pend" title="Build"></i><i class="pend" title="QA"></i></div><div class="row" style="gap:14px;flex-wrap:wrap"><span class="row t2 xs" style="gap:5px"><span class="dot d-done"></span><span >Research</span></span><span class="row t2 xs" style="gap:5px"><span class="dot d-prog"></span><span class=b style=color:var(--t1)>Plan</span></span><span class="row t2 xs" style="gap:5px"><span class="dot d-skip"></span><span >Wireframes</span></span><span class="row t2 xs" style="gap:5px"><span class="dot d-pend"></span><span >Build</span></span><span class="row t2 xs" style="gap:5px"><span class="dot d-pend"></span><span >QA</span></span></div></div>
+   <div class="xs t2"><b style="color:var(--t1)">Now: Plan</b> &middot; finishes when <span class="mono">plan.md</span> exists (not written yet) &middot; Claude asks you before moving on &middot; until done, Edit/Write outside docs/ are <span class="chip block">block</span> &nbsp; <b style="color:var(--t1)">Next:</b> Build (Wireframes skipped: not UI work)</div></div>
+  <div class="scroll"><div class="col read"><div class="user">Add a CSV export button to the reports page. Keep it behind the existing feature flag.</div>
+<div class="note rem"><b>Shipline reminder</b>Research is not finished: docs/tasks/csv-export/research.md has not been written.</div>
+<div class="t1">I will start by looking at how reports are rendered. What I found:
+<div class="tw"><table><tr><th>File</th><th>Role</th><th>Needs change</th><th>Notes</th></tr>
+<tr><td class="mono">src/reports/ReportTable.tsx</td><td>Renders rows and header</td><td>Yes, add toolbar</td><td>Uses virtualised rows</td></tr>
+<tr><td class="mono">src/lib/flags.ts</td><td>Feature flags</td><td>No</td><td>Flag csvExport already defined</td></tr>
+<tr><td class="mono">src/api/reports.ts</td><td>Fetch layer</td><td>Maybe</td><td>Pagination: need all pages</td></tr></table></div></div>
+<div class="tool"><span class="t3">&#9656;</span><b>Read</b><span class="s mono xs t3">src/reports/ReportTable.tsx</span></div>
+<div class="tool"><span class="t3">&#9656;</span><b>Edit</b><span class="s mono xs t3">src/reports/ReportTable.tsx</span><span class="chip block">Blocked</span></div>
+<div class="note blocked"><b>Shipline blocked</b>Edits outside docs/ are blocked until the Research stage is done.</div>
+<div class="note den"><b>You denied</b>Bash: npm install papaparse</div>
+<div class="qcard"><div class="row"><b class="xs" style="color:var(--pri)">? QUESTION FROM CLAUDE</b><span class="t3 xs" style="margin-left:auto">expires in 4:32</span></div>
+<div class="b" style="margin-top:4px">Which export format should the button offer?</div>
+<div class="opt"><span>&#9675;</span><span><b>CSV only</b> <span class="t3 xs">smallest change</span></span></div>
+<div class="opt sel"><span style="color:var(--pri)">&#9679;</span><span><b>CSV + JSON</b> <span class="t3 xs">menu with two entries</span></span></div>
+<div class="opt"><span>&#9675;</span><span><b>Excel</b> <span class="t3 xs">adds a dependency</span></span></div>
+<div style="margin-top:10px"><button class="btn p">Send answer</button></div></div></div></div>
+  <div class="foot"><div class="comp"><span>Claude is working. You can send the next message when this turn finishes.</span><span class="chip guide">Stop</span></div></div></div>
+ <div class="view hide" id="v-setup"><div class="head"><b style="font-size:15px">Setup</b></div><div class="scroll"><div class="col read"><div class="col" style="gap:12px">
+<div class="savebar"><span class="t2"><span class="dot d-amber" style="background:var(--warn)"></span> 1 changed file: workflows/feature.yml</span><span class="row"><button class="btn">Discard and reload</button><button class="btn p">Review and save</button></span></div>
+<div class="seg" style="align-self:flex-start"><button>config.yml</button><button class="on">feature *</button><button>hotfix</button></div>
+<div class="card col"><div class="row"><b>feature</b><span class="t3 xs mono">workflows/feature.yml</span></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><label>Name<input value="Feature"></label><label>Description<input value="New product work, research to PR"></label></div></div>
+<div class="col" style="gap:6px">
+<div class="stage-row"><span class="t3">&#8942;&#8942;</span><span class="t3">&#9656;</span><b>Research</b><span class="mono xs t3">research</span><span class="chip block" style="margin-left:auto">block</span></div>
+<div class="stage-row"><span class="t3">&#8942;&#8942;</span><span class="t3">&#9656;</span><b>Plan</b><span class="mono xs t3">plan</span><span class="chip warn" style="margin-left:auto">warn</span></div>
+<div class="card" style="padding:8px 10px"><div class="row"><span class="t3">&#8942;&#8942;</span><span class="t3">&#9662;</span><b>Build</b><span class="mono xs t3">build</span><span class="chip guide" style="margin-left:auto">guide</span><span class="chip new">new</span></div>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px"><label>Name<input value="Build"></label><label>Enforcement<select><option>guide</option></select></label><label>Artifact<input value="build-notes.md"></label>
+<label>Confirm to advance<span class="row"><span class="seg"><button class="on">On</button><button>Off</button></span></span></label><label style="grid-column:span 2">Blocks<input value="tools: Edit|Write, allow_paths: docs/"></label></div>
+<label style="margin-top:10px">Rules (markdown) <pre class="mono" style="margin:0">## Build rules
+- Keep changes behind the feature flag</pre></label></div>
+<div class="stage-row"><span class="t3">&#8942;&#8942;</span><span class="t3">&#9656;</span><b>QA</b><span class="mono xs t3">qa</span></div>
+<div><button class="btn sm">+ Add stage</button></div></div>
+<div class="card"><div class="row"><b>Preview of the files as they will be written</b><span class="t3 xs">workflows/feature.yml</span></div>
+<pre class="mono" style="padding:4px 0"><div class="diffl">  - id: build</div><div class="diffl add">+   enforcement: guide</div><div class="diffl add">+   artifact: build-notes.md</div><div class="diffl del">-   artifact: build.md</div></pre></div></div></div></div></div>
+ <div class="view hide" id="v-tasks"><div class="head"><b style="font-size:15px">Tasks</b></div><div class="scroll"><div class="col read"><div class="card"><b>Add CSV export to reports</b> <span class="chip guide">feature</span><div class="xs t3">Tasks view: unchanged content, re-skinned with the new tokens.</div></div></div></div></div>
+</main>
+<!-- NEW: collapsible TaskPanel drawer: artifacts + changes only (stage info moved into the pipeline) -->
+<aside class="drawer" id="drawer" data-flip="1"><div class="row"><b>Task panel</b><span class="t3 xs mono" style="margin-left:auto">feat/csv-export</span></div>
+ <div class="card"><b class="xs t3">ARTIFACTS</b><div class="row mono xs" style="margin-top:6px">research.md</div></div>
+ <div class="card"><b class="xs t3">WORKING TREE</b><div class="row mono xs" style="margin-top:6px"><span class="chip warn">M</span>src/reports/ReportTable.tsx</div></div></aside>
+<!-- NEW: Diagnostics Sheet -->
+<aside class="sheet" id="sheet"><button class="btn sm" data-toggle="sheet" style="float:right">Close</button><div class="row"><b style="font-size:15px">Diagnostics</b><span class="chip" style="color:var(--warn);margin-left:8px"><span class="dot d-amber"></span>1 warning</span></div>
+<dl class="kv" style="margin:12px 0"><dt>Shipline UI</dt><dd>0.4.2 (interface 3)</dd><dt>Repo</dt><dd>0.4.2 (interface 3)</dd><dt>Version check</dt><dd style="color:var(--done)">same</dd><dt>claude</dt><dd>/usr/local/bin/claude</dd><dt>Login</dt><dd style="color:var(--warn)">session expires in 2 d</dd><dt>Lock</dt><dd>free</dd><dt>Watch mode</dt><dd>fs-events</dd></dl>
+<b class="xs t3">LAST LOG LINES</b><pre class="mono">12:01:44 hook pre-tool allow Read
+12:01:51 hook pre-tool block Edit (stage plan)</pre>
+<div class="row" style="margin-top:10px"><button class="btn p sm">Copy for a bug report</button><button class="btn sm">Refresh</button></div></aside>
+<style>#drawer.hide{display:none!important}</style>
+<script>
+const root=document.documentElement,mq=matchMedia('(prefers-color-scheme: dark)');let mode='system';
+function apply(){root.dataset.theme=mode==='system'?(mq.matches?'dark':'light'):mode;document.querySelectorAll('.themeseg button').forEach(b=>b.classList.toggle('on',b.dataset.m===mode))}
+mq.onchange=apply;document.querySelectorAll('.themeseg button').forEach(b=>b.onclick=()=>{mode=b.dataset.m;apply()});apply();
+document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{const v=b.dataset.view;document.querySelectorAll('[data-view]').forEach(x=>x.classList.toggle('on',x.dataset.view===v));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('hide',x.id!=='v-'+v))});
+document.querySelectorAll('[data-toggle]').forEach(b=>b.onclick=e=>{e.stopPropagation();const t=document.getElementById(b.dataset.toggle);if(t.dataset.flip){t.classList.toggle('hide')}else{t.classList.toggle('open')}});
+document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{const g=b.dataset.group;document.querySelectorAll('[data-group="'+g+'"]').forEach(x=>{x.classList.toggle('on',x===b);document.getElementById(x.dataset.tab).classList.toggle('hide',x!==b)})});
+</script></body></html>

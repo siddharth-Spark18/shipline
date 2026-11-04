@@ -5,7 +5,7 @@ import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { makeRepo, removeDir } from '../helpers.mjs';
+import { homeFor, makeRepo, removeDir } from '../helpers.mjs';
 import { api, startUi } from './helpers.mjs';
 import { SESSIONS_FIXTURES, useFakeClaude } from './chat-helpers.mjs';
 import { addChat } from '../../src/ui/sessions.mjs';
@@ -34,6 +34,7 @@ const entry = (id) => ({ id, title: 't', created: '2026-11-01T00:00:00.000Z', la
 before(async () => {
   fake = useFakeClaude(); // sets CLAUDE_CONFIG_DIR to a temp dir
   dir = makeRepo({ commitInit: true });
+  process.env.SHIPLINE_HOME = homeFor(dir); // addChat writes sessions.json in the repo's store, in this process
   for (const id of [GOOD, BAD, SCANNED, MISSING, EMPTY]) addChat(dir, entry(id));
   place('session.jsonl', GOOD);
   place('corrupted.jsonl', BAD);
@@ -53,7 +54,7 @@ const EXPECTED = [
   { kind: 'user', text: 'Add a CSV export to the reports page' },
   { kind: 'assistant', text: "I'll start the task." },
   { kind: 'tool-use', id: 'toolu_1', name: 'Bash', summary: 'Bash: node .shipline/bin/stage.mjs start --workflow feature --title "Add export"' },
-  { kind: 'tool-result', toolUseId: 'toolu_1', text: 'Started Feature task in docs/shipline/add-export', isError: false },
+  { kind: 'tool-result', toolUseId: 'toolu_1', text: 'Started Feature task in /home/dev/.shipline/projects/-home-dev-repo/tasks/add-export', isError: false },
   { kind: 'tool-use', id: 'toolu_2', name: 'Edit', summary: 'Edit: src/a.js' },
   {
     kind: 'tool-result',

@@ -4,6 +4,7 @@
 #   agent (suggested subagent), confirm_to_advance (ask the developer before moving on),
 #   enforcement: guide | warn | block, blocks (what is held back until THIS stage is done).
 # A "blocks" entry is either { tools: 'Edit|Write', allow_paths: [globs] } or { bash: 'regex' }.
+# Task files (manifest and artifacts) live outside the repo, so file blocks never apply to them.
 id: feature
 name: Feature
 description: new functionality or a change in behavior
@@ -33,7 +34,6 @@ stages:
     confirm_to_advance: true
     blocks:
       - tools: 'Edit|Write|MultiEdit|NotebookEdit'
-        allow_paths: ["{artifact_root}/**"]
   - id: wireframes
     name: Wireframes
     artifact: wireframes.html

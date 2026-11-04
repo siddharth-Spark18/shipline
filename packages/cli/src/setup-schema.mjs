@@ -9,7 +9,7 @@ const TEMPLATES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 
 // Keys the form edits. Anything else in a file is shown as "other fields (kept)".
 export const KNOWN_FIELDS = {
   config: {
-    top: ['artifact_root', 'folder_pattern', 'branch_pattern', 'tracker', 'commands'],
+    top: ['branch_pattern', 'tracker', 'commands'],
     commands: ['test', 'lint', 'build'],
   },
   workflow: {
@@ -54,14 +54,6 @@ export function validateConfig(model) {
   const out = [];
   if (!isObj(model)) return [err('', 'config must be a map')];
 
-  const root = model.artifact_root;
-  if (root !== undefined && root !== null) {
-    if (typeof root !== 'string' || root.trim() === '') out.push(err('artifact_root', 'must be a folder path'));
-    else if (/^([\\/]|[A-Za-z]:)/.test(root) || root.split(/[\\/]/).includes('..')) {
-      out.push(err('artifact_root', 'must be a relative path inside the repo (no leading / and no ..)'));
-    }
-  }
-  checkPattern(model, 'folder_pattern', out);
   checkPattern(model, 'branch_pattern', out);
   if (model.commands !== undefined && model.commands !== null && !isObj(model.commands)) {
     out.push(err('commands', 'must be a map of commands'));

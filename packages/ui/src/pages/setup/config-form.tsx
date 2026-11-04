@@ -5,7 +5,7 @@ import { OtherFields } from '@/pages/setup/other-fields';
 import { setOptional } from '@/pages/setup/draft';
 import type { ConfigModel, SetupFile } from '@/lib/types';
 
-const TOP_KEYS = ['artifact_root', 'folder_pattern', 'branch_pattern', 'tracker', 'commands'];
+const TOP_KEYS = ['branch_pattern', 'tracker', 'commands'];
 const COMMAND_KEYS = ['test', 'lint', 'build'];
 
 function patternError(v: string | null | undefined): string | null {
@@ -88,24 +88,10 @@ export function ConfigForm({
   const setCommand = (key: string, value: string) =>
     onChange({ ...model, commands: { ...(model.commands ?? {}), [key]: value } });
 
-  const root = model.artifact_root ?? '';
-  const rootError =
-    root && (/^([\\/]|[A-Za-z]:)/.test(root) || root.split(/[\\/]/).includes('..'))
-      ? 'Must be a relative path with no ..'
-      : null;
-
   return (
     <div className="flex flex-col gap-4">
       <h2 className="font-mono text-sm">config.yml</h2>
       <div className="grid gap-4 sm:grid-cols-2">
-        <TextField
-          id="cfg-artifact-root"
-          label="Artifact root"
-          value={root}
-          error={rootError}
-          hint="Where task folders live."
-          onChange={(v) => setTop('artifact_root', v)}
-        />
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="cfg-tracker">Tracker</Label>
           <Input
@@ -117,14 +103,6 @@ export function ConfigForm({
           />
           <p className="text-xs text-muted-foreground">Read-only.</p>
         </div>
-        <TextField
-          id="cfg-folder-pattern"
-          label="Folder pattern"
-          value={model.folder_pattern ?? ''}
-          error={patternError(model.folder_pattern)}
-          hint="{key}, {slug} and {type}; {slug} is required."
-          onChange={(v) => setTop('folder_pattern', v)}
-        />
         <TextField
           id="cfg-branch-pattern"
           label="Branch pattern"

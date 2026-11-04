@@ -43,7 +43,7 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
     throw new ApiError(
       0,
       'network',
-      'Could not reach the Shipline UI server. Is `npx shipline ui` still running?',
+      'Could not reach the Shipline UI server. Is `npx @forgeyard/shipline ui` still running?',
     );
   }
   if (!res.ok) {

@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Shipline setup
 
-You are customizing the Shipline files that `npx shipline init` created. Be an interviewer: ask a few questions at a time, never assume, and show the developer a summary before writing anything. Without this setup the defaults already work, so the developer can stop at any point.
+You are customizing the Shipline files that `npx @forgeyard/shipline init` created. Be an interviewer: ask a few questions at a time, never assume, and show the developer a summary before writing anything. Without this setup the defaults already work, so the developer can stop at any point.
 
 ## 1. Read the repo first
 
@@ -20,7 +20,7 @@ Cover these topics, one group at a time:
 2. **Enforcement per stage:** `guide` (instructions only), `warn` (allowed, with a reminder), or `block` (denied until the stage is done). Defaults: block source edits until plan (root cause for bugfix) is done; block `git commit` and `gh pr create` until verify is done. Ask whether other actions need blocking (for example migrations or env files) and write them as `blocks` entries. Explain that blocking covers Edit/Write tools and matching Bash commands, not every possible way of changing files.
 3. **Confirmation per stage:** should Claude ask the developer before advancing (`confirm_to_advance: true`) or advance by itself? Note that confirmation is recorded by Claude after asking; it is process discipline, not cryptographic proof.
 4. **Rules per stage:** repo-specific instructions for each stage (what a good plan contains here, coding conventions, what verify must check, PR template and reviewers). Write them to `.shipline/rules/<stage>.md`.
-5. **Locations and naming:** artifact root (`artifact_root`), folder and branch patterns, and the test/lint/build commands the verify stage should run (leave empty if none).
+5. **Naming and commands:** the branch pattern (`branch_pattern`) and the test/lint/build commands the verify stage should run (leave empty if none).
 
 ## 3. Write
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { runInit } from '../src/init.mjs';
+import { runUpgrade } from '../src/upgrade.mjs';
 
 const major = Number(process.versions.node.split('.')[0]);
 if (major < 18) {
@@ -11,10 +12,12 @@ const [cmd, ...rest] = process.argv.slice(2);
 const HELP = `shipline - repo-installed Claude Code workflow
 
 Usage:
-  npx shipline init [dir] [--dry-run]   Vendor .shipline/, .claude/ files, hooks and a CLAUDE.md section into a repo
-  npx shipline ui [dir] [--port <n>] [--no-open]   Local web UI for setup and tasks (Node 20+)
+  npx @forgeyard/shipline init [dir] [--dry-run]   Vendor .shipline/, .claude/ files, hooks and a CLAUDE.md section into a repo
+  npx @forgeyard/shipline upgrade [dir] [--yes] [--dry-run] [--force]   Update an installed repo and move its tasks to ~/.shipline
+  npx @forgeyard/shipline ui [dir] [--port <n>] [--no-open]   Local web UI for setup and tasks (Node 20+)
 
-Nothing is overwritten: init aborts with nothing written if any file name collides.`;
+Nothing is overwritten: init aborts with nothing written if any file name collides.
+upgrade shows a preview first; files your team edited are skipped unless --force.`;
 
 if (cmd === 'ui') {
   if (major < 20) {
@@ -28,6 +31,13 @@ if (cmd === 'ui') {
   process.exitCode = runInit({
     target: rest.find((a) => !a.startsWith('--')) || process.cwd(),
     dryRun: rest.includes('--dry-run'),
+  });
+} else if (cmd === 'upgrade') {
+  process.exitCode = await runUpgrade({
+    target: rest.find((a) => !a.startsWith('--')) || process.cwd(),
+    yes: rest.includes('--yes'),
+    dryRun: rest.includes('--dry-run'),
+    force: rest.includes('--force'),
   });
 } else {
   console.log(HELP);

@@ -1,21 +1,26 @@
 // Plan item 45, Tasks (Goals 6 and 7): GET /api/tasks, SSE `tasks` updates from the watcher, and /api/file.
+// Phase 1: tasks live in the store ($SHIPLINE_HOME/projects/<encoded>/tasks/), Task.dir is the absolute store
+// path, /api/file accepts absolute paths inside the store's tasks/ (anything absolute outside the repo and the
+// store is 400 bad-path), and an interface-2 repo is read from its old artifact_root, read-only.
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { git, makeRepo, removeDir, runInit, stage, tmpDir } from '../helpers.mjs';
+import { git, makeRepo, removeDir, runInit, stage, storeOf, tmpDir } from '../helpers.mjs';
 import { api, openEvents, sleep, startUi } from './helpers.mjs';
 import { parseStatusZ } from '../../src/ui/tasks.mjs';
 
-const TASK = 'docs/shipline/add-export';
+let TASK; // the absolute store path of the feature task
 let dir;
 let outside;
 let ui;
 let ev;
 
+// rel is repo-relative, or absolute (a store path).
 const write = (rel, text) => {
-  mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
-  writeFileSync(path.join(dir, rel), text);
+  const abs = path.resolve(dir, rel);
+  mkdirSync(path.dirname(abs), { recursive: true });
+  writeFileSync(abs, text);
 };
 const file = (p, mode = 'content') => api(ui, 'GET', `/api/file?path=${encodeURIComponent(p)}&mode=${mode}`);
 
@@ -33,6 +38,7 @@ before(async () => {
   dir = makeRepo({ commitInit: true });
   outside = tmpDir();
   writeFileSync(path.join(outside, 'secret.txt'), 'outside the repo\n');
+  TASK = path.join(storeOf(dir), 'tasks', 'add-export');
   ui = await startUi(dir);
   ev = await openEvents(ui);
   const r = stage(dir, ['start', '--workflow', 'feature', '--title', 'Add export'], 's1');
@@ -64,7 +70,9 @@ describe('GET /api/tasks', () => {
     assert.deepEqual(t.files.map((f) => f.name), ['manifest.json']);
     assert.equal(typeof t.files[0].size, 'number');
     assert.equal(typeof t.files[0].mtime, 'number');
-    assert.deepEqual(r.json.changes, [{ path: `${TASK}/manifest.json`, index: '?', worktree: '?' }]);
+    // The task lives in the store, so starting it changes nothing in the repo (success criterion 2).
+    assert.deepEqual(r.json.changes, []);
+    assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=all'), '');
   });
 
   test('a skipped stage carries its reason; finished tasks are not listed', async () => {
@@ -73,7 +81,7 @@ describe('GET /api/tasks', () => {
     let r = await api(ui, 'GET', '/api/tasks');
     const quick = r.json.tasks.find((t) => t.slug === 'quick');
     assert.deepEqual(quick.stages[0], { id: 'jira', name: 'Jira ticket', status: 'skipped', reason: 'no ticket', artifact: 'ticket.md' });
-    rmSync(path.join(dir, 'docs/shipline/quick'), { recursive: true });
+    rmSync(path.join(storeOf(dir), 'tasks', 'quick'), { recursive: true });
     r = await api(ui, 'GET', '/api/tasks');
     assert.deepEqual(r.json.tasks.map((t) => t.slug), ['add-export']);
   });
@@ -106,22 +114,34 @@ describe('SSE updates', () => {
     );
   });
 
-  test('a hand edit of config.yml reloads the config, so a new artifact_root reaches the task scan', async () => {
-    const cfgPath = path.join(dir, '.shipline/config.yml');
-    const original = readFileSync(cfgPath, 'utf8');
-    write('elsewhere/moved-task/manifest.json', readFileSync(path.join(dir, TASK, 'manifest.json'), 'utf8'));
+  test('a new task folder in the store (outside the repo) sends a tasks event', async () => {
     await quiet();
     const since = ev.mark();
-    writeFileSync(cfgPath, original.replace('artifact_root: docs/shipline', 'artifact_root: elsewhere'));
+    assert.equal(stage(dir, ['start', '--workflow', 'bugfix', '--title', 'Watch me'], 's-watch').code, 0);
+    const watched = path.join(storeOf(dir), 'tasks', 'watch-me');
     try {
-      const hit = await ev.waitFor((e) => e.type === 'tasks' && e.data.tasks.some((t) => t.dir === 'elsewhere/moved-task'), 3000, since);
-      assert.deepEqual(hit.data.tasks.map((t) => t.dir), ['elsewhere/moved-task']);
-      assert.deepEqual((await api(ui, 'GET', '/api/tasks')).json.tasks.map((t) => t.dir), ['elsewhere/moved-task']);
+      await ev.waitFor((e) => e.type === 'tasks' && e.data.tasks.some((t) => t.dir === watched), 3000, since);
+    } finally {
+      rmSync(watched, { recursive: true });
+    }
+    await ev.waitFor((e) => e.type === 'tasks' && !e.data.tasks.some((t) => t.dir === watched), 3000, since);
+  });
+
+  test('an artifact_root hand-added to config.yml of an interface-3 repo is ignored: tasks still come from the store', async () => {
+    const cfgPath = path.join(dir, '.shipline/config.yml');
+    const original = readFileSync(cfgPath, 'utf8');
+    write('elsewhere/moved-task/manifest.json', readFileSync(path.join(TASK, 'manifest.json'), 'utf8'));
+    await quiet();
+    const since = ev.mark();
+    writeFileSync(cfgPath, `artifact_root: elsewhere\n${original}`);
+    try {
+      const hit = await ev.waitFor((e) => e.type === 'tasks', 3000, since);
+      assert.deepEqual(hit.data.tasks.map((t) => t.dir), [TASK]);
+      assert.deepEqual((await api(ui, 'GET', '/api/tasks')).json.tasks.map((t) => t.dir), [TASK]);
     } finally {
       writeFileSync(cfgPath, original);
       rmSync(path.join(dir, 'elsewhere'), { recursive: true });
     }
-    await ev.waitFor((e) => e.type === 'tasks' && e.data.tasks.some((t) => t.dir === TASK), 3000, since);
   });
 
   test('staging a file (a change only the git directory sees) sends a tasks event', async () => {
@@ -147,10 +167,22 @@ describe('SSE updates', () => {
 });
 
 describe('GET /api/file', () => {
-  test('reads a task artifact', async () => {
+  test('reads a task artifact by its absolute store path', async () => {
     const r = await file(`${TASK}/ticket.md`);
-    assert.equal(r.status, 200);
+    assert.equal(r.status, 200, r.text);
     assert.deepEqual(r.json, { path: `${TASK}/ticket.md`, content: '# LL-12\n' });
+  });
+
+  test('a missing file inside the store tasks/ folder is 404', async () => {
+    const r = await file(`${TASK}/nope.md`);
+    assert.equal(r.status, 404, r.text);
+    assert.equal(r.json.error.code, 'not-found');
+  });
+
+  test('an absolute path inside the repo is accepted like a relative one', async () => {
+    const r = await file(path.join(dir, 'src/a.js'), 'diff');
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.path, 'src/a.js');
   });
 
   test('diffs a changed tracked file', async () => {
@@ -194,24 +226,47 @@ describe('GET /api/file', () => {
     assert.equal(r.json.error.code, 'too-large');
   });
 
-  test('rejects ../ paths', async () => {
-    for (const p of ['../secret.txt', '../../etc/passwd', `${TASK}/../../../README.md`, `${TASK}/../../../../${path.basename(outside)}/secret.txt`, '..', '/etc/passwd', path.join(outside, 'secret.txt')]) {
+  test('rejects relative ../ paths with 404', async () => {
+    for (const p of ['../secret.txt', '../../etc/passwd', 'src/../../README.md', '..']) {
       const r = await file(p);
       assert.equal(r.status, 404, p);
       assert.equal(r.json.error.code, 'not-found');
     }
   });
 
-  test('rejects a symlink pointing outside the repo, in a task folder or in the changes', async () => {
-    symlinkSync(path.join(outside, 'secret.txt'), path.join(dir, TASK, 'leak.md'));
+  test('an absolute path outside both the repo and the store tasks/ folder gives 400 bad-path', async () => {
+    const store = storeOf(dir);
+    for (const p of [
+      '/etc/passwd',
+      path.join(outside, 'secret.txt'),
+      `${TASK}/../../../README.md`, // normalizes to <home>/projects/README.md
+      `${TASK}/../../../../${path.basename(outside)}/secret.txt`,
+      path.join(store, 'repo.json'), // in the store, but not in tasks/
+      path.join(store, 'state', 's1.json'),
+      path.join(store, 'ui', 'ui.log'),
+    ]) {
+      const r = await file(p);
+      assert.equal(r.status, 400, `${p}: ${r.text}`);
+      assert.equal(r.json.error.code, 'bad-path', p);
+      assert.ok(!r.text.includes('outside the repo\n'));
+    }
+  });
+
+  test('rejects a symlink pointing outside: in a store task folder (400) or in the changes (404)', async () => {
+    symlinkSync(path.join(outside, 'secret.txt'), path.join(TASK, 'leak.md'));
     symlinkSync(path.join(outside, 'secret.txt'), path.join(dir, 'src', 'leak.txt'));
-    for (const p of [`${TASK}/leak.md`, 'src/leak.txt']) {
+    for (const [p, status] of [[`${TASK}/leak.md`, 400], ['src/leak.txt', 404]]) {
       for (const mode of ['content', 'diff']) {
         const r = await file(p, mode);
-        assert.equal(r.status, 404, `${p} ${mode}: ${r.text}`);
+        assert.equal(r.status, status, `${p} ${mode}: ${r.text}`);
         assert.ok(!r.text.includes('outside the repo'));
       }
     }
+  });
+
+  test('the relative docs/shipline path of a store task is not readable (the repo has no task folders)', async () => {
+    const r = await file('docs/shipline/add-export/ticket.md');
+    assert.equal(r.status, 404);
   });
 
   test('rejects a path that is neither in a task folder nor changed', async () => {
@@ -268,6 +323,45 @@ describe('a repo with no commits yet', () => {
       const r = await api(u, 'GET', '/api/file?path=first.txt&mode=diff');
       assert.equal(r.status, 200, r.text);
       assert.deepEqual(r.json.hunks[0].lines.map((l) => [l.type, l.text]), [['add', 'hello']]);
+    } finally {
+      if (u) await u.close();
+      removeDir(d);
+    }
+  });
+});
+
+describe('an interface-2 repo (not upgraded yet)', () => {
+  test('tasks are read from the old artifact_root, read-only: absolute dirs, and /api/file reads its files', async () => {
+    const d = makeRepo({ commitInit: true });
+    let u;
+    try {
+      // Build an in-repo task the way 0.6.0 left it: a task folder under a custom artifact_root, committed.
+      assert.equal(stage(d, ['start', '--workflow', 'feature', '--title', 'Old task'], 'o1').code, 0);
+      const legacyTask = path.join(d, 'work', 'tasks', 'old-task');
+      mkdirSync(path.dirname(legacyTask), { recursive: true });
+      cpSync(path.join(storeOf(d), 'tasks', 'old-task'), legacyTask, { recursive: true });
+      rmSync(path.join(storeOf(d), 'tasks', 'old-task'), { recursive: true });
+      writeFileSync(path.join(legacyTask, 'ticket.md'), '# old\n');
+      const cfg = readFileSync(path.join(d, '.shipline/config.yml'), 'utf8');
+      writeFileSync(path.join(d, '.shipline/config.yml'), `artifact_root: work/tasks\n${cfg}`);
+      writeFileSync(path.join(d, '.shipline/bin/VERSION'), '{"package":"0.6.0","interface":2}\n');
+      git(d, 'add', '-A');
+      git(d, 'commit', '-q', '-m', 'legacy layout');
+
+      u = await startUi(d);
+      const status = await api(u, 'GET', '/api/status');
+      assert.equal(status.json.needsUpgrade, true);
+      const t = await api(u, 'GET', '/api/tasks');
+      assert.equal(t.status, 200);
+      assert.deepEqual(t.json.tasks.map((k) => k.dir), [legacyTask]);
+      assert.deepEqual(t.json.tasks[0].files.map((f) => f.name).sort(), ['manifest.json', 'ticket.md']);
+      // Committed and unchanged, but inside an open legacy task folder: readable by its repo-relative path.
+      const r = await api(u, 'GET', `/api/file?path=${encodeURIComponent('work/tasks/old-task/ticket.md')}&mode=content`);
+      assert.equal(r.status, 200, r.text);
+      assert.equal(r.json.content, '# old\n');
+      // Reading never moves or writes anything in the repo.
+      assert.equal(git(d, 'status', '--porcelain', '--untracked-files=all'), '');
+      assert.ok(existsSync(path.join(legacyTask, 'manifest.json')));
     } finally {
       if (u) await u.close();
       removeDir(d);

@@ -5,7 +5,7 @@
     {
       "name": "shipline",
       "source": "./packages/plugin",
-      "description": "Installs the Shipline repo workflow (/shipline:init runs the shipline CLI)"
+      "description": "Installs the Shipline repo workflow (/shipline:init runs the @forgeyard/shipline CLI)"
     }
   ]
 }

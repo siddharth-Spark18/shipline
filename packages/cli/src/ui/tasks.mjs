@@ -1,6 +1,7 @@
 // The Tasks panel's data: open tasks, working-tree changes and file access. Node 20+, no dependencies.
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { tasksDir } from '../store.mjs';
 import { HttpError } from './http.mjs';
 import { fileDiff, gitRun, looksBinary } from './git.mjs';
 
@@ -8,19 +9,27 @@ const FILE_LIMIT = 1024 * 1024;
 
 const isDone = (status) => status === 'done' || status === 'skipped';
 
-function readManifest(root, dir) {
+function readManifest(dir) {
   try {
-    return JSON.parse(readFileSync(path.join(root, dir, 'manifest.json'), 'utf8'));
+    return JSON.parse(readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
   } catch {
     return null;
   }
 }
 
-// Every task folder under cfg.artifact_root whose manifest still has a stage that isn't done or skipped,
-// with its manifest. The UI's own copy of the scan, used for every repo whatever its interface.
-export function readOpenTasks(root, cfg) {
+// The folder task folders are read from: the store's tasks/ folder, or (legacy, read-only) the old in-repo
+// artifact_root for a repo that hasn't been upgraded yet (interface below 3).
+export function tasksBase(root, cfg, legacy = false) {
+  if (legacy) return path.join(root, (cfg && cfg.artifact_root) || 'docs/shipline');
+  return tasksDir(root);
+}
+
+// Every task folder under the tasks base whose manifest still has a stage that isn't done or skipped,
+// with its manifest. `dir` is the absolute folder path (an opaque id for the browser). The UI's own copy of
+// the scan, used for every repo whatever its interface.
+export function readOpenTasks(root, cfg, legacy = false) {
   const open = [];
-  const base = path.join(root, cfg.artifact_root);
+  const base = tasksBase(root, cfg, legacy);
   if (!existsSync(base)) return open;
   let entries;
   try {
@@ -30,8 +39,8 @@ export function readOpenTasks(root, cfg) {
   }
   for (const d of entries) {
     if (!d.isDirectory()) continue;
-    const dir = `${cfg.artifact_root}/${d.name}`;
-    const m = readManifest(root, dir);
+    const dir = path.join(base, d.name);
+    const m = readManifest(dir);
     if (!m || !m.task || !Array.isArray(m.stages) || m.stages.every((s) => isDone(s.status)))
       continue;
     const cur = m.stages.find((s) => !isDone(s.status));
@@ -49,8 +58,8 @@ export function readOpenTasks(root, cfg) {
 }
 
 // Same shape as listOpenTasks in the vendored lib.mjs: { dir, slug, workflow, branch, done, next }.
-export function listOpenTasks(root, cfg) {
-  return readOpenTasks(root, cfg).map(({ manifest, ...task }) => task);
+export function listOpenTasks(root, cfg, legacy = false) {
+  return readOpenTasks(root, cfg, legacy).map(({ manifest, ...task }) => task);
 }
 
 // `git status --porcelain=v1 -z --untracked-files=all` -> [{ path, oldPath?, index, worktree }].
@@ -84,12 +93,12 @@ export async function gitChanges(root) {
   }
 }
 
-function taskFiles(root, dir) {
+function taskFiles(dir) {
   try {
-    return readdirSync(path.join(root, dir), { withFileTypes: true })
+    return readdirSync(dir, { withFileTypes: true })
       .filter((d) => d.isFile())
       .map((d) => {
-        const st = statSync(path.join(root, dir, d.name));
+        const st = statSync(path.join(dir, d.name));
         return { name: d.name, size: st.size, mtime: Math.floor(st.mtimeMs) };
       });
   } catch {
@@ -118,7 +127,7 @@ export async function collectTasks(app) {
     return workflows.get(id);
   };
 
-  const tasks = readOpenTasks(root, cfg).map((t) => {
+  const tasks = readOpenTasks(root, cfg, app.repo.needsUpgrade).map((t) => {
     const names = workflowStages(t.workflow);
     return {
       dir: t.dir,
@@ -136,7 +145,7 @@ export async function collectTasks(app) {
         if (s.reason) stage.reason = s.reason;
         return stage;
       }),
-      files: taskFiles(root, t.dir),
+      files: taskFiles(t.dir),
     };
   });
   return { tasks, changes };
@@ -169,19 +178,68 @@ export function resolveInsideWorktree(worktree, requested) {
 }
 
 const notFound = () => new HttpError(404, 'not-found', 'File not found');
+const badPath = () =>
+  new HttpError(400, 'bad-path', 'That path is not inside this repo or its task store');
 
-// Only a path inside an open task's folder, or listed in the current `git status`, can be read.
+const outside = (rel) => rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel);
+
+// A file inside this repo's store tasks/ folder (realpath-checked), or null when the absolute path is
+// somewhere else.
+function resolveInsideStore(root, abs) {
+  let base;
+  let real;
+  try {
+    base = realpathSync(tasksDir(root));
+  } catch {
+    return null;
+  }
+  try {
+    real = realpathSync(abs);
+  } catch {
+    // Not on disk: it can only be a store path if it lexically starts there.
+    return outside(path.relative(base, path.resolve(abs))) ? null : { missing: true };
+  }
+  return outside(path.relative(base, real)) ? null : { real };
+}
+
+// Reads are limited to: files in a task folder in the store (absolute paths), files in an open task folder,
+// and files listed in the current `git status`. Anything else is 404, or 400 for an absolute path that is
+// outside both the repo and the store.
 async function resolveRequested(app, requested) {
   if (!requested || requested.includes('\0')) throw notFound();
+  const { root } = app.repo;
+
+  if (path.isAbsolute(requested)) {
+    const abs = path.resolve(requested);
+    const inStore = resolveInsideStore(root, abs);
+    if (inStore) {
+      if (inStore.missing) throw notFound();
+      return { rel: abs, change: undefined, real: inStore.real };
+    }
+    let realRoot;
+    try {
+      realRoot = realpathSync(root);
+    } catch {
+      throw badPath();
+    }
+    const lexical = path.relative(root, abs);
+    const realRel = path.relative(realRoot, abs);
+    if (outside(lexical) && outside(realRel)) throw badPath();
+    requested = outside(lexical) ? realRel : lexical;
+  }
+
   const rel = path.posix.normalize(requested.replace(/\\/g, '/'));
   if (path.posix.isAbsolute(rel) || rel === '..' || rel.startsWith('../') || rel === '.')
     throw notFound();
 
-  const { root } = app.repo;
   const { cfg } = app.repo.getConfig();
   const changes = await gitChanges(root);
   const change = changes.find((c) => c.path === rel);
-  const inTask = cfg ? readOpenTasks(root, cfg).some((t) => rel.startsWith(`${t.dir}/`)) : false;
+  const abs = path.resolve(root, rel);
+  // Only reachable for an interface-2 repo: its tasks are still in the repo, read-only.
+  const inTask = app.repo.needsUpgrade
+    ? readOpenTasks(root, cfg, true).some((t) => abs.startsWith(t.dir + path.sep))
+    : false;
   if (!change && !inTask) throw notFound();
 
   let real = null;

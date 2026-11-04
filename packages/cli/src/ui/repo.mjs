@@ -46,16 +46,28 @@ export async function resolveRepo(dir) {
     lib,
     version,
     state,
+    // True until the repo is upgraded: its tasks and state still live in the repo (interface below 3).
+    needsUpgrade: version.interface < INTERFACE,
     // { cfg } or { cfg: null, error }; a config that doesn't parse never stops the server.
     getConfig: () => current,
     reloadConfig: load,
+    // Chat is disabled for a repo whose old hooks still write state to .shipline/.state/.
+    requireUpgraded() {
+      if (version.interface < INTERFACE) {
+        throw new HttpError(
+          423,
+          'needs-upgrade',
+          'Task data is still stored in this repo. Run `npx @forgeyard/shipline upgrade` to move it to ~/.shipline.',
+        );
+      }
+    },
     requireWritable() {
       if (state === 'repo-newer') {
         const v = version.package ? `${version.package}` : `interface ${version.interface}`;
         throw new HttpError(
           423,
           'repo-newer',
-          `This repo was set up with Shipline ${v}. Run \`npx shipline@${version.package || 'latest'} ui\`.`,
+          `This repo was set up with Shipline ${v}. Run \`npx @forgeyard/shipline@${version.package || 'latest'} ui\`.`,
         );
       }
     },

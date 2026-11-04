@@ -7,8 +7,10 @@ import { Button } from '@/components/ui/button';
 import { queryKeys } from '@/lib/events';
 import type { BannerEvent, BannerKind, Status } from '@/lib/types';
 
-// What interface-1 repos lack. Mirrors MISSING_BEFORE in packages/cli/src/interface.mjs.
-const MISSING_BEFORE = ['the lost-task warning', 'visible warn reminders'];
+// Shown for every repo older than interface 3 (its tasks and state are still inside the repo). Mirrors UPGRADE_TEXT
+// in packages/cli/src/ui/server.mjs.
+const UPGRADE_TEXT =
+  'Task data is still stored in this repo. Run `npx @forgeyard/shipline upgrade` to move it to ~/.shipline.';
 
 const TITLES: Record<BannerKind, string> = {
   version: 'Shipline version',
@@ -24,18 +26,20 @@ function repoPackage(status: Status): string {
 
 /** The version banner built from /api/status, used when the server has not sent one over SSE. */
 export function versionBanner(status: Status | undefined): BannerEvent | null {
-  if (!status || status.versionState === 'same') return null;
+  if (!status) return null;
+  if (status.needsUpgrade) return { id: 'version', kind: 'version', text: UPGRADE_TEXT };
+  if (status.versionState === 'same') return null;
   if (status.versionState === 'repo-older') {
     return {
       id: 'version',
       kind: 'version',
-      text: `This repo's hook scripts are from an older Shipline (interface ${status.repoVersion.interface}). They don't have: ${MISSING_BEFORE.join(', ')}.`,
+      text: UPGRADE_TEXT,
     };
   }
   return {
     id: 'version',
     kind: 'version',
-    text: `This repo was set up with Shipline ${repoPackage(status)}. Run \`npx shipline@${status.repoVersion.package ?? '<version>'} ui\`. Saving is disabled; the Tasks tab is read-only.`,
+    text: `This repo was set up with Shipline ${repoPackage(status)}. Run \`npx @forgeyard/shipline@${status.repoVersion.package ?? '<version>'} ui\`. Saving is disabled; the Tasks tab is read-only.`,
   };
 }
 

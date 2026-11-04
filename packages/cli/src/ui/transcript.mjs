@@ -3,6 +3,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { encodePath } from '../store.mjs';
 import { guardDenial, toolResultText } from './stream.mjs';
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -19,7 +20,7 @@ export function findTranscript(root, sessionId) {
   if (!SESSION_ID.test(sessionId)) return null;
   const file = `${sessionId}.jsonl`;
   const dir = projectsDir();
-  const direct = path.join(dir, root.replace(/[^a-zA-Z0-9]/g, '-'), file);
+  const direct = path.join(dir, encodePath(root), file);
   if (existsSync(direct)) return direct;
   try {
     for (const d of readdirSync(dir)) {

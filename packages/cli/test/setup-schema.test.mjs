@@ -1,4 +1,6 @@
 // Plan item 15: one failing case per check in the schema table, plus a passing case for each template.
+// Phase 1: artifact_root and folder_pattern are no longer known fields; when present (interface-2 repos)
+// they are kept as unknown keys and not validated.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -37,12 +39,17 @@ describe('config.yml checks', () => {
     const issues = validateConfig({ ...baseConfig(), ...patch });
     assert.ok(issues.some((i) => i.path === p && re.test(i.message)), `${JSON.stringify(patch)} -> ${JSON.stringify(issues)}`);
   };
-  test('artifact_root with .. is rejected', () => bad({ artifact_root: 'docs/../../etc' }, 'artifact_root', /relative path/));
-  test('an absolute artifact_root is rejected', () => bad({ artifact_root: '/tmp/tasks' }, 'artifact_root', /relative path/));
-  test('an empty artifact_root is rejected', () => bad({ artifact_root: '' }, 'artifact_root', /folder path/));
-  test('folder_pattern without {slug} is rejected', () => bad({ folder_pattern: '{key}' }, 'folder_pattern', /\{slug\}/));
+  test('artifact_root and folder_pattern are no longer checked: an interface-2 config keeps them as unknown keys', () => {
+    for (const patch of [{ artifact_root: 'docs/../../etc' }, { artifact_root: '/tmp/tasks' }, { artifact_root: '' }, { folder_pattern: '{key}' }, { folder_pattern: '{slug}-{date}' }]) {
+      assert.deepEqual(validateConfig({ ...baseConfig(), ...patch }), [], JSON.stringify(patch));
+    }
+  });
+  test('the shipped config.yml has neither key', () => {
+    assert.ok(!('artifact_root' in baseConfig()));
+    assert.ok(!('folder_pattern' in baseConfig()));
+  });
   test('branch_pattern without {slug} is rejected', () => bad({ branch_pattern: 'feat/{key}' }, 'branch_pattern', /\{slug\}/));
-  test('a pattern with an unknown variable is rejected', () => bad({ folder_pattern: '{slug}-{date}' }, 'folder_pattern', /\{date\} is not allowed/));
+  test('a pattern with an unknown variable is rejected', () => bad({ branch_pattern: '{slug}-{date}' }, 'branch_pattern', /\{date\} is not allowed/));
   test('commands must be a map', () => bad({ commands: 'pnpm test' }, 'commands', /map/));
   test('a line break in a command is rejected', () => bad({ commands: { test: 'a\nb' } }, 'commands.test', /line breaks are not allowed here/));
   test('unknown keys are allowed (kept)', () => {
@@ -154,7 +161,7 @@ describe('workflow checks', () => {
 
 describe('known fields, header and layout', () => {
   test('KNOWN_FIELDS lists the form fields from the schema table', () => {
-    assert.deepEqual(KNOWN_FIELDS.config.top, ['artifact_root', 'folder_pattern', 'branch_pattern', 'tracker', 'commands']);
+    assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands']);
     assert.deepEqual(KNOWN_FIELDS.config.commands, ['test', 'lint', 'build']);
     for (const f of ['id', 'name', 'description', 'branch_type', 'stages']) assert.ok(KNOWN_FIELDS.workflow.top.includes(f), f);
     for (const f of ['id', 'name', 'artifact', 'description', 'optional', 'confirm_to_advance', 'condition', 'agent', 'enforcement', 'blocks']) {

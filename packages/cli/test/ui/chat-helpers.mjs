@@ -3,7 +3,7 @@
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { FIXTURES, removeDir, tmpDir } from '../helpers.mjs';
+import { FIXTURES, removeDir, storeOf, tmpDir } from '../helpers.mjs';
 import { api, sleep } from './helpers.mjs';
 
 export const FAKE_CLAUDE = path.join(FIXTURES, 'fake-claude.mjs');
@@ -80,7 +80,10 @@ export function useFakeClaude() {
   return fake;
 }
 
-export const uiDir = (dir) => path.join(dir, '.shipline', '.state', 'ui');
+// The UI's files live in the repo's store: <SHIPLINE_HOME>/projects/<encoded>/ui/.
+export const uiDir = (dir) => path.join(storeOf(dir), 'ui');
+export const stateDirOf = (dir) => path.join(storeOf(dir), 'state');
+export const tasksDirOf = (dir) => path.join(storeOf(dir), 'tasks');
 export const lockPath = (dir) => path.join(uiDir(dir), 'lock.json');
 export const readLockFile = (dir) => (existsSync(lockPath(dir)) ? JSON.parse(readFileSync(lockPath(dir), 'utf8')) : null);
 export const readSessions = (dir) => {
@@ -88,7 +91,7 @@ export const readSessions = (dir) => {
   return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : [];
 };
 export const readUiLog = (dir) =>
-  readFileSync(path.join(dir, '.shipline', '.state', 'ui.log'), 'utf8')
+  readFileSync(path.join(uiDir(dir), 'ui.log'), 'utf8')
     .split('\n')
     .filter(Boolean)
     .map((l) => JSON.parse(l));

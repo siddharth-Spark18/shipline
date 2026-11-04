@@ -1,5 +1,6 @@
 // GET /api/status and GET /api/diagnostics. Node 20+, no dependencies.
 import { INTERFACE } from '../interface.mjs';
+import { storeDir } from '../store.mjs';
 import { MIN_CLAUDE_VERSION, claudeHealth } from './claude.mjs';
 import { redact, tail } from './log.mjs';
 import { readLock } from './sessions.mjs';
@@ -10,6 +11,8 @@ export function routes(app) {
     repoVersion: app.repo.version,
     versionState: app.repo.state,
     root: app.repo.root,
+    storeDir: storeDir(app.repo.root),
+    needsUpgrade: app.repo.needsUpgrade,
   });
 
   return [

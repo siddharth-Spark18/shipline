@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { MCP_TOOL_TIMEOUT_ENV, buildArgs, findClaude } from './claude.mjs';
 import { HttpError } from './http.mjs';
+import { stateDir } from '../store.mjs';
 import { log } from './log.mjs';
 import { acquireLock, addChat, getChat, releaseLock, updateChat } from './sessions.mjs';
 import {
@@ -35,13 +36,11 @@ export function createChats(app) {
 
   const state = (id) => (active && active.id === id ? active : null);
 
-  // Reads .state/<id>.json (written by stage.mjs start or resume) and stores its task_dir.
+  // Reads <store>/state/<id>.json (written by stage.mjs start or resume) and stores its task_dir.
   function bindTask(chat) {
     let taskDir = null;
     try {
-      const j = JSON.parse(
-        readFileSync(path.join(root, '.shipline', '.state', `${chat.id}.json`), 'utf8'),
-      );
+      const j = JSON.parse(readFileSync(path.join(stateDir(root), `${chat.id}.json`), 'utf8'));
       if (j && typeof j.task_dir === 'string') taskDir = j.task_dir;
     } catch {
       return;

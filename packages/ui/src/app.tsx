@@ -79,6 +79,7 @@ export default function App() {
         {view === 'chat' ? (
           <ChatPage
             versionState={status.data?.versionState}
+            needsUpgrade={status.data?.needsUpgrade}
             chats={chats}
             selectedId={selectedId}
             onSelect={select}

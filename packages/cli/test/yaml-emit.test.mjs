@@ -68,7 +68,7 @@ describe('templates unchanged: a no-edit emit gives the exact bytes on disk', ()
     const out = emitWorkflow(model, { header: headerFor('feature'), raw: text });
     assert.match(out, /^name: Feature work$/m);
     assert.match(out, /^      - tools: 'Edit\|Write\|MultiEdit\|NotebookEdit'$/m);
-    assert.match(out, /^        allow_paths: \["\{artifact_root\}\/\*\*"\]$/m);
+    assert.doesNotMatch(out, /^\s+allow_paths:|\{artifact_root\}/m); // Phase 1: removed from the template
     assert.match(out, /^      - bash: '\\bgit\\s\+commit\\b\|\\bgh\\s\+pr\\s\+create\\b'$/m);
     assert.deepEqual(parseYaml(out), model);
   });
@@ -77,11 +77,14 @@ describe('templates unchanged: a no-edit emit gives the exact bytes on disk', ()
     const text = readFileSync(path.join(TEMPLATES, 'workflows', 'feature.yml'), 'utf8');
     const raw = rawScalars(text);
     assert.equal(raw.get('stages[id=plan].blocks[0].tools'), "'Edit|Write|MultiEdit|NotebookEdit'");
-    assert.equal(raw.get('stages[id=plan].blocks[0].allow_paths'), '["{artifact_root}/**"]');
-    assert.equal(raw.get('stages[id=plan].blocks[0].allow_paths[0]'), '"{artifact_root}/**"');
+    assert.equal(raw.get('stages[id=plan].blocks[0].allow_paths'), undefined);
+    const both = rawScalars(readFileSync(path.join(YAML_FIXTURES, 'workflow-both-blocks.yml'), 'utf8'));
+    const sid = parseYaml(readFileSync(path.join(YAML_FIXTURES, 'workflow-both-blocks.yml'), 'utf8')).stages[0].id;
+    assert.equal(both.get(`stages[id=${sid}].blocks[0].allow_paths[1]`), '"docs/**"');
     assert.equal(raw.get('stages[id=verify].enforcement'), 'block');
     const cfg = rawScalars(readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8'));
-    assert.equal(cfg.get('folder_pattern'), '"{key}-{slug}"');
+    assert.equal(cfg.get('folder_pattern'), undefined); // Phase 1: removed from the template
+    assert.equal(cfg.get('branch_pattern'), '"{type}/{key}-{slug}"');
     assert.equal(cfg.get('commands.test'), '""');
   });
 });
@@ -96,6 +99,13 @@ describe('fixtures (item 14)', () => {
       assert.equal(emitConfig(parseYaml(text), { layout: configLayout(), raw: text }), expected(name));
     });
   }
+
+  test('config-unknown-key.yml keeps an interface-2 artifact_root and folder_pattern as unknown keys, quoting intact', () => {
+    const out = emitConfig(parseYaml(fx('config-unknown-key.yml')), { layout: configLayout(), raw: fx('config-unknown-key.yml') });
+    assert.match(out, /^artifact_root: docs\/shipline$/m);
+    assert.match(out, /^folder_pattern: "\{key\}-\{slug\}"$/m);
+    assert.equal(parseYaml(out).artifact_root, 'docs/shipline');
+  });
 
   test('a team comment in config.yml is not written back', () => {
     const out = emitConfig(parseYaml(fx('config-team-comment.yml')), { layout: configLayout(), raw: fx('config-team-comment.yml') });

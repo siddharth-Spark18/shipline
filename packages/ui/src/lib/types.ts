@@ -23,6 +23,10 @@ export interface Status {
   repoVersion: VersionInfo;
   versionState: VersionState;
   root: string;
+  /** The task store for this repo, outside the repo (under ~/.shipline). */
+  storeDir: string;
+  /** True when the repo's interface is below 3: tasks still live in the repo and chat is disabled. */
+  needsUpgrade: boolean;
 }
 
 // --- Diff ---
@@ -86,8 +90,6 @@ export interface WorkflowModel {
 }
 
 export interface ConfigModel {
-  artifact_root?: string | null;
-  folder_pattern?: string | null;
   branch_pattern?: string | null;
   tracker?: string | null;
   commands?: {
@@ -199,7 +201,7 @@ export interface TaskFile {
 }
 
 export interface Task {
-  /** Task folder, relative to the repo root. */
+  /** Task folder: the absolute path of its store folder. Treat it as an opaque id. */
   dir: string;
   slug: string;
   title: string;

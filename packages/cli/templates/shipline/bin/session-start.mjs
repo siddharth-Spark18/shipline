@@ -19,9 +19,9 @@ try {
     }
   }
 
-  const cfg = loadConfig(root);
+  loadConfig(root); // a broken config surfaces as the visible fail-open warning
   const branch = currentBranch(root);
-  const open = listOpenTasks(root, cfg).map((t) => ({ ...t, onBranch: !!branch && t.branch === branch }));
+  const open = listOpenTasks(root).map((t) => ({ ...t, onBranch: !!branch && t.branch === branch }));
 
   const lines = [];
   lines.push(`Shipline is installed. Session id: ${safeId(sid)} (stage commands read $SHIPLINE_SESSION, or pass --session ${safeId(sid)}).`);

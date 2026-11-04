@@ -4,7 +4,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
-  findRoot, loadConfig, loadWorkflow, readSession, readManifest, readStdinJson,
+  findRoot, loadConfig, loadWorkflow, readSession, readManifest, readStdinJson, stateDir,
   stageEnforcement, isDone, globToRegExp, listOpenTasks, currentBranch, safeId, out, failOpen,
 } from './lib.mjs';
 
@@ -18,11 +18,11 @@ function anchored(src) {
 // any error here ends the hook quietly (exit 0).
 function warnIfLostTask(root, sessionId) {
   try {
-    const marker = path.join(root, '.shipline', '.state', `${safeId(sessionId)}.lost-warned`);
+    const marker = path.join(stateDir(root), `${safeId(sessionId)}.lost-warned`);
     if (existsSync(marker)) return;
     const branch = currentBranch(root);
     if (!branch) return;
-    const task = listOpenTasks(root, loadConfig(root)).find((t) => t.branch === branch);
+    const task = listOpenTasks(root).find((t) => t.branch === branch);
     if (!task) return;
     mkdirSync(path.dirname(marker), { recursive: true });
     writeFileSync(marker, '');
@@ -47,7 +47,7 @@ try {
 
   const manifest = readManifest(root, session.task_dir);
   if (!manifest) process.exit(0);
-  const cfg = loadConfig(root);
+  loadConfig(root); // a broken config surfaces as the visible fail-open warning
   const wf = loadWorkflow(root, session.workflow);
 
   const tool = String(input.tool_name || '');
@@ -59,14 +59,13 @@ try {
     if (typeof p === 'string' && p) {
       rel = path.relative(root, path.resolve(input.cwd || root, p)).split(path.sep).join('/');
     }
-    // Files outside the repo are not ours to gate; artifact writes are always allowed.
+    // Files outside the repo are not ours to gate; task artifacts live in the store, outside the repo.
     if (rel === null || rel.startsWith('..') || path.isAbsolute(rel)) process.exit(0);
-    if (rel === cfg.artifact_root || rel.startsWith(cfg.artifact_root + '/')) process.exit(0);
   }
   const command = tool === 'Bash' && typeof ti.command === 'string' ? ti.command : null;
   if (!isFileTool && command === null) process.exit(0);
 
-  const vars = (s) => String(s).replaceAll('{artifact_root}', cfg.artifact_root).replaceAll('{task_dir}', session.task_dir);
+  const vars = (s) => String(s).replaceAll('{task_dir}', session.task_dir);
   const denies = [];
   const warns = [];
 
@@ -80,7 +79,10 @@ try {
       if (!b) continue;
       let hit = false;
       if (isFileTool && b.tools && anchored(b.tools).test(tool)) {
-        const allow = (Array.isArray(b.allow_paths) ? b.allow_paths : []).map((g) => globToRegExp(vars(g)));
+        // {artifact_root} no longer exists (tasks live outside the repo), so old workflows' entries never match.
+        const allow = (Array.isArray(b.allow_paths) ? b.allow_paths : [])
+          .filter((g) => !String(g).includes('{artifact_root}'))
+          .map((g) => globToRegExp(vars(g)));
         hit = !allow.some((re) => re.test(rel));
       } else if (command !== null && b.bash) {
         hit = new RegExp(b.bash).test(command);

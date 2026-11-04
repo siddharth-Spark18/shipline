@@ -2,14 +2,15 @@
 // changed to report errors and to fall back to polling. Node 20+, no dependencies.
 import { existsSync, mkdirSync, readdirSync, statSync, watch } from 'node:fs';
 import path from 'node:path';
+import { stateDir } from '../store.mjs';
 import { git } from './git.mjs';
 import { log } from './log.mjs';
-import { collectTasks } from './tasks.mjs';
+import { collectTasks, tasksBase } from './tasks.mjs';
 
 const DEBOUNCE_MS = 300;
 const POLL_MS = 2000;
 const STATUS_EVERY_MS = 10_000;
-// .shipline/.state is ignored so the UI's own log and lock writes don't trigger it.
+// .shipline/.state is ignored (interface-2 repos still write there) so old UI log and lock writes don't trigger it.
 const IGNORED =
   /(^|[\\/])(\.git|node_modules|dist)([\\/]|$)|(^|[\\/])\.shipline[\\/]\.state([\\/]|$)/;
 const CONFIG_EVENT = /^\.shipline[\\/]config\.yml$/;
@@ -23,24 +24,25 @@ function mtime(file) {
 }
 
 // A string that changes when a task folder, a manifest, a task file, the git index/HEAD or config.yml does.
-function pollSignature(root, artifactRoot, gitDir) {
+function pollSignature(root, taskBases, gitDir) {
   const parts = [];
-  const base = path.join(root, artifactRoot);
-  try {
-    for (const d of readdirSync(base, { withFileTypes: true })) {
-      parts.push(d.name);
-      if (!d.isDirectory()) continue;
-      try {
-        for (const f of readdirSync(path.join(base, d.name), { withFileTypes: true })) {
-          const st = statSync(path.join(base, d.name, f.name));
-          parts.push(`${d.name}/${f.name}:${st.size}:${st.mtimeMs}`);
+  for (const base of taskBases) {
+    try {
+      for (const d of readdirSync(base, { withFileTypes: true })) {
+        parts.push(`${base}:${d.name}`);
+        if (!d.isDirectory()) continue;
+        try {
+          for (const f of readdirSync(path.join(base, d.name), { withFileTypes: true })) {
+            const st = statSync(path.join(base, d.name, f.name));
+            parts.push(`${d.name}/${f.name}:${st.size}:${st.mtimeMs}`);
+          }
+        } catch {
+          // A folder that vanished mid-scan shows up in the next poll.
         }
-      } catch {
-        // A folder that vanished mid-scan shows up in the next poll.
       }
+    } catch {
+      // The tasks folder doesn't exist yet.
     }
-  } catch {
-    // artifact_root doesn't exist yet.
   }
   if (gitDir)
     parts.push(
@@ -56,7 +58,8 @@ function pollSignature(root, artifactRoot, gitDir) {
 // those, and a watch on a single file stops firing). onChange({ configChanged }) runs 300 ms after the last
 // event. On a startup throw or any later 'error' event (ENOSPC on Linux) it switches to polling and calls
 // opts.onFallback(reason). Returns { mode, close }; `mode` is 'watch' or 'poll'.
-// opts.artifactRoot(): the current artifact_root, read on every poll.
+// opts.taskBases(): the absolute task folders to watch (the store's tasks/, plus the old artifact_root for an
+// interface-2 repo), read on every poll. The store folders live outside the repo, so they are watched separately.
 export async function watchRepo(root, onChange, opts = {}) {
   const handle = { mode: 'watch', close: () => {} };
   const watchers = [];
@@ -75,6 +78,8 @@ export async function watchRepo(root, onChange, opts = {}) {
     }, DEBOUNCE_MS);
   };
 
+  const bases = () => (opts.taskBases ? opts.taskBases() : []);
+
   let gitDir = null;
   try {
     gitDir = path.resolve(root, await git(root, ['rev-parse', '--git-dir']));
@@ -92,18 +97,10 @@ export async function watchRepo(root, onChange, opts = {}) {
     handle.mode = 'poll';
     log('watch-fallback', { reason });
     if (opts.onFallback) opts.onFallback(reason);
-    let last = pollSignature(
-      root,
-      opts.artifactRoot ? opts.artifactRoot() : 'docs/shipline',
-      gitDir,
-    );
+    let last = pollSignature(root, bases(), gitDir);
     let lastStatus = Date.now();
     pollTimer = setInterval(() => {
-      const sig = pollSignature(
-        root,
-        opts.artifactRoot ? opts.artifactRoot() : 'docs/shipline',
-        gitDir,
-      );
+      const sig = pollSignature(root, bases(), gitDir);
       const now = Date.now();
       let changed = false;
       if (sig.config !== last.config) configChanged = changed = true;
@@ -132,6 +129,13 @@ export async function watchRepo(root, onChange, opts = {}) {
   try {
     add(root, true, (n) => !IGNORED.test(n));
     if (gitDir && existsSync(gitDir)) add(gitDir, false, (n) => n === 'HEAD' || n === 'index');
+    for (const dir of bases()) {
+      if (!path.relative(root, dir).startsWith('..')) continue; // inside the repo: the root watch covers it
+      mkdirSync(dir, { recursive: true });
+      add(dir, true, () => true);
+    }
+    mkdirSync(stateDir(root), { recursive: true });
+    add(stateDir(root), false, () => true);
   } catch (e) {
     startPolling(e && e.code ? e.code : String(e && e.message));
   }
@@ -147,7 +151,7 @@ export async function watchRepo(root, onChange, opts = {}) {
 
 // Starts the watch for the Tasks panel on `app`. Every change recomputes the tasks once (single-flight: a
 // change during a run schedules exactly one more run) and sends an SSE `tasks` event. A change to config.yml
-// reloads the config; a changed artifact_root restarts the watch.
+// reloads the config; a changed artifact_root (interface-2 repos) restarts the watch.
 export async function startTaskWatch(app) {
   let handle = null;
   let running = false;
@@ -155,9 +159,13 @@ export async function startTaskWatch(app) {
   let closed = false;
   let configChanged = false;
 
-  const artifactRoot = () => {
+  // The store's tasks/ folder, plus the old in-repo artifact_root until the repo is upgraded.
+  const taskBases = () => {
     const { cfg } = app.repo.getConfig();
-    return cfg ? cfg.artifact_root : 'docs/shipline';
+    return [
+      tasksBase(app.repo.root, cfg, false),
+      ...(app.repo.needsUpgrade ? [tasksBase(app.repo.root, cfg, true)] : []),
+    ];
   };
 
   const onFallback = (reason) => {
@@ -175,7 +183,7 @@ export async function startTaskWatch(app) {
         if (info.configChanged) configChanged = true;
         refresh();
       },
-      { onFallback, artifactRoot },
+      { onFallback, taskBases },
     );
   };
 
@@ -191,9 +199,9 @@ export async function startTaskWatch(app) {
         again = false;
         if (configChanged) {
           configChanged = false;
-          const before = artifactRoot();
+          const before = taskBases().join('\n');
           app.repo.reloadConfig();
-          if (artifactRoot() !== before) {
+          if (taskBases().join('\n') !== before) {
             handle.close();
             await start();
           }
@@ -218,11 +226,11 @@ export async function startTaskWatch(app) {
   };
 }
 
-// Watches the .shipline/.state/ directory (non-recursive) and calls onBound() when <sessionId>.json appears or
+// Watches the store's state/ directory (non-recursive) and calls onBound() when <sessionId>.json appears or
 // changes: the file `stage.mjs start` or `resume` writes. The directory is watched, not the file, because the
 // file doesn't exist until then. Falls back to a 2 s poll on any watch error. Returns { close }.
 export function watchState(root, sessionId, onBound) {
-  const dir = path.join(root, '.shipline', '.state');
+  const dir = stateDir(root);
   const name = `${sessionId}.json`;
   const file = path.join(dir, name);
   let closed = false;

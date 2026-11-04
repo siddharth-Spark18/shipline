@@ -1,4 +1,7 @@
 {
+  "permissions": {
+    "allow": ["Read(~/.shipline/**)", "Edit(~/.shipline/**)"]
+  },
   "hooks": {
     "SessionStart": [
       {

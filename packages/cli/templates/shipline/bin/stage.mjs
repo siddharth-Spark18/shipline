@@ -2,7 +2,7 @@
 // Stage CLI that Claude calls through Bash to record workflow progress.
 //   node .shipline/bin/stage.mjs workflows
 //   node .shipline/bin/stage.mjs start --workflow feature --title "Add export" [--ticket PROJ-12] [--ui true|false]
-//   node .shipline/bin/stage.mjs resume <task folder>
+//   node .shipline/bin/stage.mjs resume <task folder name or absolute path>
 //   node .shipline/bin/stage.mjs status [--json]
 //   node .shipline/bin/stage.mjs advance [--confirmed]
 //   node .shipline/bin/stage.mjs skip [--reason "..."] [--force]
@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   findRoot, loadConfig, loadWorkflow, listWorkflows, readManifest, manifestPath, readSession, statePath,
-  writeJson, isDone, currentStage, slugify, stageEnforcement,
+  tasksDir, writeJson, isDone, currentStage, slugify, stageEnforcement,
 } from './lib.mjs';
 
 function die(msg) {
@@ -41,11 +41,17 @@ function parseArgs(argv) {
 const { pos, flags } = parseArgs(process.argv.slice(2));
 const cmd = pos[0];
 const root = findRoot(process.cwd());
-if (!root) die('no .shipline/config.yml found. Run `npx shipline init` first.');
+if (!root) die('no .shipline/config.yml found. Run `npx @forgeyard/shipline init` first.');
 
 let cfg;
 try {
   cfg = loadConfig(root);
+} catch (e) {
+  die(e.message);
+}
+let tasksBase;
+try {
+  tasksBase = tasksDir(root);
 } catch (e) {
   die(e.message);
 }
@@ -58,8 +64,14 @@ function fill(pattern, vars) {
   return s.replaceAll('{slug}', vars.slug).replaceAll('{type}', vars.type);
 }
 
+// A task is given as a folder name in the store or as an absolute store path; either becomes the absolute path.
+function resolveTask(given) {
+  const t = String(given).replace(/[\\/]+$/, '');
+  return path.isAbsolute(t) ? t : path.join(tasksBase, t);
+}
+
 function activeTaskDir() {
-  if (typeof flags.task === 'string') return flags.task.replace(/\/+$/, '');
+  if (typeof flags.task === 'string') return resolveTask(flags.task);
   if (!sessionId) die('no session id. Pass --session <id> (it is in the SessionStart context) or set SHIPLINE_SESSION.');
   const s = readSession(root, sessionId);
   if (!s || !s.task_dir) die('this session has no active task. Use `start` or `resume` first.');
@@ -150,7 +162,7 @@ switch (cmd) {
     const slug = slugify(flags.slug || flags.title);
     if (!flags.slug && !flags.title) die('--title (or --slug) is required.');
     const vars = { key, slug, type: typeof flags.type === 'string' ? flags.type : wf.branch_type || wf.id };
-    const taskDir = `${cfg.artifact_root}/${fill(cfg.folder_pattern, vars)}`;
+    const taskDir = path.join(tasksBase, key ? `${key}-${slug}` : slug);
     if (existsSync(manifestPath(root, taskDir))) die(`${taskDir} already exists. Use: resume ${taskDir}`);
     const ui = flags.ui === 'true' ? true : flags.ui === 'false' ? false : null;
     const manifest = {
@@ -169,7 +181,7 @@ switch (cmd) {
       stages: wf.stages.map((s) => ({ id: s.id, status: 'pending', artifact: s.artifact || null, updated: now() })),
     };
     activateNext(manifest, wf);
-    mkdirSync(path.join(root, taskDir), { recursive: true });
+    mkdirSync(taskDir, { recursive: true });
     bind(taskDir, wf.id);
     save(taskDir, manifest);
     console.log(`Started ${wf.name || wf.id} task in ${taskDir}\nSuggested branch: ${manifest.task.branch}\n\n${describeCurrent(taskDir, manifest, wf)}`);
@@ -177,8 +189,8 @@ switch (cmd) {
   }
 
   case 'resume': {
-    const taskDir = (pos[1] || '').replace(/\/+$/, '');
-    if (!taskDir) die('usage: resume <task folder>');
+    if (!pos[1]) die('usage: resume <task folder name or absolute path>');
+    const taskDir = resolveTask(pos[1]);
     const { manifest, wf } = load(taskDir);
     bind(taskDir, wf.id);
     console.log(`Resumed ${taskDir} (${wf.id} workflow).\nSuggested branch: ${manifest.task.branch}\n\n${statusText(taskDir, manifest, wf)}`);
@@ -204,7 +216,7 @@ switch (cmd) {
       if (sc.confirm_to_advance && !flags.confirmed) {
         die(`stage "${cur.id}" needs the developer's confirmation to advance. Ask them, then re-run with --confirmed.`);
       }
-      if (sc.artifact && !flags.force && !existsSync(path.join(root, taskDir, sc.artifact))) {
+      if (sc.artifact && !flags.force && !existsSync(path.join(taskDir, sc.artifact))) {
         die(`stage "${cur.id}" is not finished: ${taskDir}/${sc.artifact} does not exist yet.`);
       }
       cur.status = 'done';
@@ -250,7 +262,7 @@ switch (cmd) {
   }
 
   default:
-    console.log('usage: stage.mjs workflows | start | resume <dir> | status | advance [--confirmed] | skip | reopen <stage> | flag ui true|false');
+    console.log('usage: stage.mjs workflows | start | resume <task> | status | advance [--confirmed] | skip | reopen <stage> | flag ui true|false');
     process.exit(cmd ? 1 : 0);
 }
 

@@ -1,5 +1,5 @@
 // The chat session index (sessions.json) and the one-chat-per-checkout lock (lock.json), both in
-// .shipline/.state/ui/ (gitignored). Node 20+, no dependencies.
+// <store>/ui/ (outside the repo). Node 20+, no dependencies.
 import {
   existsSync,
   mkdirSync,
@@ -11,11 +11,12 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { uiDir } from '../store.mjs';
 import { log } from './log.mjs';
 
 const STALE_EMPTY_LOCK_MS = 10_000;
 
-export const uiStateDir = (root) => path.join(root, '.shipline', '.state', 'ui');
+export const uiStateDir = (root) => uiDir(root);
 const sessionsFile = (root) => path.join(uiStateDir(root), 'sessions.json');
 const lockFile = (root) => path.join(uiStateDir(root), 'lock.json');
 

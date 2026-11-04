@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { makeRepo, removeDir, stage } from '../helpers.mjs';
+import { makeRepo, removeDir, stage, storeOf } from '../helpers.mjs';
 import { api, openEvents, startUi } from './helpers.mjs';
 import { headerFor } from '../../src/setup-schema.mjs';
 
@@ -70,7 +70,8 @@ describe('GET /api/setup', () => {
     assert.equal(s.config.kind, 'config');
     assert.equal(s.config.raw, read('.shipline/config.yml'));
     assert.equal(s.config.hash, sha256(s.config.raw));
-    assert.equal(s.config.model.artifact_root, 'docs/shipline');
+    assert.ok(!('artifact_root' in s.config.model), 'Phase 1: artifact_root is gone from the shipped config');
+    assert.ok(!('folder_pattern' in s.config.model));
     assert.deepEqual(s.workflows.map((w) => w.id), ['bugfix', 'feature', 'hotfix']);
     for (const w of s.workflows) {
       assert.equal(w.kind, 'workflow');
@@ -138,7 +139,7 @@ describe('saving', () => {
   });
 
   test('a save logs the hashes before and after', async () => {
-    const log = readFileSync(path.join(dir, '.shipline/.state/ui.log'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    const log = readFileSync(path.join(storeOf(dir), 'ui', 'ui.log'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
     const entry = log.filter((e) => e.event === 'save').pop();
     assert.equal(entry.file, path.join('.shipline', 'workflows', 'feature.yml'));
     assert.equal(entry.hashAfter, sha256(read('.shipline/workflows/feature.yml')));
@@ -238,9 +239,9 @@ describe('saving', () => {
     assert.deepEqual(got, ['workflow:feature:stages[0].enforcement', 'workflow:feature:stages[2].id', 'workflow:feature:stages[3].artifact']);
     assert.equal(read('.shipline/workflows/feature.yml'), before);
 
-    const cfgBad = await save([{ kind: 'config', model: { ...s.config.model, folder_pattern: '{key}' }, baseHash: s.config.hash }]);
+    const cfgBad = await save([{ kind: 'config', model: { ...s.config.model, branch_pattern: '{key}' }, baseHash: s.config.hash }]);
     assert.equal(cfgBad.status, 400);
-    assert.equal(cfgBad.json.error.details[0].path, 'folder_pattern');
+    assert.equal(cfgBad.json.error.details[0].path, 'branch_pattern');
 
     const p = await preview([{ kind: 'workflow', id: 'feature', model, baseHash: f.hash }]);
     assert.equal(p.status, 200);
@@ -304,7 +305,9 @@ describe('preview', () => {
       assert.ok(out.text.startsWith(headerFor('spike')));
       const dels = out.diff.flatMap((h) => h.lines).filter((l) => l.type === 'del');
       assert.ok(dels.some((l) => l.text === '    # Only a reminder.' && l.comment === true));
-      assert.ok(!existsSync(path.join(dir, '.shipline/.state/ui/tmp')) || readdirSync(path.join(dir, '.shipline/.state/ui/tmp')).length === 0);
+      const tmp = path.join(storeOf(dir), 'ui', 'tmp');
+      assert.ok(!existsSync(tmp) || readdirSync(tmp).length === 0);
+      assert.ok(!existsSync(path.join(dir, '.shipline/.state')));
     } finally {
       rmSync(path.join(dir, '.shipline/workflows/spike.yml'));
     }
@@ -336,7 +339,7 @@ describe('preview', () => {
       assert.equal(r.status, 200, r.text);
       return r.json;
     };
-    const taskDir = 'docs/shipline/add-export';
+    const taskDir = path.join(storeOf(dir), 'tasks', 'add-export');
 
     test('adding a stage', async () => {
       const p = await featurePreview((m) => m.stages.splice(4, 0, { id: 'security', name: 'Security', enforcement: 'guide' }));
@@ -386,7 +389,7 @@ describe('workflow copy and delete', () => {
     assert.match(text, /tools: 'Edit\|Write\|MultiEdit\|NotebookEdit'/);
     const st = stage(dir, ['start', '--workflow', 'review', '--title', 'Review me'], 'r1');
     assert.equal(st.code, 0, st.stderr);
-    const m = JSON.parse(read('docs/shipline/review-me/manifest.json'));
+    const m = JSON.parse(readFileSync(path.join(storeOf(dir), 'tasks', 'review-me', 'manifest.json'), 'utf8'));
     assert.equal(m.task.workflow, 'review');
   });
 
@@ -473,7 +476,7 @@ describe('version contract', () => {
     const r = await save([{ kind: 'config', model, baseHash: s.config.hash }], x.ui);
     assert.equal(r.status, 423);
     assert.equal(r.json.error.code, 'repo-newer');
-    assert.match(r.json.error.message, /npx shipline@9\.9\.9 ui/);
+    assert.match(r.json.error.message, /npx @forgeyard\/shipline@9\.9\.9 ui/);
     const copy = await api(x.ui, 'POST', '/api/setup/workflows', { body: { action: 'copy', from: 'feature', id: 'review' } });
     assert.equal(copy.status, 423);
     assert.deepEqual(snapshot(x.dir), before);
@@ -481,7 +484,7 @@ describe('version contract', () => {
     const ev = await openEvents(x.ui);
     try {
       const b = await ev.waitFor((e) => e.type === 'banner' && e.data.kind === 'version', 2000);
-      assert.equal(b.data.text, 'This repo was set up with Shipline 9.9.9. Run `npx shipline@9.9.9 ui`.');
+      assert.equal(b.data.text, 'This repo was set up with Shipline 9.9.9. Run `npx @forgeyard/shipline@9.9.9 ui`.');
     } finally {
       ev.close();
     }
@@ -492,10 +495,11 @@ describe('version contract', () => {
     const status = await api(x.ui, 'GET', '/api/status');
     assert.equal(status.json.versionState, 'repo-older');
     assert.deepEqual(status.json.repoVersion, { legacy: true, interface: 1 });
+    assert.equal(status.json.needsUpgrade, true);
     const ev = await openEvents(x.ui);
     try {
       const b = await ev.waitFor((e) => e.type === 'banner' && e.data.kind === 'version', 2000);
-      assert.equal(b.data.text, "This repo's hook scripts are from an older Shipline (interface 1). They don't have: the lost-task warning, visible warn reminders.");
+      assert.equal(b.data.text, 'Task data is still stored in this repo. Run `npx @forgeyard/shipline upgrade` to move it to ~/.shipline.');
     } finally {
       ev.close();
     }
@@ -503,6 +507,34 @@ describe('version contract', () => {
     const model = clone(s.config.model);
     model.commands.test = 'pnpm test';
     assert.equal((await save([{ kind: 'config', model, baseHash: s.config.hash }], x.ui)).status, 200);
+  });
+
+  test('an interface-2 repo: the upgrade banner, and saving config.yml keeps artifact_root and folder_pattern as unknown keys', async () => {
+    const x = await scratchRepo((d) => {
+      writeFileSync(path.join(d, '.shipline/bin/VERSION'), '{"package":"0.6.0","interface":2}\n');
+      const cfg = readFileSync(path.join(d, '.shipline/config.yml'), 'utf8');
+      writeFileSync(path.join(d, '.shipline/config.yml'), `artifact_root: work/tasks\nfolder_pattern: "{slug}"\n${cfg}`);
+    });
+    const status = await api(x.ui, 'GET', '/api/status');
+    assert.equal(status.json.versionState, 'repo-older');
+    assert.equal(status.json.needsUpgrade, true);
+    const ev = await openEvents(x.ui);
+    try {
+      const b = await ev.waitFor((e) => e.type === 'banner' && e.data.kind === 'version', 2000);
+      assert.match(b.data.text, /Task data is still stored in this repo\. Run `npx @forgeyard\/shipline upgrade`/);
+    } finally {
+      ev.close();
+    }
+    const s = await getSetup(x.ui);
+    assert.equal(s.config.model.artifact_root, 'work/tasks');
+    const model = clone(s.config.model);
+    model.commands.test = 'pnpm test';
+    const r = await save([{ kind: 'config', model, baseHash: s.config.hash }], x.ui);
+    assert.equal(r.status, 200, r.text);
+    const saved = readFileSync(path.join(x.dir, '.shipline/config.yml'), 'utf8');
+    assert.match(saved, /^artifact_root: work\/tasks$/m);
+    assert.match(saved, /^folder_pattern: "\{slug\}"$/m);
+    assert.match(saved, /^ {2}test: pnpm test$/m);
   });
 });
 
@@ -518,19 +550,20 @@ describe('config.yml', () => {
     assert.equal(s.config.model, undefined);
   });
 
-  test('after saving a new artifact_root, GET /api/tasks scans the new folder', async () => {
+  test('an interface-3 repo always scans the store: an artifact_root saved into config.yml changes nothing', async () => {
     const x = await scratchRepo();
+    const tasks = path.join(storeOf(x.dir), 'tasks');
     assert.equal(stage(x.dir, ['start', '--workflow', 'feature', '--title', 'Old place'], 'a').code, 0);
     let t = await api(x.ui, 'GET', '/api/tasks');
-    assert.deepEqual(t.json.tasks.map((k) => k.dir), ['docs/shipline/old-place']);
+    assert.deepEqual(t.json.tasks.map((k) => k.dir), [path.join(tasks, 'old-place')]);
     const s = await getSetup(x.ui);
     const model = clone(s.config.model);
     model.artifact_root = 'work/tasks';
     const r = await save([{ kind: 'config', model, baseHash: s.config.hash }], x.ui);
     assert.equal(r.status, 200, r.text);
-    mkdirSync(path.join(x.dir, 'work'), { recursive: true });
     assert.equal(stage(x.dir, ['start', '--workflow', 'bugfix', '--title', 'New place'], 'b').code, 0);
     t = await api(x.ui, 'GET', '/api/tasks');
-    assert.deepEqual(t.json.tasks.map((k) => k.dir), ['work/tasks/new-place']);
+    assert.deepEqual(t.json.tasks.map((k) => k.dir).sort(), [path.join(tasks, 'new-place'), path.join(tasks, 'old-place')]);
+    assert.ok(!existsSync(path.join(x.dir, 'work')));
   });
 });

@@ -55,13 +55,30 @@ function TerminalNote() {
   );
 }
 
+/** Shown in place of the chat for a repo that hasn't been upgraded: the old hooks write state the chat can't read. */
+function UpgradeNotice() {
+  return (
+    <section className="flex h-full min-h-0 min-w-0 flex-col gap-3 p-4">
+      <Alert variant="destructive">
+        <AlertTitle>Chat is disabled until this repo is upgraded</AlertTitle>
+        <AlertDescription>
+          Task data is still stored in this repo. Run <code>npx @forgeyard/shipline upgrade</code>{' '}
+          to move it to ~/.shipline, then restart this UI.
+        </AlertDescription>
+      </Alert>
+    </section>
+  );
+}
+
 export default function ChatPage({
   versionState,
+  needsUpgrade = false,
   chats,
   selectedId,
   onSelect,
 }: {
   versionState?: VersionState;
+  needsUpgrade?: boolean;
   chats: UseQueryResult<ChatsResponse>;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
@@ -97,6 +114,7 @@ export default function ChatPage({
       case 'claude-too-old':
       case 'claude-signed-out':
       case 'repo-newer':
+      case 'needs-upgrade':
         setBlocker({ code: e.code, message: e.message, heldBy: details.heldBy });
         break;
       default:
@@ -123,6 +141,8 @@ export default function ChatPage({
   const changes = tasks.data?.changes ?? [];
   const expanded = wide && !!task;
 
+  if (needsUpgrade) return <UpgradeNotice />;
+
   const stream = (
     <section className="flex h-full min-h-0 min-w-0 flex-col gap-3 p-4">
       <TerminalNote />
@@ -143,7 +163,7 @@ export default function ChatPage({
       {blocker?.code === 'lock-held' && (
         <LockHeldNotice heldBy={blocker.heldBy} message={blocker.message} />
       )}
-      {blocker?.code === 'repo-newer' && (
+      {(blocker?.code === 'repo-newer' || blocker?.code === 'needs-upgrade') && (
         <Alert variant="destructive">
           <AlertTitle>Chat is disabled</AlertTitle>
           <AlertDescription>{blocker.message}</AlertDescription>

@@ -75,8 +75,15 @@ export function tmpDir(prefix = 'shipline-test-') {
 // Removes a dir; for a tmpDir() dir, its SHIPLINE_HOME too.
 export function removeDir(dir) {
   if (!dir) return;
-  // Windows refuses to delete a folder a process still has open (a watcher closing, git): retry briefly.
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  // Windows refuses to delete a folder a process still has open (a watcher closing, git, a relay child
+  // still exiting): retry briefly, and on Windows leave a stubborn temp folder to the OS rather than fail
+  // the test file from an after() hook. Elsewhere a failure here is a real leak and still throws.
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (e) {
+    if (process.platform !== 'win32') throw e;
+    console.error(`removeDir: left ${dir} behind (${e.code}); Windows still has it open`);
+  }
   if (HOMES.has(dir)) {
     const home = HOMES.get(dir);
     // A late write by a closing in-process server then lands in the process home (removed on exit), not here.

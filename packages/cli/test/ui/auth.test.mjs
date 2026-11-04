@@ -59,7 +59,7 @@ describe('status and diagnostics', () => {
     assert.ok(files && Object.keys(files).length > 0);
     assert.deepEqual(status.json, {
       uiVersion: pkg,
-      repoVersion: { package: pkg, interface: 3, files },
+      repoVersion: { package: pkg, interface: 3, files, excluded: [] },
       versionState: 'same',
       root: dir,
       storeDir: storeOf(dir),

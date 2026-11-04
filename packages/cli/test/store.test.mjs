@@ -126,7 +126,7 @@ describe('repo.json collision guard', () => {
   test('init, stage.mjs and upgrade all stop with the collision message', () => {
     const fresh = keep(tmpDir());
     plantCollision(fresh);
-    const r = run(process.execPath, [BIN, 'init', fresh], { cwd: fresh });
+    const r = run(process.execPath, [BIN, 'init', fresh, '--yes'], { cwd: fresh });
     assert.equal(r.code, 1);
     assert.match(r.stderr, /Shipline store collision at .*belongs to \/somewhere\/else/);
     assert.ok(!existsSync(path.join(fresh, '.shipline')));

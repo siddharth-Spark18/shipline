@@ -66,7 +66,7 @@ export function readLock(root) {
   }
 }
 
-function pidAlive(pid) {
+export function pidAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;

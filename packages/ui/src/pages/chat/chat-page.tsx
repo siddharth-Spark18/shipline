@@ -1,17 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { SquareIcon } from 'lucide-react';
+import { PanelRightCloseIcon, PanelRightOpenIcon, SquareIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { TaskCanvas } from '@/components/task-panel';
 import { ApiError, api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
 import { findTask, useMediaQuery, usePrompts, useTasks } from '@/lib/queries';
 import type { ChatSummary, ChatsResponse, PromptEvent, VersionState } from '@/lib/types';
-import { CanvasRibbon } from '@/pages/chat/canvas-ribbon';
 import { chatStore, useChatLive } from '@/pages/chat/chat-store';
 import { Composer } from '@/pages/chat/composer';
 import { MessageList } from '@/pages/chat/message-list';
@@ -88,8 +94,12 @@ export default function ChatPage({
   const tasks = useTasks();
   const [blocker, setBlocker] = useState<Blocker | null>(null);
   const readOnly = versionState === 'repo-newer';
-  // The canvas needs room: below 1200px it collapses to a ribbon, as it does with no task.
+  // The task panel needs room: from 1200px it sits beside the chat, below that it is an overlay sheet.
   const wide = useMediaQuery('(min-width: 1200px)');
+  // Per chat: 'closed' / 'open' once the user has used the toggle. Without a choice the panel
+  // follows the task: it opens when the chat has one, and stays closed otherwise.
+  const [panelPref, setPanelPref] = useState<Record<string, 'open' | 'closed'>>({});
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const list = chats.data?.chats ?? [];
   const select = onSelect;
@@ -139,12 +149,19 @@ export default function ChatPage({
   const selected = list.find((c) => c.id === selectedId) ?? null;
   const task = findTask(tasks.data?.tasks, selected?.task_dir);
   const changes = tasks.data?.changes ?? [];
-  const expanded = wide && !!task;
+  const hasTask = Boolean(task) || Boolean(selected?.task_dir);
+  const prefKey = selectedId ?? '';
+  const panelOpen = (panelPref[prefKey] ?? (hasTask ? 'open' : 'closed')) === 'open';
+  const sideOpen = wide && panelOpen;
+  const togglePanel = () => {
+    if (wide) setPanelPref((p) => ({ ...p, [prefKey]: panelOpen ? 'closed' : 'open' }));
+    else setSheetOpen((o) => !o);
+  };
 
   if (needsUpgrade) return <UpgradeNotice />;
 
   const stream = (
-    <section className="flex h-full min-h-0 min-w-0 flex-col gap-3 p-4">
+    <section className="mx-auto flex h-full min-h-0 w-full max-w-[760px] min-w-0 flex-col gap-3 p-4">
       <TerminalNote />
       {chats.error && (
         <Alert variant="destructive">
@@ -178,6 +195,8 @@ export default function ChatPage({
           prompts={prompts.filter((p) => p.chatId === selectedId)}
           readOnly={readOnly}
           blocker={blocker}
+          panelOpen={wide ? panelOpen : sheetOpen}
+          onTogglePanel={togglePanel}
           onNewChat={() => select(null)}
           onError={handleError}
           onOk={() => setBlocker(null)}
@@ -203,29 +222,50 @@ export default function ChatPage({
     </section>
   );
 
+  // One tree at every width: the chat column never remounts (so the draft survives a resize), only
+  // the panel beside it changes. Beside the chat the panel slides in by animating the flex-grow of
+  // the two resizable panels (see `.chat-split` in index.css); below 1200px it is a sheet instead.
   return (
     <div className="flex min-h-0 flex-1">
-      {expanded ? (
-        <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
-          <ResizablePanel defaultSize="68" minSize="40" className="min-h-0">
-            {stream}
-          </ResizablePanel>
-          <ResizableHandle withHandle />
-          <ResizablePanel
-            defaultSize="32"
-            minSize="280px"
-            maxSize="50"
-            className="min-h-0 bg-sidebar"
+      <ResizablePanelGroup
+        orientation="horizontal"
+        className="chat-split min-h-0 flex-1"
+        data-closed={sideOpen ? 'false' : 'true'}
+      >
+        <ResizablePanel defaultSize="66" minSize="40" className="min-h-0">
+          {stream}
+        </ResizablePanel>
+        <ResizableHandle withHandle />
+        <ResizablePanel
+          defaultSize="34"
+          minSize="280px"
+          maxSize="50"
+          className="min-h-0 bg-sidebar"
+          style={{ overflow: 'hidden' }}
+        >
+          <div
+            className="h-full min-w-[280px]"
+            aria-hidden={!sideOpen}
+            {...(sideOpen ? {} : { inert: '' })}
           >
+            {wide && <TaskCanvas task={task} changes={changes} />}
+          </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
+      <Sheet open={!wide && sheetOpen} onOpenChange={setSheetOpen}>
+        <SheetContent
+          side="right"
+          className="gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-md motion-reduce:!animate-none motion-reduce:!transition-none"
+        >
+          <SheetHeader>
+            <SheetTitle>Task panel</SheetTitle>
+            <SheetDescription>Progress, artifacts and changes for this chat.</SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1">
             <TaskCanvas task={task} changes={changes} />
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      ) : (
-        <>
-          <div className="min-h-0 min-w-0 flex-1">{stream}</div>
-          <CanvasRibbon task={task} changes={changes} />
-        </>
-      )}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
@@ -236,6 +276,8 @@ function ChatView({
   prompts,
   readOnly,
   blocker,
+  panelOpen,
+  onTogglePanel,
   onNewChat,
   onError,
   onOk,
@@ -245,6 +287,8 @@ function ChatView({
   prompts: PromptEvent[];
   readOnly: boolean;
   blocker: Blocker | null;
+  panelOpen: boolean;
+  onTogglePanel: () => void;
   onNewChat: () => void;
   onError: (e: unknown) => void;
   onOk: () => void;
@@ -348,6 +392,16 @@ function ChatView({
             Stop
           </Button>
         )}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={panelOpen ? 'Close task panel' : 'Open task panel'}
+          aria-pressed={panelOpen}
+          title={panelOpen ? 'Close task panel' : 'Open task panel'}
+          onClick={onTogglePanel}
+        >
+          {panelOpen ? <PanelRightCloseIcon /> : <PanelRightOpenIcon />}
+        </Button>
       </div>
 
       {detail.data?.unavailable && (

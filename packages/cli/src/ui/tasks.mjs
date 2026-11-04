@@ -3,7 +3,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'n
 import path from 'node:path';
 import { tasksDir } from '../store.mjs';
 import { HttpError } from './http.mjs';
-import { fileDiff, gitRun, looksBinary } from './git.mjs';
+import { fileDiff, gitOk, gitRun, looksBinary } from './git.mjs';
 
 const FILE_LIMIT = 1024 * 1024;
 
@@ -93,6 +93,94 @@ export async function gitChanges(root) {
   }
 }
 
+// 'added' | 'modified' | 'deleted' | 'renamed' for one raw status entry. Untracked files count as added.
+export function changeStatus({ index, worktree }) {
+  if (index === 'D' || worktree === 'D') return 'deleted';
+  if (index === 'R' || index === 'C' || worktree === 'R' || worktree === 'C') return 'renamed';
+  if (index === 'A' || index === '?' || worktree === 'A') return 'added';
+  return 'modified';
+}
+
+const countOf = (v) => (v === '-' ? null : Number(v));
+
+// `git diff --numstat -M -z` output -> Map<path, { additions, deletions }> (null counts for binary files).
+// A rename record is `adds\tdels\t\0old\0new\0`, a plain one `adds\tdels\tpath\0`. Keyed by the new path.
+export function parseNumstatZ(out) {
+  const tokens = out.split('\0');
+  const map = new Map();
+  for (let i = 0; i < tokens.length; i++) {
+    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(tokens[i]);
+    if (!m) continue;
+    const counts = { additions: countOf(m[1]), deletions: countOf(m[2]) };
+    if (m[3] === '') {
+      const to = tokens[i + 2];
+      i += 2;
+      if (to !== undefined) map.set(to, counts);
+    } else map.set(m[3], counts);
+  }
+  return map;
+}
+
+// Line counts of one file against nothing: `git diff --numstat --no-index /dev/null <path>` (exit 1 = differs).
+async function untrackedCounts(root, file) {
+  try {
+    const { stdout } = await gitRun(
+      root,
+      ['diff', '--numstat', '--no-index', '--', '/dev/null', file],
+      [0, 1],
+    );
+    const m = /^(-|\d+)\t(-|\d+)\t/.exec(stdout);
+    return m
+      ? { additions: countOf(m[1]), deletions: countOf(m[2]) }
+      : { additions: null, deletions: null };
+  } catch {
+    return { additions: null, deletions: null };
+  }
+}
+
+// The GET /api/tasks `changes` list:
+// [{ path, oldPath?, status, additions: number|null, deletions: number|null }].
+export async function collectChanges(root) {
+  const raw = await gitChanges(root);
+  if (raw.length === 0) return [];
+  const hasCommits = await gitOk(root, ['rev-parse', '--verify', '--quiet', 'HEAD']);
+  let tracked = new Map();
+  if (hasCommits) {
+    try {
+      tracked = parseNumstatZ(
+        (await gitRun(root, ['diff', '--numstat', '-M', '-z', 'HEAD'])).stdout,
+      );
+    } catch {
+      // Counts stay null.
+    }
+  }
+  const out = new Array(raw.length);
+  const pending = [];
+  raw.forEach((c, i) => {
+    const entry = {
+      path: c.path,
+      ...(c.oldPath ? { oldPath: c.oldPath } : {}),
+      status: changeStatus(c),
+      additions: null,
+      deletions: null,
+    };
+    out[i] = entry;
+    const known = tracked.get(c.path);
+    if (known) Object.assign(entry, known);
+    else if (!hasCommits || (c.index === '?' && c.worktree === '?')) pending.push(i);
+  });
+  for (let n = 0; n < pending.length; n += 16) {
+    await Promise.all(
+      pending.slice(n, n + 16).map(async (i) => {
+        // A deleted file has nothing to read; only files on disk are counted this way.
+        if (out[i].status === 'deleted') return;
+        Object.assign(out[i], await untrackedCounts(root, out[i].path));
+      }),
+    );
+  }
+  return out;
+}
+
 function taskFiles(dir) {
   try {
     return readdirSync(dir, { withFileTypes: true })
@@ -110,7 +198,7 @@ function taskFiles(dir) {
 export async function collectTasks(app) {
   const { root } = app.repo;
   const { cfg, error } = app.repo.getConfig();
-  const changes = await gitChanges(root);
+  const changes = await collectChanges(root);
   if (!cfg) return { tasks: [], changes, configError: error };
 
   const workflows = new Map();

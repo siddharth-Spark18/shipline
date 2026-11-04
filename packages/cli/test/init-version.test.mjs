@@ -28,11 +28,12 @@ describe('init writes VERSION', () => {
     const text = readFileSync(path.join(dir, '.shipline', 'bin', 'VERSION'), 'utf8');
     assert.ok(text.endsWith('}\n'));
     const v = JSON.parse(text);
-    assert.deepEqual(Object.keys(v), ['package', 'interface', 'files']);
+    assert.deepEqual(Object.keys(v), ['package', 'interface', 'files', 'excluded']);
+    assert.deepEqual(v.excluded, [], '--yes installs every agent, so nothing is excluded');
     assert.equal(v.package, PACKAGE_VERSION);
     assert.equal(v.interface, INTERFACE);
     assert.equal(INTERFACE, 3);
-    assert.deepEqual(readRepoVersion(dir), { package: PACKAGE_VERSION, interface: INTERFACE, files: v.files });
+    assert.deepEqual(readRepoVersion(dir), { package: PACKAGE_VERSION, interface: INTERFACE, files: v.files, excluded: [] });
   });
 
   test('VERSION.files hashes every Shipline-owned file as written, plus the two virtual entries; team files are not in it', () => {
@@ -84,7 +85,7 @@ describe('init writes VERSION', () => {
     const dir = fresh();
     const blocker = path.join(homeFor(dir), 'file');
     writeFileSync(blocker, 'x');
-    const r = run(process.execPath, [BIN, 'init', dir], { cwd: dir, env: { SHIPLINE_HOME: path.join(blocker, 'home') } });
+    const r = run(process.execPath, [BIN, 'init', dir, '--yes'], { cwd: dir, env: { SHIPLINE_HOME: path.join(blocker, 'home') } });
     assert.equal(r.code, 1);
     assert.match(r.stderr, /Shipline can't write its task store at /);
     assert.ok(!existsSync(path.join(dir, '.shipline')));
@@ -191,7 +192,7 @@ describe('readRepoVersion', () => {
     const dir = fresh();
     mkdirSync(path.join(dir, '.shipline', 'bin'), { recursive: true });
     writeFileSync(path.join(dir, '.shipline', 'bin', 'VERSION'), '{"interface":3}');
-    assert.deepEqual(readRepoVersion(dir), { package: null, interface: 3, files: null });
+    assert.deepEqual(readRepoVersion(dir), { package: null, interface: 3, files: null, excluded: [] });
   });
 
   test('files is returned only when it is an object', () => {
@@ -199,7 +200,7 @@ describe('readRepoVersion', () => {
     mkdirSync(path.join(dir, '.shipline', 'bin'), { recursive: true });
     const f = path.join(dir, '.shipline', 'bin', 'VERSION');
     writeFileSync(f, '{"package":"0.6.0","interface":2}');
-    assert.deepEqual(readRepoVersion(dir), { package: '0.6.0', interface: 2, files: null });
+    assert.deepEqual(readRepoVersion(dir), { package: '0.6.0', interface: 2, files: null, excluded: [] });
     writeFileSync(f, '{"package":"0.7.0","interface":3,"files":["x"]}');
     assert.equal(readRepoVersion(dir).files, null);
     writeFileSync(f, '{"package":"0.7.0","interface":3,"files":{"a":"b"}}');

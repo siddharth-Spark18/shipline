@@ -1,0 +1,31 @@
+# Small change workflow (a default; edit freely or via /shipline-setup). See feature.yml for field docs.
+id: small
+name: Small change
+description: a typo, rename, config tweak or one-file fix; Claude picks it without asking
+stages:
+  - id: jira
+    name: Jira ticket
+    artifact: ticket.md
+    optional: true
+    enforcement: guide
+    confirm_to_advance: false
+  - id: implement
+    name: Implement
+    artifact: implementation.md
+    agent: builder
+    enforcement: guide
+    confirm_to_advance: false
+  - id: verify
+    name: Verify
+    artifact: verification.md
+    agent: qa-bug-hunter
+    enforcement: block
+    confirm_to_advance: true
+    blocks:
+      - bash: '\bgit\s+commit\b|\bgh\s+pr\s+create\b'
+  - id: pr
+    name: Commit and PR
+    artifact: pr.md
+    agent: builder
+    enforcement: guide
+    confirm_to_advance: false

@@ -114,6 +114,7 @@ function describeCurrent(taskDir, manifest, wf) {
     sc.agent ? `Suggested agent: ${sc.agent}` : null,
     `Enforcement: ${stageEnforcement(sc)}. Confirm with the developer before advancing: ${sc.confirm_to_advance ? 'YES (pass --confirmed after they agree)' : 'no (auto-advance)'}`,
   ].filter(Boolean);
+  if (Array.isArray(cfg.skills) && cfg.skills.length) lines.push(`Repo skills you can use: ${cfg.skills.join(', ')}`);
   const rules = rulesFor(cur.id);
   if (rules) lines.push('', `Repo rules for this stage (.shipline/rules/${cur.id}.md):`, rules);
   return lines.join('\n');

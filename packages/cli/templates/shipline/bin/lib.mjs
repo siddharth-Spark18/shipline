@@ -138,6 +138,7 @@ const DEFAULT_CONFIG = {
   branch_pattern: '{type}/{key}-{slug}',
   tracker: 'jira',
   commands: {},
+  skills: [],
 };
 
 export function readYamlFile(file) {
@@ -149,7 +150,10 @@ export function readYamlFile(file) {
 }
 
 export function loadConfig(root) {
-  return { ...DEFAULT_CONFIG, ...(readYamlFile(path.join(root, '.shipline', 'config.yml')) || {}) };
+  const cfg = { ...DEFAULT_CONFIG, ...(readYamlFile(path.join(root, '.shipline', 'config.yml')) || {}) };
+  // skills: names of the repo's own .claude/skills/<name>; anything that is not a list of names is ignored.
+  cfg.skills = Array.isArray(cfg.skills) ? cfg.skills.filter((n) => typeof n === 'string' && n) : [];
+  return cfg;
 }
 
 export function loadWorkflow(root, id) {

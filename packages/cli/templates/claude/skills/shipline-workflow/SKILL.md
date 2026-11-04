@@ -5,11 +5,16 @@ description: How to run a Shipline workflow in this repo - detect the workflow t
 
 # Running a Shipline workflow
 
-This repo defines how Claude works on tasks. Workflows live in `.shipline/workflows/*.yml` (feature, bugfix, hotfix by default), per-stage rules in `.shipline/rules/<stage>.md`, and settings in `.shipline/config.yml`. Everything is advisory except stages set to `block` or `warn`, which hooks enforce.
+This repo defines how Claude works on tasks. Workflows live in `.shipline/workflows/*.yml` (feature, bugfix, hotfix and small by default), per-stage rules in `.shipline/rules/<stage>.md`, and settings in `.shipline/config.yml`. Everything is advisory except stages set to `block` or `warn`, which hooks enforce.
 
 ## 1. Detect and confirm
 
-When the developer asks for a task (not a quick question or chatter), classify it and ask once: "This looks like a feature, so I'll follow the Feature workflow. OK?" They confirm or switch. Run `node .shipline/bin/stage.mjs workflows` to list what exists. If the work later clearly fits another workflow (for example a hotfix), ask before switching.
+When the developer asks for a task (not a quick question or chatter), classify it. Run `node .shipline/bin/stage.mjs workflows` to list what exists.
+
+- **Small change:** you decide this yourself. A change is small when it is a typo, a rename, a config or copy tweak, or a one-file fix with an obvious cause. Announce "Using the Small change workflow" and start it right away, without waiting for an OK. If the change turns out to be bigger (several files, a behavior change, unclear cause), say so and ask before switching to Feature or Bugfix.
+- **Anything else:** ask once: "This looks like a feature, so I'll follow the Feature workflow. OK?" They confirm or switch. If the work later clearly fits another workflow (for example a hotfix), ask before switching.
+
+No workflow is skipped: even a one-line change goes through Small change.
 
 ## 2. Start
 
@@ -17,7 +22,7 @@ When the developer asks for a task (not a quick question or chatter), classify i
 node .shipline/bin/stage.mjs start --workflow <id> --title "<short title>" [--ticket PROJ-12] [--ui true|false]
 ```
 
-This creates the task folder (outside the repo, under `~/.shipline`; `stage.mjs` prints its absolute path, named `<KEY>-<slug>` or `<slug>`), writes `manifest.json`, binds it to this session (needs `$SHIPLINE_SESSION`, otherwise pass `--session <id>` from the SessionStart context) and prints the first stage, its artifact and its repo rules. It also prints a suggested branch name; create that branch yourself before editing source, unless the developer says otherwise.
+This creates the task folder (outside the repo, under `~/.shipline`; `stage.mjs` prints its absolute path, named `<KEY>-<slug>` or `<slug>`), writes `manifest.json`, binds it to this session (needs `$SHIPLINE_SESSION`, otherwise pass `--session <id>` from the SessionStart context) and prints the first stage, its artifact and its repo rules, and, when `.shipline/config.yml` lists `skills:`, a "Repo skills you can use" line at every stage. Use those skills when they fit the stage; if one cannot be found under `.claude/skills/`, tell the developer. It also prints a suggested branch name; create that branch yourself before editing source, unless the developer says otherwise.
 
 ## 3. Work each stage
 

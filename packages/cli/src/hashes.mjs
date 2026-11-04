@@ -91,3 +91,43 @@ export function templateHashes() {
   out[SETTINGS_KEY] = sha256(canonicalSettingsPart(templateSettings()));
   return out;
 }
+
+// The inverse of the settings merge: drops Shipline's hook entries and its exact allow rules, then removes
+// the arrays and objects that are left empty. Returns { settings, removed } (settings is changed in place).
+export function removeShiplineFromSettings(settings) {
+  let removed = 0;
+  if (settings && typeof settings.hooks === 'object' && settings.hooks !== null && !Array.isArray(settings.hooks)) {
+    for (const event of Object.keys(settings.hooks)) {
+      if (!Array.isArray(settings.hooks[event])) continue;
+      const kept = settings.hooks[event].filter((e) => !isShiplineHookEntry(e));
+      removed += settings.hooks[event].length - kept.length;
+      if (kept.length) settings.hooks[event] = kept;
+      else delete settings.hooks[event];
+    }
+    if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+  }
+  const perms = settings && settings.permissions;
+  if (perms && typeof perms === 'object' && Array.isArray(perms.allow)) {
+    const mine = new Set(shiplineAllowRules());
+    const kept = perms.allow.filter((r) => !mine.has(r));
+    removed += perms.allow.length - kept.length;
+    if (kept.length) perms.allow = kept;
+    else delete perms.allow;
+    if (Object.keys(perms).length === 0) delete settings.permissions;
+  }
+  return { settings, removed };
+}
+
+// The inverse of the CLAUDE.md append: removes the marked block and the blank line before it. Returns the new
+// text, or null when the text has no block (nothing to remove). An otherwise empty file gives ''.
+export function removeClaudeMdBlock(text) {
+  if (typeof text !== 'string') return null;
+  const a = text.indexOf(START);
+  const b = text.indexOf(END, a + START.length);
+  if (a < 0 || b < 0) return null;
+  const before = text.slice(0, a).replace(/\s*$/, '');
+  const after = text.slice(b + END.length).replace(/^\s*/, '');
+  if (!before && !after) return '';
+  if (!before) return after;
+  return before + '\n' + (after ? '\n' + after : '');
+}

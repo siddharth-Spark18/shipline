@@ -117,7 +117,8 @@ describe('fixtures (item 14)', () => {
     const model = parseYaml(readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8'));
     model.commands = {};
     const out = emitConfig(model, { layout: configLayout() });
-    assert.match(out, /\ncommands:\n$/);
+    // The shipped config ends with `skills: []` after the commands block.
+    assert.match(out, /\ncommands:\n\n# Optional[^\n]*\nskills: \[\]\n$/);
     assert.equal(parseYaml(out).commands, null);
   });
 

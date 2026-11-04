@@ -11,3 +11,6 @@ commands:
   test: ""
   lint: ""
   build: ""
+
+# Optional. Names of this repo's own skills (.claude/skills/<name>) that Claude may use at any stage.
+skills: []

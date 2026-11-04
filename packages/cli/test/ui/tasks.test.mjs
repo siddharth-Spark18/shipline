@@ -8,7 +8,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlin
 import path from 'node:path';
 import { git, makeRepo, removeDir, runInit, stage, storeOf, tmpDir } from '../helpers.mjs';
 import { api, openEvents, sleep, startUi } from './helpers.mjs';
-import { parseStatusZ } from '../../src/ui/tasks.mjs';
+import { changeStatus, parseNumstatZ, parseStatusZ } from '../../src/ui/tasks.mjs';
 
 let TASK; // the absolute store path of the feature task
 let dir;
@@ -110,7 +110,7 @@ describe('SSE updates', () => {
     const hit = await ev.waitFor((e) => e.type === 'tasks' && e.data.changes.some((c) => c.path === 'src/a.js'), 3000, since);
     assert.deepEqual(
       hit.data.changes.find((c) => c.path === 'src/a.js'),
-      { path: 'src/a.js', index: ' ', worktree: 'M' },
+      { path: 'src/a.js', status: 'modified', additions: 1, deletions: 1 },
     );
   });
 
@@ -149,15 +149,18 @@ describe('SSE updates', () => {
     const since = ev.mark();
     git(dir, 'add', 'src/a.js');
     try {
-      const hit = await ev.waitFor((e) => e.type === 'tasks' && e.data.changes.some((c) => c.path === 'src/a.js' && c.index === 'M'), 3000, since);
-      assert.deepEqual(hit.data.changes.find((c) => c.path === 'src/a.js'), { path: 'src/a.js', index: 'M', worktree: ' ' });
+      // changes[] no longer tells staged from unstaged (plan: out of scope), so any tasks event after the mark counts.
+      const hit = await ev.waitFor((e) => e.type === 'tasks' && e.data.changes.some((c) => c.path === 'src/a.js'), 3000, since);
+      assert.deepEqual(hit.data.changes.find((c) => c.path === 'src/a.js'), { path: 'src/a.js', status: 'modified', additions: 1, deletions: 1 });
     } finally {
       git(dir, 'reset', '-q', '--', 'src/a.js');
     }
   });
 
   test('writing to .shipline/.state/ sends no event', async () => {
-    await quiet();
+    // A longer quiet window: the previous test's `git reset` refresh (git status plus the numstat runs for the
+    // line counts) can take over 600 ms under a loaded full-suite run, and its late event must not land here.
+    await quiet(1500);
     const since = ev.mark();
     write('.shipline/.state/other-session.json', '{"session_id":"x"}\n');
     write('.shipline/.state/ui/scratch.txt', 'x\n');
@@ -299,11 +302,95 @@ describe('parseStatusZ', () => {
     git(dir, 'mv', 'README.md', 'READ.md');
     try {
       const r = await api(ui, 'GET', '/api/tasks');
-      assert.deepEqual(r.json.changes.find((c) => c.path === 'READ.md'), { path: 'READ.md', oldPath: 'README.md', index: 'R', worktree: ' ' });
+      assert.deepEqual(r.json.changes.find((c) => c.path === 'READ.md'), { path: 'READ.md', oldPath: 'README.md', status: 'renamed', additions: 0, deletions: 0 });
       const d = await file('READ.md', 'diff');
       assert.equal(d.status, 200, d.text);
     } finally {
       git(dir, 'mv', 'READ.md', 'README.md');
+    }
+  });
+});
+
+describe('changes[]: status and line counts (prepublish plan, F)', () => {
+  test('changeStatus maps the raw codes; untracked counts as added', () => {
+    const cases = [
+      [' M', 'modified'], ['M ', 'modified'], ['MM', 'modified'], ['T ', 'modified'],
+      ['A ', 'added'], ['AM', 'added'], ['??', 'added'],
+      [' D', 'deleted'], ['D ', 'deleted'], ['AD', 'deleted'],
+      ['R ', 'renamed'], ['RM', 'renamed'], ['C ', 'renamed'],
+    ];
+    for (const [code, status] of cases) assert.equal(changeStatus({ index: code[0], worktree: code[1] }), status, JSON.stringify(code));
+  });
+
+  test('parseNumstatZ reads plain, renamed and binary records, keyed by the new path', () => {
+    const out = '3\t1\tsrc/a.js\0' + '0\t0\t\0old name.md\0new name.md\0' + '-\t-\tlogo.png\0' + '5\t0\tdir/with\ttab.txt\0';
+    const m = parseNumstatZ(out);
+    assert.deepEqual(Object.fromEntries(m), {
+      'src/a.js': { additions: 3, deletions: 1 },
+      'new name.md': { additions: 0, deletions: 0 },
+      'logo.png': { additions: null, deletions: null },
+      'dir/with\ttab.txt': { additions: 5, deletions: 0 },
+    });
+    assert.equal(parseNumstatZ('').size, 0);
+  });
+
+  test('GET /api/tasks: added (untracked, nested), modified, deleted, renamed with edits, and binary files', async () => {
+    const d = makeRepo({ commitInit: true });
+    let u;
+    try {
+      writeFileSync(path.join(d, 'logo.bin'), Buffer.from([0, 1, 2, 3, 0, 255]));
+      writeFileSync(path.join(d, 'notes.txt'), 'one\ntwo\nthree\nfour\nfive\n');
+      git(d, 'add', '-A');
+      git(d, 'commit', '-q', '-m', 'more files');
+      // modified: 2 lines added, 1 removed
+      writeFileSync(path.join(d, 'src', 'a.js'), 'export const a = 2;\nexport const b = 3;\nexport const c = 4;\n');
+      // deleted (not staged)
+      rmSync(path.join(d, 'README.md'));
+      // renamed (staged) with one line changed
+      git(d, 'mv', 'notes.txt', 'notes.md');
+      writeFileSync(path.join(d, 'notes.md'), 'one\ntwo\nTHREE\nfour\nfive\n');
+      // untracked text, in a new folder (listed file by file)
+      mkdirSync(path.join(d, 'docs', 'deep'), { recursive: true });
+      writeFileSync(path.join(d, 'docs', 'deep', 'new.md'), 'a\nb\nc\n');
+      writeFileSync(path.join(d, 'docs', 'empty.txt'), '');
+      // binary: a modified tracked one and an untracked one
+      writeFileSync(path.join(d, 'logo.bin'), Buffer.from([0, 9, 9, 9, 0, 255, 1]));
+      writeFileSync(path.join(d, 'pic.bin'), Buffer.from([0, 0, 1, 2, 3]));
+      u = await startUi(d);
+      const t = await api(u, 'GET', '/api/tasks');
+      assert.equal(t.status, 200, t.text);
+      const by = Object.fromEntries(t.json.changes.map((c) => [c.path, c]));
+      assert.deepEqual(by['src/a.js'], { path: 'src/a.js', status: 'modified', additions: 3, deletions: 1 });
+      assert.deepEqual(by['README.md'], { path: 'README.md', status: 'deleted', additions: 0, deletions: 1 });
+      assert.deepEqual(by['notes.md'], { path: 'notes.md', oldPath: 'notes.txt', status: 'renamed', additions: 1, deletions: 1 });
+      assert.deepEqual(by['docs/deep/new.md'], { path: 'docs/deep/new.md', status: 'added', additions: 3, deletions: 0 });
+      assert.deepEqual(by['docs/empty.txt'], { path: 'docs/empty.txt', status: 'added', additions: 0, deletions: 0 });
+      assert.deepEqual(by['logo.bin'], { path: 'logo.bin', status: 'modified', additions: null, deletions: null });
+      assert.deepEqual(by['pic.bin'], { path: 'pic.bin', status: 'added', additions: null, deletions: null });
+      assert.ok(!('notes.txt' in by), 'a rename is one entry, under its new path');
+      for (const c of t.json.changes) {
+        assert.ok(!('index' in c) && !('worktree' in c), `${c.path} still has raw codes`);
+        assert.ok(['added', 'modified', 'deleted', 'renamed'].includes(c.status), c.path);
+      }
+      // The diff of an untracked file still works (the view calls it on expand).
+      const diff = await api(u, 'GET', `/api/file?path=${encodeURIComponent('docs/deep/new.md')}&mode=diff`);
+      assert.equal(diff.status, 200, diff.text);
+    } finally {
+      if (u) await u.close();
+      removeDir(d);
+    }
+  });
+
+  test('a clean tree gives changes: []', async () => {
+    const d = makeRepo({ commitInit: true });
+    let u;
+    try {
+      u = await startUi(d);
+      const t = await api(u, 'GET', '/api/tasks');
+      assert.deepEqual(t.json.changes, []);
+    } finally {
+      if (u) await u.close();
+      removeDir(d);
     }
   });
 });
@@ -319,7 +406,7 @@ describe('a repo with no commits yet', () => {
       git(d, 'add', 'first.txt');
       u = await startUi(d);
       const t = await api(u, 'GET', '/api/tasks');
-      assert.ok(t.json.changes.some((c) => c.path === 'first.txt' && c.index === 'A'));
+      assert.deepEqual(t.json.changes.find((c) => c.path === 'first.txt'), { path: 'first.txt', status: 'added', additions: 1, deletions: 0 });
       const r = await api(u, 'GET', '/api/file?path=first.txt&mode=diff');
       assert.equal(r.status, 200, r.text);
       assert.deepEqual(r.json.hunks[0].lines.map((l) => [l.type, l.text]), [['add', 'hello']]);

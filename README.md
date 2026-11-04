@@ -14,14 +14,33 @@ Shipline's repo workflow is published on npm as `@forgeyard/shipline`. Run it fr
 want to set up (Node 18+; the `ui` command needs Node 20+):
 
 ```bash
-npx @forgeyard/shipline init       # install the workflow into this repo
+npx @forgeyard/shipline init       # install the workflow into this repo (asks what to install; --yes for the defaults)
 npx @forgeyard/shipline upgrade    # update an installed repo and move its tasks to ~/.shipline
+npx @forgeyard/shipline uninstall  # remove Shipline from this repo
 npx @forgeyard/shipline ui         # optional local web UI
 ```
 
 `upgrade` shows a preview and asks before changing anything (`--dry-run` only previews, `--yes` skips the
 question, `--force` also replaces Shipline files your team edited). It never commits: the removal of the old
 in-repo task folder is staged for you to review.
+
+In a terminal, `init` asks which workflows (Feature, Bugfix, Hotfix, Small change), which Shipline agents and
+which of your repo's own skills to use, and what to do when one of Shipline's agent names already exists in
+`.claude/agents/` (keep yours, use ours, or skip). `init --yes` installs everything and keeps your own agent
+files on a clash; without a terminal and without `--yes` it refuses.
+
+### Uninstall
+
+```bash
+npx @forgeyard/shipline uninstall [dir] [--yes] [--dry-run] [--purge]
+```
+
+It previews what it will remove, then asks. It removes `.shipline/`, the agents and skills Shipline installed
+(agents you kept as your own, recorded in `VERSION.excluded`, are left alone), the `CLAUDE.md` block, and
+Shipline's hook entries and `Read/Edit(~/.shipline/**)` allow rules in `.claude/settings.json`. It asks
+separately whether to delete this repo's task data in `~/.shipline/projects/<repo>/`; with `--yes` that data is
+kept unless you also pass `--purge`. It only deletes files from disk, never runs git: commit the removal
+yourself. It refuses while a Shipline UI chat holds the repo's lock (stop the UI first).
 
 ## Hard rules
 
@@ -142,12 +161,12 @@ npx @forgeyard/shipline init          # in the target repo (add --dry-run to pre
 # then, in Claude Code:  /shipline-setup
 ```
 
-`init` vendors, and you commit to the repo: `.shipline/` (config.yml, workflows feature/bugfix/hotfix,
+`init` vendors, and you commit to the repo: `.shipline/` (config.yml, workflows feature/bugfix/hotfix/small,
 `rules/<stage>.md`, dependency-free `bin/*.mjs` hook and stage scripts), `.claude/agents`,
 `.claude/skills/shipline-setup` and `shipline-workflow`, hooks merged into `.claude/settings.json`
 (SessionStart, UserPromptSubmit, PreToolUse) and a `<!-- shipline:start -->` block in `CLAUDE.md`.
-It never overwrites: any name collision aborts with nothing written, and re-running it reports "already
-initialized". Needs Node 18+ on teammates' machines.
+It never overwrites your files: any name collision other than an agent name aborts with nothing written (agent name clashes are
+resolved per agent), and re-running it reports "already initialized". Needs Node 18+ on teammates' machines.
 
 - Workflow config is YAML, read by a tiny built-in parser (a constrained subset), so hooks have no deps.
 - Per stage: `enforcement` (`guide` | `warn` | `block`) and `confirm_to_advance`. By default source edits

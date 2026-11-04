@@ -9,7 +9,7 @@ const TEMPLATES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 
 // Keys the form edits. Anything else in a file is shown as "other fields (kept)".
 export const KNOWN_FIELDS = {
   config: {
-    top: ['branch_pattern', 'tracker', 'commands'],
+    top: ['branch_pattern', 'tracker', 'commands', 'skills'],
     commands: ['test', 'lint', 'build'],
   },
   workflow: {
@@ -49,14 +49,26 @@ function checkPattern(model, key, out) {
   }
 }
 
+// opts.skills: names of the folders in .claude/skills (omit to skip the missing-folder warning).
 // Returns [{ path, message }]. Warnings carry severity: 'warning'; everything else is an error.
-export function validateConfig(model) {
+export function validateConfig(model, { skills = null } = {}) {
   const out = [];
   if (!isObj(model)) return [err('', 'config must be a map')];
 
   checkPattern(model, 'branch_pattern', out);
   if (model.commands !== undefined && model.commands !== null && !isObj(model.commands)) {
     out.push(err('commands', 'must be a map of commands'));
+  }
+  const sk = model.skills;
+  if (sk !== undefined && sk !== null) {
+    if (!Array.isArray(sk)) out.push(err('skills', 'must be a list of skill names'));
+    else {
+      sk.forEach((n, i) => {
+        const p = `skills[${i}]`;
+        if (typeof n !== 'string' || !ID_RE.test(n)) out.push(err(p, 'may only contain letters, digits, - and _'));
+        else if (skills && !skills.includes(n)) out.push(warn(p, `no skill folder .claude/skills/${n}/ found`));
+      });
+    }
   }
   lineBreakErrors(model, '', out);
   return out;

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { makeRepo, removeDir, stage, storeOf } from '../helpers.mjs';
+import { CLI_ROOT, makeRepo, removeDir, runInit, stage, storeOf } from '../helpers.mjs';
 import { api, openEvents, startUi } from './helpers.mjs';
 import { headerFor } from '../../src/setup-schema.mjs';
 
@@ -72,14 +72,21 @@ describe('GET /api/setup', () => {
     assert.equal(s.config.hash, sha256(s.config.raw));
     assert.ok(!('artifact_root' in s.config.model), 'Phase 1: artifact_root is gone from the shipped config');
     assert.ok(!('folder_pattern' in s.config.model));
-    assert.deepEqual(s.workflows.map((w) => w.id), ['bugfix', 'feature', 'hotfix']);
+    assert.deepEqual(s.workflows.map((w) => w.id), ['bugfix', 'feature', 'hotfix', 'small']);
     for (const w of s.workflows) {
       assert.equal(w.kind, 'workflow');
       assert.equal(w.hash, sha256(read(`.shipline/workflows/${w.id}.yml`)));
       assert.equal(w.model.id, w.id);
     }
     assert.ok(s.rules.some((r) => r.id === 'plan' && r.kind === 'rules' && r.raw === read('.shipline/rules/plan.md')));
-    assert.deepEqual(s.agents, ['builder', 'planner', 'qa-bug-hunter', 'researcher', 'reviewer', 'wireframe-proposer']);
+    // Prepublish plan: agents is { shipline: [{ name, installed, excluded, hash }], repo: [name] }.
+    assert.deepEqual(s.agents.shipline.map((a) => a.name), ['planner', 'builder', 'reviewer', 'qa-bug-hunter', 'wireframe-proposer', 'researcher']);
+    for (const a of s.agents.shipline) {
+      assert.deepEqual(a, { name: a.name, installed: true, excluded: false, hash: sha256(read(`.claude/agents/${a.name}.md`)) });
+    }
+    assert.deepEqual(s.agents.repo, []);
+    assert.deepEqual(s.skills, { repo: [], selected: [] });
+    assert.equal(s.versionHash, sha256(read('.shipline/bin/VERSION')));
   });
 
   test('a file that does not parse is returned with its error, and cannot be saved', async () => {
@@ -170,7 +177,7 @@ describe('saving', () => {
     assert.equal(wfEntry(s3, 'hotfix').model.stages[0].sla_hours, 4);
     assert.equal(s3.config.model.team_owner, 'platform');
     assert.equal(s3.config.model.commands.typecheck, 'pnpm tsc');
-    assert.match(read('.shipline/config.yml'), /\n {2}typecheck: pnpm tsc\n\nteam_owner: platform\n$/);
+    assert.match(read('.shipline/config.yml'), /\n {2}typecheck: pnpm tsc\n\n# Optional[^\n]*\nskills: \[\]\n\nteam_owner: platform\n$/);
   });
 
   test('a file changed on disk gives 409, and in a two-file save nothing is written', async () => {
@@ -428,6 +435,297 @@ describe('workflow copy and delete', () => {
     assert.equal(r.status, 200, r.text);
     assert.ok(!existsSync(path.join(dir, '.shipline/workflows/temp.yml')));
     assert.ok(existsSync(path.join(dir, '.shipline/rules/fix.md')));
+  });
+});
+
+describe('workflow create (prepublish plan, "+ New workflow")', () => {
+  test('creates workflows/<id>.yml with one implement stage; stage.mjs can start it', async () => {
+    const r = await api(ui, 'POST', '/api/setup/workflows', { body: { action: 'create', id: 'spike', name: '  Spike  ' } });
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.json, { ok: true });
+    try {
+      const text = read('.shipline/workflows/spike.yml');
+      assert.ok(text.startsWith(headerFor('spike')));
+      const s = await getSetup();
+      assert.deepEqual(wfEntry(s, 'spike').model, {
+        id: 'spike',
+        name: 'Spike',
+        stages: [{ id: 'implement', name: 'Implement', enforcement: 'guide', confirm_to_advance: false }],
+      });
+      assert.deepEqual(wfEntry(s, 'spike').errors ?? [], []);
+      assert.match(stage(dir, ['workflows']).stdout, /^spike: Spike/m);
+    } finally {
+      rmSync(path.join(dir, '.shipline/workflows/spike.yml'), { force: true });
+    }
+  });
+
+  test('an id that exists gives 409 exists and leaves the file alone', async () => {
+    const before = read('.shipline/workflows/feature.yml');
+    const r = await api(ui, 'POST', '/api/setup/workflows', { body: { action: 'create', id: 'feature', name: 'Feature 2' } });
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.json.error.code, 'exists');
+    assert.equal(read('.shipline/workflows/feature.yml'), before);
+  });
+
+  test('a bad id or a missing name gives 400 invalid, and nothing is written', async () => {
+    const before = readdirSync(path.join(dir, '.shipline/workflows')).sort();
+    for (const body of [
+      { action: 'create', id: '../evil', name: 'Evil' },
+      { action: 'create', id: 'a b', name: 'Space' },
+      { action: 'create', id: '', name: 'Empty' },
+      { action: 'create', name: 'No id' },
+      { action: 'create', id: 'noname' },
+      { action: 'create', id: 'blank', name: '   ' },
+    ]) {
+      const r = await api(ui, 'POST', '/api/setup/workflows', { body });
+      assert.equal(r.status, 400, `${JSON.stringify(body)}: ${r.text}`);
+      assert.equal(r.json.error.code, 'invalid', JSON.stringify(body));
+    }
+    assert.deepEqual(readdirSync(path.join(dir, '.shipline/workflows')).sort(), before);
+    assert.ok(!existsSync(path.join(dir, '.shipline/evil.yml')));
+  });
+});
+
+describe('agents and skills (prepublish plan, Setup -> Agents & skills)', () => {
+  const AGENT = (n) => `.claude/agents/${n}.md`;
+  const template = (n) => readFileSync(path.join(CLI_ROOT, 'templates', 'claude', 'agents', `${n}.md`), 'utf8');
+  const agentsPost = (x, body, { preview = false } = {}) => api(x.ui, 'POST', `/api/setup/agents${preview ? '?preview=1' : ''}`, { body });
+  const versionOf = (x) => JSON.parse(readFileSync(path.join(x.dir, '.shipline/bin/VERSION'), 'utf8'));
+  const xread = (x, rel) => readFileSync(path.join(x.dir, rel), 'utf8');
+  const xexists = (x, rel) => existsSync(path.join(x.dir, rel));
+  // The base hashes the page would send: the agent file hashes from GET /api/setup (null = must not exist).
+  async function bases(x, names) {
+    const s = await getSetup(x.ui);
+    const baseHashes = {};
+    for (const n of names) baseHashes[AGENT(n)] = s.agents.shipline.find((a) => a.name === n).hash;
+    return { baseHashes, baseVersionHash: s.versionHash };
+  }
+
+  // A repo whose team had its own planner.md before `init --yes` (a "keep yours" clash), plus its own agent and skill.
+  async function teamRepo() {
+    const d = makeRepo({ init: false });
+    mkdirSync(path.join(d, '.claude/agents'), { recursive: true });
+    writeFileSync(path.join(d, AGENT('planner')), '# Our planner\n');
+    writeFileSync(path.join(d, AGENT('mine')), '# Our own agent\n');
+    mkdirSync(path.join(d, '.claude/skills/deploy'), { recursive: true });
+    writeFileSync(path.join(d, '.claude/skills/deploy/SKILL.md'), '# Deploy\n');
+    const r = runInit(d);
+    assert.equal(r.code, 0, r.stderr);
+    const u = await startUi(d);
+    extra.push({ dir: d, ui: u });
+    return { dir: d, ui: u };
+  }
+
+  test('GET /api/setup: a kept clash is excluded, agents.repo lists only non-Shipline names, skills.repo skips shipline-*', async () => {
+    const x = await teamRepo();
+    const s = await getSetup(x.ui);
+    assert.deepEqual(s.agents.shipline.find((a) => a.name === 'planner'), { name: 'planner', installed: true, excluded: true, hash: sha256('# Our planner\n') });
+    assert.deepEqual(s.agents.repo, ['mine']);
+    assert.deepEqual(s.skills, { repo: ['deploy'], selected: [] });
+  });
+
+  test('skills saved through POST /api/setup/save: a missing skill folder is a warning, not an error', async () => {
+    const x = await teamRepo();
+    const s = await getSetup(x.ui);
+    const model = clone(s.config.model);
+    model.skills = ['deploy', 'gone'];
+    const p = await preview([{ kind: 'config', model, baseHash: s.config.hash }], x.ui);
+    assert.equal(p.status, 200, p.text);
+    assert.deepEqual(p.json.files[0].errors, []);
+    const r = await save([{ kind: 'config', model, baseHash: s.config.hash }], x.ui);
+    assert.equal(r.status, 200, r.text);
+    assert.match(xread(x, '.shipline/config.yml'), /^skills: \[deploy, gone\]$/m);
+    assert.deepEqual((await getSetup(x.ui)).skills, { repo: ['deploy'], selected: ['deploy', 'gone'] });
+    const bad = clone(model);
+    bad.skills = ['../x'];
+    const r2 = await save([{ kind: 'config', model: bad, baseHash: (await getSetup(x.ui)).config.hash }], x.ui);
+    assert.equal(r2.status, 400);
+    assert.equal(r2.json.error.details[0].path, 'skills[0]');
+  });
+
+  test('preview of a removal: text null, every line deleted, the stages that use it, VERSION before/after; nothing written', async () => {
+    const x = await scratchRepo();
+    const before = snapshot(x.dir);
+    const agentBefore = xread(x, AGENT('researcher'));
+    const p = await agentsPost(x, { remove: ['researcher'] }, { preview: true });
+    assert.equal(p.status, 200, p.text);
+    assert.equal(p.json.files.length, 1);
+    const f = p.json.files[0];
+    assert.equal(f.kind, 'agent');
+    assert.equal(f.id, 'researcher');
+    assert.equal(f.text, null);
+    assert.deepEqual(f.errors, []);
+    assert.deepEqual(f.removedComments, []);
+    const lines = f.diff.flatMap((h) => h.lines);
+    assert.ok(lines.length > 0 && lines.every((l) => l.type === 'del'), JSON.stringify(lines.slice(0, 3)));
+    assert.ok(f.notes.some((n) => n.includes('agent not installed') && n.includes('bugfix.root_cause') && n.includes('feature.feasibility')), JSON.stringify(f.notes));
+    assert.deepEqual(p.json.version.before.excluded, []);
+    assert.deepEqual(p.json.version.after.excluded, [AGENT('researcher')]);
+    assert.ok(AGENT('researcher') in p.json.version.before.files);
+    assert.ok(!(AGENT('researcher') in p.json.version.after.files));
+    assert.deepEqual(snapshot(x.dir), before);
+    assert.equal(xread(x, AGENT('researcher')), agentBefore);
+  });
+
+  test('apply remove, then add back: files and VERSION (files, excluded) follow, VERSION last', async () => {
+    const x = await scratchRepo();
+    const r = await agentsPost(x, { remove: ['researcher', 'reviewer'], ...(await bases(x, ['researcher', 'reviewer'])) });
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.json, {
+      written: [
+        { kind: 'agent', id: 'researcher', action: 'delete' },
+        { kind: 'agent', id: 'reviewer', action: 'delete' },
+      ],
+    });
+    assert.ok(!xexists(x, AGENT('researcher')));
+    assert.ok(!xexists(x, AGENT('reviewer')));
+    let v = versionOf(x);
+    assert.deepEqual(v.excluded, [AGENT('researcher'), AGENT('reviewer')]);
+    assert.ok(!(AGENT('researcher') in v.files));
+    assert.equal(v.interface, 3);
+    let s = await getSetup(x.ui);
+    assert.deepEqual(s.agents.shipline.find((a) => a.name === 'researcher'), { name: 'researcher', installed: false, excluded: true, hash: null });
+    assert.equal(s.versionHash, sha256(xread(x, '.shipline/bin/VERSION')));
+    // A stage that uses the removed agent now gets the existing "unknown agent" warning, not an error.
+    const feature = wfEntry(s, 'feature');
+    const p = await preview([{ kind: 'workflow', id: 'feature', model: feature.model, baseHash: feature.hash }], x.ui);
+    assert.deepEqual(p.json.files[0].errors, []);
+
+    // Add researcher back (baseHashes null: the file must not exist).
+    const add = await agentsPost(x, { add: ['researcher'], ...(await bases(x, ['researcher'])) });
+    assert.equal(add.status, 200, add.text);
+    assert.deepEqual(add.json, { written: [{ kind: 'agent', id: 'researcher', action: 'write' }] });
+    assert.equal(xread(x, AGENT('researcher')), template('researcher'));
+    v = versionOf(x);
+    assert.deepEqual(v.excluded, [AGENT('reviewer')]);
+    assert.equal(v.files[AGENT('researcher')], sha256(template('researcher')));
+    s = await getSetup(x.ui);
+    assert.deepEqual(s.agents.shipline.find((a) => a.name === 'researcher'), { name: 'researcher', installed: true, excluded: false, hash: sha256(template('researcher')) });
+    // upgrade's view of it: the reviewer exclusion stays (covered in upgrade.test.mjs); the log has an entry.
+    const log = readFileSync(path.join(storeOf(x.dir), 'ui', 'ui.log'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    assert.ok(log.some((e) => e.event === 'agents' && e.id === 'researcher' && e.action === 'write' && e.hashBefore === null));
+  });
+
+  test('adding an agent that is already installed (and not excluded) changes nothing', async () => {
+    const x = await scratchRepo();
+    const before = snapshot(x.dir);
+    const p = await agentsPost(x, { add: ['builder'] }, { preview: true });
+    assert.equal(p.status, 200, p.text);
+    assert.deepEqual(p.json.files, []);
+    const r = await agentsPost(x, { add: ['builder'], ...(await bases(x, [])) });
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.json.written, []);
+    // VERSION may be rewritten (keys sorted, as upgrade writes them), but its content is the same.
+    const { ['.shipline/bin/VERSION']: vBefore, ...restBefore } = before;
+    const { ['.shipline/bin/VERSION']: vAfter, ...restAfter } = snapshot(x.dir);
+    assert.deepEqual(restAfter, restBefore);
+    assert.deepEqual(JSON.parse(vAfter), JSON.parse(vBefore));
+  });
+
+  test('every affected path needs a baseHashes entry (400), and nothing is written', async () => {
+    const x = await scratchRepo();
+    const { baseVersionHash } = await bases(x, []);
+    for (const body of [
+      { remove: ['researcher'], baseVersionHash, baseHashes: {} },
+      { remove: ['researcher'], baseVersionHash },
+      { remove: ['researcher'], baseHashes: { [AGENT('researcher')]: sha256(xread(x, AGENT('researcher'))) } },
+    ]) {
+      const r = await agentsPost(x, body);
+      assert.equal(r.status, 400, `${JSON.stringify(body)}: ${r.text}`);
+    }
+    assert.ok(xexists(x, AGENT('researcher')));
+    assert.deepEqual(versionOf(x).excluded, []);
+  });
+
+  test('409 changed: a stale VERSION hash or a changed agent file, with the paths; nothing is written', async () => {
+    const x = await scratchRepo();
+    const b = await bases(x, ['researcher', 'builder']);
+    // Someone edits builder.md and VERSION after the page loaded.
+    writeFileSync(path.join(x.dir, AGENT('builder')), xread(x, AGENT('builder')) + '\nhand edit\n');
+    const v = versionOf(x);
+    v.note = 'touched';
+    writeFileSync(path.join(x.dir, '.shipline/bin/VERSION'), JSON.stringify(v, null, 2) + '\n');
+    const before = snapshot(x.dir);
+    const researcher = xread(x, AGENT('researcher'));
+    const builder = xread(x, AGENT('builder'));
+    const r = await agentsPost(x, { remove: ['researcher', 'builder'], ...b });
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.json.error.code, 'changed');
+    assert.deepEqual(r.json.error.details.paths.sort(), ['.claude/agents/builder.md', '.shipline/bin/VERSION']);
+    assert.deepEqual(snapshot(x.dir), before);
+    assert.equal(xread(x, AGENT('researcher')), researcher);
+    assert.equal(xread(x, AGENT('builder')), builder);
+    // A file that appeared where null ("must not exist") was sent is a change too.
+    const y = await scratchRepo();
+    await agentsPost(y, { remove: ['researcher'], ...(await bases(y, ['researcher'])) });
+    const nb = await bases(y, ['researcher']);
+    assert.equal(nb.baseHashes[AGENT('researcher')], null);
+    writeFileSync(path.join(y.dir, AGENT('researcher')), '# appeared\n');
+    const r2 = await agentsPost(y, { add: ['researcher'], ...nb });
+    assert.equal(r2.status, 409, r2.text);
+    assert.deepEqual(r2.json.error.details.paths, ['.claude/agents/researcher.md']);
+    assert.equal(xread(y, AGENT('researcher')), '# appeared\n');
+  });
+
+  test('remove on the team\'s own (kept) agent is 400 not-shipline and leaves the file', async () => {
+    const x = await teamRepo();
+    const before = snapshot(x.dir);
+    for (const preview of [true, false]) {
+      const r = await agentsPost(x, { remove: ['planner'], ...(await bases(x, ['planner'])) }, { preview });
+      assert.equal(r.status, 400, r.text);
+      assert.equal(r.json.error.code, 'not-shipline');
+      assert.equal(r.json.error.details.path, '.claude/agents/planner.md');
+    }
+    assert.equal(xread(x, AGENT('planner')), '# Our planner\n');
+    assert.deepEqual(snapshot(x.dir), before);
+  });
+
+  test('add on the team\'s own agent: the preview is a normal diff; apply replaces the file and moves the path from excluded to files', async () => {
+    const x = await teamRepo();
+    assert.deepEqual(versionOf(x).excluded, [AGENT('planner')]);
+    const p = await agentsPost(x, { add: ['planner'] }, { preview: true });
+    assert.equal(p.status, 200, p.text);
+    const f = p.json.files[0];
+    assert.equal(f.id, 'planner');
+    assert.equal(f.text, template('planner'));
+    const lines = f.diff.flatMap((h) => h.lines);
+    assert.ok(lines.some((l) => l.type === 'del' && l.text === '# Our planner'));
+    assert.ok(lines.some((l) => l.type === 'add'));
+    const r = await agentsPost(x, { add: ['planner'], ...(await bases(x, ['planner'])) });
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.json.written, [{ kind: 'agent', id: 'planner', action: 'write' }]);
+    assert.equal(xread(x, AGENT('planner')), template('planner'));
+    const v = versionOf(x);
+    assert.deepEqual(v.excluded, []);
+    assert.equal(v.files[AGENT('planner')], sha256(template('planner')));
+    assert.equal(xread(x, AGENT('mine')), '# Our own agent\n', 'the team\'s other agent is untouched');
+  });
+
+  test('bad requests give 400: unknown names, nothing to do, the same name in add and remove', async () => {
+    const x = await scratchRepo();
+    const b = await bases(x, ['builder']);
+    const cases = [
+      [{ add: ['ghost'], ...b }, 'bad-target'],
+      [{ remove: ['../../.shipline/bin/guard'], ...b }, 'bad-target'],
+      [{ remove: ['mine'], ...b }, 'bad-target'],
+      [{ add: 'builder', ...b }, null],
+      [{ ...b }, null],
+      [{ add: ['builder'], remove: ['builder'], ...b }, null],
+    ];
+    for (const [body, code] of cases) {
+      const r = await agentsPost(x, body);
+      assert.equal(r.status, 400, `${JSON.stringify(body)}: ${r.text}`);
+      if (code) assert.equal(r.json.error.code, code, JSON.stringify(body));
+    }
+    assert.ok(xexists(x, '.shipline/bin/guard.mjs'));
+  });
+
+  test('a "repo newer" VERSION refuses it with 423', async () => {
+    const x = await scratchRepo((d) => writeFileSync(path.join(d, '.shipline/bin/VERSION'), '{"package":"9.9.9","interface":99}\n'));
+    const r = await agentsPost(x, { remove: ['researcher'], baseVersionHash: 'x', baseHashes: {} });
+    assert.equal(r.status, 423, r.text);
+    assert.equal(r.json.error.code, 'repo-newer');
+    assert.ok(xexists(x, AGENT('researcher')));
   });
 });
 

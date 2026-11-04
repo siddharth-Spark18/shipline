@@ -408,7 +408,7 @@ The new optional key is `skills: [name, …]`, a list of names of the repo's own
 
 ## Open Questions
 
-- The exact `@inquirer/prompts` major version to pin. The builder uses the latest stable version at build time and records it here.
+- The exact `@inquirer/prompts` major version to pin. The builder uses the latest stable version at build time and records it here. **Pinned: `^8.7.5` (major 8, resolved 8.7.5, 2026-11-04).** Its `engines` are Node `^20.17 || ^22.13 || >=23.5`, so interactive `init` needs Node 20.17+; on Node 18 the prompts fail to load and `init` says to use `--yes`. `--yes`, `upgrade`, `uninstall` and the hooks stay on Node 18.
 - "Claude decides when a change is small" depends on the skill's wording. If Claude picks Small change too often or too rarely in practice, the examples in `shipline-workflow/SKILL.md` will need tuning.
 - **Accepted from the plan re-review (optional items, not blocking):**
   - **Merge helpers:** the existing settings and `CLAUDE.md` merge helpers live in `init.mjs`. `isShiplineHookEntry` and `HOOK_MARK` are in `hashes.mjs`. The new inverse helpers go in `hashes.mjs` and may import from either.

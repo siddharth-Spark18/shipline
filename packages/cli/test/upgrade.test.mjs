@@ -201,6 +201,86 @@ describe('a fresh interface-3 install', () => {
   });
 });
 
+// Prepublish plan: VERSION.excluded lists Shipline agent paths the team doesn't have from Shipline (deselected,
+// skipped, or their own file kept on a name clash). upgrade never adds, replaces or removes them, and keeps the list.
+describe('VERSION.excluded', () => {
+  // A fresh install where researcher was deselected (no file) and planner.md is the team's own (kept on a clash).
+  function excludedRepo() {
+    const dir = makeRepo();
+    dirs.push(dir);
+    rmSync(path.join(dir, '.claude/agents/researcher.md'));
+    writeFileSync(path.join(dir, '.claude/agents/planner.md'), '# Our own planner\n');
+    const v = version(dir);
+    delete v.files['.claude/agents/researcher.md'];
+    delete v.files['.claude/agents/planner.md'];
+    v.excluded = ['.claude/agents/planner.md', '.claude/agents/researcher.md'];
+    writeFileSync(path.join(dir, '.shipline/bin/VERSION'), JSON.stringify(v, null, 2) + '\n');
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'shipline init (with exclusions)');
+    return dir;
+  }
+
+  test('an excluded path is never added or replaced, even with --force: "Already up to date."', () => {
+    const dir = excludedRepo();
+    const before = snapshot(dir);
+    for (const flags of [['--yes'], ['--yes', '--force']]) {
+      const r = upgrade(dir, ...flags);
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(r.stdout, 'Already up to date.\n', flags.join(' '));
+    }
+    assert.deepEqual(snapshot(dir), before);
+    assert.ok(!existsSync(path.join(dir, '.claude/agents/researcher.md')));
+    assert.equal(read(dir, '.claude/agents/planner.md'), '# Our own planner\n');
+  });
+
+  test('a real upgrade keeps excluded in the new VERSION and still skips those paths', () => {
+    const dir = excludedRepo();
+    const old = '// stage.mjs from an older release\n';
+    writeFileSync(path.join(dir, '.shipline/bin/stage.mjs'), old);
+    const v = version(dir);
+    v.files['.shipline/bin/stage.mjs'] = sha(old);
+    writeFileSync(path.join(dir, '.shipline/bin/VERSION'), JSON.stringify(v, null, 2) + '\n');
+    const r = upgrade(dir, '--yes', '--force');
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.stdout.includes('  ~ replace  .shipline/bin/stage.mjs\n'), r.stdout);
+    assert.ok(!r.stdout.includes('researcher.md'), r.stdout);
+    assert.ok(!r.stdout.includes('planner.md'), r.stdout);
+    assert.equal(read(dir, '.claude/agents/planner.md'), '# Our own planner\n');
+    assert.ok(!existsSync(path.join(dir, '.claude/agents/researcher.md')));
+    const after = version(dir);
+    assert.deepEqual(after.excluded, ['.claude/agents/planner.md', '.claude/agents/researcher.md']);
+    assert.ok(!('.claude/agents/planner.md' in after.files));
+    assert.ok(!('.claude/agents/researcher.md' in after.files));
+    assert.equal(after.files['.shipline/bin/stage.mjs'], sha(template('.shipline/bin/stage.mjs')));
+  });
+
+  test('an excluded path that a VERSION.files record still lists is not removed as "no longer shipped"', () => {
+    const dir = excludedRepo();
+    const v = version(dir);
+    writeFileSync(path.join(dir, '.claude/agents/retired.md'), 'team agent\n');
+    v.files['.claude/agents/retired.md'] = sha('team agent\n');
+    v.excluded = [...v.excluded, '.claude/agents/retired.md'];
+    writeFileSync(path.join(dir, '.shipline/bin/VERSION'), JSON.stringify(v, null, 2) + '\n');
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.stdout.includes('remove   .claude/agents/retired.md'), r.stdout);
+    assert.equal(read(dir, '.claude/agents/retired.md'), 'team agent\n');
+  });
+
+  test('a config.yml with skills is left alone by upgrade', () => {
+    const dir = makeRepo();
+    dirs.push(dir);
+    const cfg = read(dir, '.shipline/config.yml').replace('skills: []', 'skills: [deploy]');
+    writeFileSync(path.join(dir, '.shipline/config.yml'), cfg);
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'init');
+    const r = upgrade(dir, '--yes', '--force');
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.stdout, 'Already up to date.\n');
+    assert.equal(read(dir, '.shipline/config.yml'), cfg);
+  });
+});
+
 // ---------- the main legacy migration ----------
 
 describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes.json)', () => {

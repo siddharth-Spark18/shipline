@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { ChangesList, TaskPanel } from '@/components/task-panel';
+import { ChangesCard } from '@/components/changes-view';
+import { TaskPanel } from '@/components/task-panel';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
 
@@ -40,7 +41,7 @@ export default function TasksPage() {
           <TaskPanel key={task.dir} task={task} />
         ))}
       </div>
-      <ChangesList changes={data.changes} />
+      <ChangesCard changes={data.changes} />
     </div>
   );
 }

@@ -9,7 +9,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { DiffView } from '@/components/diff-view';
+import {
+  ChangesView,
+  countDiff,
+  statusFromDiff,
+  type ChangeEntry,
+} from '@/components/changes-view';
 import type { ImpactEntry, PreviewFile, PreviewResponse, ValidationIssue } from '@/lib/types';
 
 export function fileLabel(f: { kind: string; id?: string }): string {
@@ -18,6 +23,8 @@ export function fileLabel(f: { kind: string; id?: string }): string {
       return 'config.yml';
     case 'workflow':
       return `workflows/${f.id}.yml`;
+    case 'agent':
+      return `.claude/agents/${f.id}.md`;
     default:
       return `rules/${f.id}.md`;
   }
@@ -62,25 +69,41 @@ function Issues({ issues }: { issues: ValidationIssue[] }) {
   );
 }
 
-function FilePreview({ file }: { file: PreviewFile }) {
+/** The preview's files as changes: status from the shape of the diff, counts from its hunks. */
+export function previewChanges(files: PreviewFile[]): ChangeEntry[] {
+  return files.map((f) => ({
+    path: fileLabel(f),
+    status: statusFromDiff(f.diff),
+    ...countDiff(f.diff),
+    hunks: f.diff,
+  }));
+}
+
+/** Errors, warnings and removed comments per file; they must be visible without opening a diff. */
+export function FileNotes({ files }: { files: PreviewFile[] }) {
+  const noted = files.filter((f) => f.errors.length > 0 || f.removedComments.length > 0);
+  if (noted.length === 0) return null;
   return (
-    <section className="flex flex-col gap-2">
-      <h3 className="font-mono text-sm font-medium">{fileLabel(file)}</h3>
-      <Issues issues={file.errors} />
-      {file.removedComments.length > 0 && (
-        <div className="rounded-md border border-enf-warn/40 bg-enf-warn/10 p-2 text-xs">
-          <p className="mb-1 font-medium">Comments that would be removed</p>
-          <ul className="flex flex-col gap-0.5 font-mono">
-            {file.removedComments.map((c, i) => (
-              <li key={i} className="whitespace-pre-wrap">
-                {c}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      <DiffView hunks={file.diff} />
-    </section>
+    <div className="flex flex-col gap-3">
+      {noted.map((file) => (
+        <section key={fileLabel(file)} className="flex flex-col gap-2">
+          <h3 className="font-mono text-sm font-medium">{fileLabel(file)}</h3>
+          <Issues issues={file.errors} />
+          {file.removedComments.length > 0 && (
+            <div className="rounded-md border border-enf-warn/40 bg-enf-warn/10 p-2 text-xs">
+              <p className="mb-1 font-medium">Comments that would be removed</p>
+              <ul className="flex flex-col gap-0.5 font-mono">
+                {file.removedComments.map((c, i) => (
+                  <li key={i} className="whitespace-pre-wrap">
+                    {c}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      ))}
+    </div>
   );
 }
 
@@ -165,9 +188,8 @@ export function SaveDialog(props: SaveDialogProps) {
               </p>
             )}
 
-            {preview?.files.map((f) => (
-              <FilePreview key={fileLabel(f)} file={f} />
-            ))}
+            {preview && <FileNotes files={preview.files} />}
+            {preview && <ChangesView changes={previewChanges(preview.files)} defaultExpanded />}
 
             {props.conflict && (
               <Alert variant="destructive">

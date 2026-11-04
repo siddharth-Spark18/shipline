@@ -85,8 +85,12 @@ export function removeDir(dir) {
   }
 }
 
+// `shipline init` through the real bin. The children have no terminal, and init refuses to ask questions without
+// one, so --yes (install the defaults) is passed unless the flags start with { yes: false }.
 export function runInit(dir, ...flags) {
-  return run(process.execPath, [BIN, 'init', dir, ...flags], { cwd: dir });
+  let yes = true;
+  if (flags.length && typeof flags[0] === 'object' && flags[0] !== null) yes = flags.shift().yes !== false;
+  return run(process.execPath, [BIN, 'init', dir, ...(yes ? ['--yes'] : []), ...flags], { cwd: dir });
 }
 
 // A temporary git repo with one commit, then `shipline init` run through the real bin.

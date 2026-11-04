@@ -13,13 +13,14 @@ export const INTERFACE = 3;
 // What interface-1 repos lack. Used only for banner text.
 export const MISSING_BEFORE = ['the lost-task warning', 'visible warn reminders', 'task storage outside the repo (the store)'];
 
-// Returns { package, interface, files }, or { legacy: true, interface: 1 } when the file is missing or unreadable.
+// Returns { package, interface, files, excluded }, or { legacy: true, interface: 1 } when the file is missing or unreadable.
 export function readRepoVersion(root) {
   try {
     const v = JSON.parse(readFileSync(path.join(root, '.shipline', 'bin', 'VERSION'), 'utf8'));
     if (v && typeof v === 'object' && Number.isInteger(v.interface)) {
       const files = v.files && typeof v.files === 'object' && !Array.isArray(v.files) ? v.files : null;
-      return { package: typeof v.package === 'string' ? v.package : null, interface: v.interface, files };
+      const excluded = Array.isArray(v.excluded) ? v.excluded.filter((p) => typeof p === 'string') : [];
+      return { package: typeof v.package === 'string' ? v.package : null, interface: v.interface, files, excluded };
     }
   } catch {
     // Missing or unreadable: treated as a legacy repo below.

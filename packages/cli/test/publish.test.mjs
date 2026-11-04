@@ -37,7 +37,11 @@ describe('package.json', () => {
     assert.deepEqual(pkg.bin, { shipline: 'bin/shipline.mjs' });
     for (const f of ['bin', 'src', 'templates', 'ui-dist']) assert.ok(pkg.files.includes(f), f);
     assert.ok(!pkg.files.includes('test'));
-    assert.ok(!pkg.dependencies || Object.keys(pkg.dependencies).length === 0, 'the CLI has no dependencies');
+    // Prepublish plan: the one runtime dependency is @inquirer/prompts (interactive init).
+    assert.deepEqual(Object.keys(pkg.dependencies || {}), ['@inquirer/prompts'], 'the only dependency is @inquirer/prompts');
+    assert.match(pkg.dependencies['@inquirer/prompts'], /^\^8\./);
+    assert.ok(!pkg.devDependencies || Object.keys(pkg.devDependencies).length === 0, 'no devDependencies');
+    assert.ok(!pkg.optionalDependencies && !pkg.peerDependencies);
   });
 
   test('publishConfig, repository, license, description and engines', () => {
@@ -75,6 +79,9 @@ describe('npm pack --dry-run', () => {
       'templates/shipline/bin/guard.mjs',
       'templates/shipline/config.yml',
       'templates/shipline/workflows/feature.yml',
+      'templates/shipline/workflows/small.yml',
+      'src/uninstall.mjs',
+      'src/init-prompts.mjs',
       'templates/claude/skills/shipline-workflow/SKILL.md',
     ]) {
       assert.ok(files.includes(f), f);
@@ -141,7 +148,8 @@ describe('the bin', () => {
   test('--help names the scoped package and the upgrade command', () => {
     const r = run(process.execPath, [BIN, '--help'], { cwd: CLI_ROOT });
     assert.equal(r.code, 0);
-    assert.match(r.stdout, /npx @forgeyard\/shipline init \[dir\] \[--dry-run\]/);
+    assert.match(r.stdout, /npx @forgeyard\/shipline init \[dir\] \[--yes\] \[--dry-run\]/);
+    assert.match(r.stdout, /npx @forgeyard\/shipline uninstall \[dir\] \[--yes\] \[--dry-run\] \[--purge\]/);
     assert.match(r.stdout, /npx @forgeyard\/shipline upgrade \[dir\] \[--yes\] \[--dry-run\] \[--force\]/);
     assert.match(r.stdout, /npx @forgeyard\/shipline ui \[dir\]/);
     assert.ok(!UNSCOPED.test(r.stdout));

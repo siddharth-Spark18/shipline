@@ -151,8 +151,10 @@ function planFiles(root, version, force) {
   const plan = { add: [], replace: [], remove: [], skip: [], same: [], hashes: {} };
   const owned = ownedTemplateFiles();
   const ownedPaths = new Set(owned.map((f) => f.to));
+  const excluded = new Set(version.excluded || []);
 
   for (const f of owned) {
+    if (excluded.has(f.to)) continue; // the team's own (or deliberately absent): never added or replaced
     const data = readFileSync(f.from);
     const newHash = sha256(data);
     const abs = path.join(root, f.to);
@@ -178,7 +180,7 @@ function planFiles(root, version, force) {
   // Shipline files that this version no longer ships: removed only when unedited.
   const candidates = new Set(record ? Object.keys(record) : Object.keys(KNOWN));
   for (const to of candidates) {
-    if (ownedPaths.has(to) || to === CLAUDE_MD_KEY || to === SETTINGS_KEY) continue;
+    if (ownedPaths.has(to) || excluded.has(to) || to === CLAUDE_MD_KEY || to === SETTINGS_KEY) continue;
     const abs = path.join(root, to);
     if (!existsSync(abs) || !lstatSync(abs).isFile()) continue;
     const curHash = sha256(readFileSync(abs));
@@ -452,7 +454,7 @@ function apply(root, ctx) {
     if (mig.stateRoot) rmSync(mig.stateRoot, { recursive: true, force: true });
 
     step = 'writing .shipline/bin/VERSION';
-    const newVersion = { package: PACKAGE_VERSION, interface: INTERFACE, files: sortKeys({ ...files.hashes, ...shared.hashes }) };
+    const newVersion = { package: PACKAGE_VERSION, interface: INTERFACE, files: sortKeys({ ...files.hashes, ...shared.hashes }), excluded: ctx.excluded };
     writeFileSync(path.join(root, VERSION_FILE), JSON.stringify(newVersion, null, 2) + '\n');
   } catch (e) {
     const notes = [];
@@ -517,8 +519,9 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     ? planMigration(root, artifactRoot, storePath, hasGit)
     : { tasks: [], state: [], leftovers: [], problems: [], warnings: [], stateRoot: null };
 
-  const newVersion = { package: PACKAGE_VERSION, interface: INTERFACE, files: sortKeys({ ...files.hashes, ...shared.hashes }) };
-  const oldVersion = { package: version.package, interface: version.interface, files: version.files ? sortKeys(version.files) : null };
+  const excluded = [...(version.excluded || [])];
+  const newVersion = { package: PACKAGE_VERSION, interface: INTERFACE, files: sortKeys({ ...files.hashes, ...shared.hashes }), excluded };
+  const oldVersion = { package: version.package, interface: version.interface, files: version.files ? sortKeys(version.files) : null, excluded };
   const versionChanged = JSON.stringify(newVersion) !== JSON.stringify(oldVersion);
 
   const sharedActions = [shared.claude, shared.settings].filter((s) => s.action !== 'same' && s.action !== 'skip');
@@ -592,7 +595,7 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
   }
 
   try {
-    apply(root, { files, shared, cfgPlan, mig, hasGit, artifactRoot });
+    apply(root, { files, shared, cfgPlan, mig, hasGit, artifactRoot, excluded });
   } catch (e) {
     console.error(`shipline: ${e.message}`);
     return 1;

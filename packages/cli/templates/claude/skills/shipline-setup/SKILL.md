@@ -16,11 +16,12 @@ Read `CLAUDE.md`, `.claude/agents/`, `package.json` (or the language's equivalen
 
 Cover these topics, one group at a time:
 
-1. **Workflows:** are Feature, Bugfix and Hotfix the right set? Which stages should each have, in what order? Which are optional? Which only apply to UI work (`condition: ui_only`)? Bugfix and Hotfix are only defaults.
+1. **Workflows:** are Feature, Bugfix, Hotfix and Small change the right set? Which stages should each have, in what order? Which are optional? Which only apply to UI work (`condition: ui_only`)? Bugfix, Hotfix and Small change are only defaults.
 2. **Enforcement per stage:** `guide` (instructions only), `warn` (allowed, with a reminder), or `block` (denied until the stage is done). Defaults: block source edits until plan (root cause for bugfix) is done; block `git commit` and `gh pr create` until verify is done. Ask whether other actions need blocking (for example migrations or env files) and write them as `blocks` entries. Explain that blocking covers Edit/Write tools and matching Bash commands, not every possible way of changing files.
 3. **Confirmation per stage:** should Claude ask the developer before advancing (`confirm_to_advance: true`) or advance by itself? Note that confirmation is recorded by Claude after asking; it is process discipline, not cryptographic proof.
 4. **Rules per stage:** repo-specific instructions for each stage (what a good plan contains here, coding conventions, what verify must check, PR template and reviewers). Write them to `.shipline/rules/<stage>.md`.
-5. **Naming and commands:** the branch pattern (`branch_pattern`) and the test/lint/build commands the verify stage should run (leave empty if none).
+5. **Repo skills:** which of the repo's own skills in `.claude/skills/` should Claude be pointed to at every stage? List them in `skills: [name, ...]` in `.shipline/config.yml`.
+6. **Naming and commands:** the branch pattern (`branch_pattern`) and the test/lint/build commands the verify stage should run (leave empty if none).
 
 ## 3. Write
 

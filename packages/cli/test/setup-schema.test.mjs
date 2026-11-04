@@ -8,6 +8,7 @@ import path from 'node:path';
 import { KNOWN_FIELDS, configLayout, headerFor, validateConfig, validateWorkflow } from '../src/setup-schema.mjs';
 import { parseYaml } from '../templates/shipline/bin/lib.mjs';
 import { CLI_ROOT, TEMPLATES } from './helpers.mjs';
+import { emitConfig, emitWorkflow } from '../src/yaml-emit.mjs';
 
 const AGENTS = readdirSync(path.join(CLI_ROOT, 'templates', 'claude', 'agents')).map((f) => f.replace(/\.md$/, ''));
 const WORKFLOW_IDS = readdirSync(path.join(TEMPLATES, 'workflows')).map((f) => f.replace(/\.yml$/, ''));
@@ -54,6 +55,62 @@ describe('config.yml checks', () => {
   test('a line break in a command is rejected', () => bad({ commands: { test: 'a\nb' } }, 'commands.test', /line breaks are not allowed here/));
   test('unknown keys are allowed (kept)', () => {
     assert.deepEqual(validateConfig({ ...baseConfig(), team_owner: 'x', commands: { test: '', typecheck: 'tsc' } }), []);
+  });
+
+  // Prepublish plan: `skills` names the repo's own .claude/skills/<name> folders.
+  describe('skills', () => {
+    test('the shipped config.yml has skills: []', () => {
+      assert.deepEqual(baseConfig().skills, []);
+    });
+    test('a list of names passes; absent or null passes', () => {
+      assert.deepEqual(validateConfig({ ...baseConfig(), skills: ['deploy', 'db_migrate'] }), []);
+      const { skills, ...noSkills } = baseConfig();
+      assert.deepEqual(validateConfig(noSkills), []);
+      assert.deepEqual(validateConfig({ ...baseConfig(), skills: null }), []);
+    });
+    test('skills must be a list', () => bad({ skills: 'deploy' }, 'skills', /list of skill names/));
+    test('a name with a path or space in it is rejected', () => {
+      for (const n of ['../x', 'a b', 'x/y', '', 3]) bad({ skills: ['ok', n] }, 'skills[1]', /letters, digits/);
+    });
+    test('a name with no .claude/skills/<name>/ folder is a warning, not an error (only when the folder list is given)', () => {
+      const issues = validateConfig({ ...baseConfig(), skills: ['deploy', 'gone'] }, { skills: ['deploy'] });
+      assert.deepEqual(issues.map((i) => [i.path, i.severity]), [['skills[1]', 'warning']]);
+      assert.match(issues[0].message, /\.claude\/skills\/gone\//);
+      assert.deepEqual(errorsOnly(issues), []);
+      assert.deepEqual(validateConfig({ ...baseConfig(), skills: ['gone'] }), [], 'no folder list: no warning');
+    });
+    test('a config with skills round-trips through the writer', () => {
+      const raw = readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8');
+      const model = { ...baseConfig(), skills: ['deploy', 'db_migrate'] };
+      const out = emitConfig(model, { layout: configLayout(), raw });
+      assert.deepEqual(parseYaml(out).skills, ['deploy', 'db_migrate']);
+      assert.equal(emitConfig(baseConfig(), { layout: configLayout(), raw }), raw, 'skills: [] is written back unchanged');
+    });
+  });
+});
+
+describe('the small.yml template (Small change workflow)', () => {
+  test('is shipped with the expected stages, agents and verify block', () => {
+    assert.ok(WORKFLOW_IDS.includes('small'));
+    const m = template('small');
+    assert.equal(m.id, 'small');
+    assert.equal(m.name, 'Small change');
+    assert.deepEqual(m.stages.map((s) => s.id), ['jira', 'implement', 'verify', 'pr']);
+    assert.deepEqual(m.stages.map((s) => s.agent ?? null), [null, 'builder', 'qa-bug-hunter', 'builder']);
+    const verify = m.stages.find((s) => s.id === 'verify');
+    assert.equal(verify.enforcement, 'block');
+    assert.equal(verify.confirm_to_advance, true);
+    assert.equal(verify.blocks[0].bash, '\\bgit\\s+commit\\b|\\bgh\\s+pr\\s+create\\b');
+    for (const s of m.stages) assert.ok(AGENTS.includes(s.agent ?? 'builder'), s.id);
+  });
+
+  test('round-trips: a no-edit emit gives the exact bytes, and the re-parsed model is equal', () => {
+    const text = readFileSync(path.join(TEMPLATES, 'workflows', 'small.yml'), 'utf8');
+    const model = parseYaml(text);
+    const out = emitWorkflow(model, { header: headerFor('small'), raw: text });
+    assert.equal(out, text);
+    assert.deepEqual(parseYaml(out), model);
+    assert.ok(text.startsWith(headerFor('small')));
   });
 });
 
@@ -161,7 +218,7 @@ describe('workflow checks', () => {
 
 describe('known fields, header and layout', () => {
   test('KNOWN_FIELDS lists the form fields from the schema table', () => {
-    assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands']);
+    assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands', 'skills']);
     assert.deepEqual(KNOWN_FIELDS.config.commands, ['test', 'lint', 'build']);
     for (const f of ['id', 'name', 'description', 'branch_type', 'stages']) assert.ok(KNOWN_FIELDS.workflow.top.includes(f), f);
     for (const f of ['id', 'name', 'artifact', 'description', 'optional', 'confirm_to_advance', 'condition', 'agent', 'enforcement', 'blocks']) {

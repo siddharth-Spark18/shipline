@@ -1,4 +1,5 @@
 {
   "plansDir": "docs/plans",
-  "wireframesDir": ".claude/wireframes"
+  "wireframesDir": ".claude/wireframes",
+  "researchDir": ".claude/research"
 }

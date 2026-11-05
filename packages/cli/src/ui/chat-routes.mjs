@@ -5,7 +5,7 @@ import { MIN_CLAUDE_VERSION, claudeHealth } from './claude.mjs';
 import { listCommands } from './commands.mjs';
 import { readDefaults, validateControls } from './controls.mjs';
 import { HttpError, MAX_IMAGE_BODY } from './http.mjs';
-import { getChat, listChats, readLock } from './sessions.mjs';
+import { getChat, listChats, liveLock } from './sessions.mjs';
 import { startShell, stopRun } from './shell.mjs';
 import { jiraStatus } from './stream.mjs';
 import { trustRepo } from './trust.mjs';
@@ -40,9 +40,11 @@ function parseImages(images) {
 }
 
 // A chat counts as active only when this server runs it, or another live server's lock names it.
+// A lock left by a server that exited without releasing it is ignored, or the chat would show as
+// active forever while every message to it fails with chat-ended.
 function withStatus(app, chat) {
   if (chat.status !== 'active') return chat;
-  const lock = readLock(app.repo.root);
+  const lock = liveLock(app.repo.root, app.port);
   const live = app.chats.activeId() === chat.id || (lock && lock.session_id === chat.id);
   return live ? chat : { ...chat, status: 'ended' };
 }

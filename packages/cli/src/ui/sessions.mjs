@@ -66,6 +66,19 @@ export function readLock(root) {
   }
 }
 
+// The lock held by *another* UI server that is still running, or null. A lock left behind by a server
+// that exited without releasing it (same host, dead pid) does not count, and neither does this
+// server's own lock (same pid and `ownPort`): the caller asks its own chats for that.
+export function liveLock(root, ownPort) {
+  const lock = readLock(root);
+  if (!lock || typeof lock !== 'object') return null;
+  if (lock.hostname === os.hostname()) {
+    if (lock.pid === process.pid && lock.port === ownPort) return null;
+    if (lock.pid !== process.pid && !pidAlive(lock.pid)) return null;
+  }
+  return lock;
+}
+
 export function pidAlive(pid) {
   try {
     process.kill(pid, 0);

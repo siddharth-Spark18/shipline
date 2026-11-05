@@ -187,6 +187,7 @@ describe('refusing', () => {
       selection({ agents: ['ghost'] }),
       selection({ clashes: { planner: 'maybe' } }),
       selection({ skills: ['../x'] }),
+      selection({ ci: 'yes' }),
     ]) {
       const dir = repo();
       const r = await initWith(dir, bad);
@@ -333,6 +334,51 @@ describe('selection logic (prompts stubbed)', () => {
     assert.equal(r.code, 1);
     assert.match(r.stderr, /^ {2}- \.claude\/skills\/shipline-workflow\/SKILL\.md$/m);
     assert.ok(!/agents\/planner/.test(r.stderr));
+    assert.deepEqual(tree(dir), before);
+  });
+});
+
+// Trust plan, C: the opt-in CI check. "Add a Shipline CI check for pull requests?" (default No; --yes leaves it out).
+describe('the CI check opt-in', () => {
+  const CI = '.github/workflows/shipline.yml';
+  const ciTemplate = () => readFileSync(path.join(CLI_ROOT, 'templates', 'github', 'shipline.yml'));
+
+  test('yes: writes .github/workflows/shipline.yml from the template and records its hash in VERSION.files', async () => {
+    const dir = repo();
+    const r = await initWith(dir, selection({ ci: true }));
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(readFileSync(path.join(dir, CI)).equals(ciTemplate()));
+    assert.equal(versionOf(dir).files[CI], sha(ciTemplate()));
+    assert.match(r.stdout, /Added the pull-request check \.github\/workflows\/shipline\.yml \(paste `node \.shipline\/bin\/stage\.mjs pr-summary` into PR descriptions\)\./);
+    // The workflow is not counted among the files "under .shipline/ and .claude/".
+    const count = (out) => Number(/created (\d+) files under \.shipline\/ and \.claude\//.exec(out)[1]);
+    assert.equal(count(r.stdout), count((await initWith(repo(), selection())).stdout));
+  });
+
+  test('no (or no answer in the selection): nothing under .github/, and VERSION.files has no entry', async () => {
+    for (const sel of [selection({ ci: false }), selection()]) {
+      const dir = repo();
+      const r = await initWith(dir, sel);
+      assert.equal(r.code, 0, r.stderr);
+      assert.ok(!exists(dir, '.github'), JSON.stringify(sel));
+      assert.ok(!(CI in versionOf(dir).files));
+      assert.ok(!/Added the pull-request check/.test(r.stdout));
+    }
+  });
+
+  test('--yes leaves it out', () => {
+    const dir = repo();
+    const r = runInit(dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!exists(dir, '.github'));
+    assert.ok(!(CI in versionOf(dir).files));
+  });
+
+  test('a repo that already has its own .github/workflows/shipline.yml: init refuses (a collision) and writes nothing', async () => {
+    const dir = repo({ [CI]: 'name: ours\n' });
+    const before = tree(dir);
+    const r = await initWith(dir, selection({ ci: true }));
+    assert.equal(r.code, 1, r.stdout);
     assert.deepEqual(tree(dir), before);
   });
 });

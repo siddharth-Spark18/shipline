@@ -1,6 +1,8 @@
 // Small HTTP helpers shared by the UI server modules. Node 20+, no dependencies.
 
 export const MAX_BODY = 1024 * 1024;
+// The message and start-chat routes carry base64 images (5 per message, 5 MB each, plus base64 overhead).
+export const MAX_IMAGE_BODY = 40 * 1024 * 1024;
 
 // Thrown by handlers and checks; the server turns it into { error: { code, message, details? } }.
 export class HttpError extends Error {
@@ -34,22 +36,29 @@ export function sendError(res, err) {
   sendJson(res, status, { error });
 }
 
-// Reads at most MAX_BODY bytes. Over the cap the rest is read and thrown away (so the client gets its
+// Reads at most `max` bytes (default MAX_BODY). Over the cap the rest is read and thrown away (so the client gets its
 // response instead of a reset), then it rejects with 413.
-export function readBody(req) {
+export function readBody(req, { max = MAX_BODY } = {}) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
     let tooLarge = false;
     req.on('data', (chunk) => {
       size += chunk.length;
-      if (size > MAX_BODY) {
+      if (size > max) {
         tooLarge = true;
         chunks.length = 0;
       } else if (!tooLarge) chunks.push(chunk);
     });
     req.on('end', () => {
-      if (tooLarge) reject(new HttpError(413, 'too-large', 'Request body is larger than 1 MB'));
+      if (tooLarge)
+        reject(
+          new HttpError(
+            413,
+            'too-large',
+            `Request body is larger than ${Math.round(max / (1024 * 1024))} MB`,
+          ),
+        );
       else resolve(Buffer.concat(chunks));
     });
     req.on('error', reject);

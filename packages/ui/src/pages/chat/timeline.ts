@@ -1,10 +1,27 @@
 // Turns Claude Code's stream-json events (and the server's history entries) into timeline items.
 // Unknown event types and odd shapes are ignored, never thrown on.
 
+import type { ImageData } from '@/lib/types';
+
 export type NoticeLevel = 'blocked' | 'reminder' | 'notice' | 'denied' | 'usage-limit' | 'info';
 
 export type Item =
-  | { kind: 'user'; id: string; text: string }
+  | { kind: 'user'; id: string; text: string; images?: ImageData[] }
+  /** An image from history, shown like a user message (it came with the user text next to it). */
+  | { kind: 'image'; id: string; media_type: string; data: string }
+  /** A `!` command run: this page session only, never in history. */
+  | {
+      kind: 'shell';
+      id: string;
+      command: string;
+      startedAt?: number | string;
+      output: string;
+      truncated: boolean;
+      running: boolean;
+      code?: number | null;
+      signal?: string | null;
+      durationMs?: number;
+    }
   | {
       kind: 'text';
       id: string;
@@ -195,6 +212,12 @@ function userEvent(out: Item[], ev: Rec, ctx: StreamCtx) {
   if (!Array.isArray(msg.content)) return;
   for (const block of msg.content) {
     if (!isRec(block)) continue;
+    if (block.type === 'image' && ctx.history && isRec(block.source)) {
+      const data = asStr(block.source.data);
+      const mt = asStr(block.source.media_type);
+      if (data && mt) out.push({ kind: 'image', id: nextId('i'), media_type: mt, data });
+      continue;
+    }
     if (block.type === 'text' && ctx.history) {
       const text = asStr(block.text) ?? '';
       if (text.trim()) out.push({ kind: 'user', id: nextId('u'), text });
@@ -294,6 +317,9 @@ function itemKey(it: Item): string | null {
   }
 }
 
+const imageKey = (img: ImageData) =>
+  `${img.media_type}:${img.data.length}:${img.data.slice(0, 64)}`;
+
 /**
  * History (from Claude's session file) followed by live items, without the overlap. Live copies
  * win: they carry the running/result state. History items already seen live are dropped.
@@ -306,7 +332,17 @@ export function mergeHistory(history: Item[], live: Item[]): Item[] {
     const k = itemKey(it);
     if (k) liveKeys.add(k);
   }
-  return [...history.filter((it) => !liveKeys.has(itemKey(it) ?? '')), ...live];
+  // A live user message carries its images; the history copies of them are dropped too.
+  const liveImages = new Set<string>();
+  for (const it of live)
+    if (it.kind === 'user') it.images?.forEach((i) => liveImages.add(imageKey(i)));
+  return [
+    ...history.filter(
+      (it) =>
+        !liveKeys.has(itemKey(it) ?? '') && !(it.kind === 'image' && liveImages.has(imageKey(it))),
+    ),
+    ...live,
+  ];
 }
 
 /** Folds one stream-json event into the items. Returns a new array; `items` is not changed. */
@@ -373,6 +409,11 @@ export function normalizeHistory(history: unknown[] | null | undefined): Item[] 
           ? { kind: 'user', id: nextId('u'), text }
           : { kind: 'text', id: nextId('a'), text },
       );
+    } else if (entry.kind === 'image') {
+      // { kind: 'image', media_type, data } (transcript.mjs)
+      const data = asStr(entry.data);
+      const mt = asStr(entry.media_type);
+      if (data && mt) items.push({ kind: 'image', id: nextId('i'), media_type: mt, data });
     } else if (entry.kind === 'tool-result') {
       // { kind: 'tool-result', toolUseId, text, isError, notice?: 'shipline-block' }
       const text = asStr(entry.text) ?? '';

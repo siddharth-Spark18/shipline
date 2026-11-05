@@ -5,8 +5,9 @@ import { OtherFields } from '@/pages/setup/other-fields';
 import { setOptional } from '@/pages/setup/draft';
 import type { ConfigModel, SetupFile } from '@/lib/types';
 
-// `skills` is edited in the Agents & skills section, so it is not listed as an "other field" either.
-const TOP_KEYS = ['branch_pattern', 'tracker', 'commands', 'skills'];
+// `skills` is edited in the Agents & skills section and `ci` in the CI check section, so neither is listed
+// as an "other field" here.
+const TOP_KEYS = ['branch_pattern', 'tracker', 'commands', 'skills', 'ci'];
 const COMMAND_KEYS = ['test', 'lint', 'build'];
 
 function patternError(v: string | null | undefined): string | null {

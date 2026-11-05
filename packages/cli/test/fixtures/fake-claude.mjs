@@ -24,6 +24,8 @@
 //     @ignore-sigterm          from now on SIGTERM is ignored (the server must SIGKILL)
 //     @spawn-child             start a long-lived grandchild in this process group; its pid is recorded in
 //                              $FAKE_CLAUDE_ARGV_OUT as a {"child": pid} line
+//     @spawn-stubborn-child    the same, but the grandchild ignores SIGTERM (it outlives a Stop: the Trust plan's
+//                              leftover processes); it waits until the grandchild's handler is installed
 //     @stage-start <title>     run the repo's .shipline/bin/stage.mjs start --workflow feature --title <title>
 //                              (stage.mjs reads SHIPLINE_SESSION from this process's environment)
 //     @approve <json>          start the MCP server named in --mcp-config (once; with its env), do initialize /
@@ -31,6 +33,8 @@
 //                              arguments. The parsed answer is appended to $FAKE_CLAUDE_RELAY_OUT and a stream-json
 //                              tool_result for arguments.tool_use_id is emitted (is_error for a deny).
 //   After the script, every further user message gets a short default turn (assistant text + result).
+//   With $FAKE_CLAUDE_STDIN_OUT set, every stream-json user message read from stdin is appended there as one
+//   JSON line, exactly as received (the image tests check the content blocks).
 //   Exits 0 when stdin closes.
 import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from 'node:fs';
@@ -116,6 +120,7 @@ rl.on('line', (line) => {
     return;
   }
   if (msg.type !== 'user') return;
+  if (process.env.FAKE_CLAUDE_STDIN_OUT) appendFileSync(process.env.FAKE_CLAUDE_STDIN_OUT, JSON.stringify(msg) + '\n');
   if (userWaiter) {
     const w = userWaiter;
     userWaiter = null;
@@ -245,6 +250,18 @@ async function main() {
         break;
       case '@spawn-child': {
         const c = spawn(process.execPath, ['-e', 'setInterval(() => {}, 60000)'], { stdio: 'ignore' });
+        record({ child: c.pid });
+        break;
+      }
+      case '@spawn-stubborn-child': {
+        // A grandchild that ignores SIGTERM (only SIGKILL ends it), so it outlives a Stop. Waits until the
+        // handler is installed, so a Stop right after this can't beat it.
+        const c = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); process.stdout.write('ready\\n'); setInterval(() => {}, 60000)"], {
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        await new Promise((resolve) => c.stdout.once('data', resolve));
+        c.stdout.destroy();
+        c.unref();
         record({ child: c.pid });
         break;
       }

@@ -13,6 +13,7 @@ import { initLog, log } from './log.mjs';
 import { openBrowser } from './open-browser.mjs';
 import { createPrompts } from './prompts.mjs';
 import { resolveRepo } from './repo.mjs';
+import { stopEverything as stopAllShells } from './shell.mjs';
 import { routes as setupRoutes } from './setup.mjs';
 import { createHub } from './sse.mjs';
 import { routes as taskRoutes } from './tasks.mjs';
@@ -209,7 +210,10 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
           throw new HttpError(405, 'method-not-allowed', 'Method not allowed');
         throw new HttpError(404, 'not-found', 'Not found');
       }
-      const body = req.method === 'POST' ? parseJsonBody(await readBody(req)) : undefined;
+      const body =
+        req.method === 'POST'
+          ? parseJsonBody(await readBody(req, { max: route.maxBody }))
+          : undefined;
       const result = await route.handler({ req, res, url, body, params: route.params });
       if (!res.headersSent) sendJson(res, 200, result === undefined ? {} : result);
     } catch (e) {
@@ -249,6 +253,7 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
 
   // After http, so shutdown stops the claude process group and releases the lock before the server closes.
   closers.push({ name: 'chats', close: () => app.chats.close() });
+  closers.push({ name: 'shell', close: () => stopAllShells() });
 
   let shuttingDown = false;
   async function shutdown(code, reason) {

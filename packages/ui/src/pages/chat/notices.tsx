@@ -130,6 +130,24 @@ export function FatalNotice({
   );
 }
 
+/** After Stop: something Claude started is still running. The developer decides whether to kill it. */
+export function OrphansNotice({ onKill, killing }: { onKill: () => void; killing: boolean }) {
+  return (
+    <Alert className="border-l-4 border-l-notice-reminder">
+      <OctagonAlertIcon />
+      <AlertTitle>Still running</AlertTitle>
+      <AlertDescription className="flex flex-col gap-2">
+        <p>Processes started in this chat are still running.</p>
+        <div>
+          <Button size="sm" variant="outline" disabled={killing} onClick={onKill}>
+            {killing ? 'Killing...' : 'Kill them'}
+          </Button>
+        </div>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
 /** Shown instead of the composer when `claude` is missing or unusable (412). */
 export function ClaudeMissingNotice({ code, message }: { code: string; message: string }) {
   return (

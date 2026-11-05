@@ -4,16 +4,20 @@
 //   node .shipline/bin/stage.mjs start --workflow feature --title "Add export" [--ticket PROJ-12] [--ui true|false]
 //   node .shipline/bin/stage.mjs resume <task folder name or absolute path>
 //   node .shipline/bin/stage.mjs status [--json]
-//   node .shipline/bin/stage.mjs advance [--confirmed]
-//   node .shipline/bin/stage.mjs skip [--reason "..."] [--force]
+//   node .shipline/bin/stage.mjs advance
+//   node .shipline/bin/stage.mjs skip [--reason "..."]
 //   node .shipline/bin/stage.mjs reopen <stage>
 //   node .shipline/bin/stage.mjs flag ui true|false
+//   node .shipline/bin/stage.mjs pr-summary
+// A confirm_to_advance stage (and skipping a non-optional stage) needs the developer's own answer to the
+// question that `advance` / `skip` prints; there are no override flags.
 // Session: $SHIPLINE_SESSION (set by the SessionStart hook) or --session <id>. Task override: --task <folder>.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   findRoot, loadConfig, loadWorkflow, listWorkflows, readManifest, manifestPath, readSession, statePath,
-  tasksDir, writeJson, isDone, currentStage, slugify, stageEnforcement,
+  tasksDir, writeJson, isDone, currentStage, slugify, stageEnforcement, confirmQuestion, readApprovals,
+  consumeApproval, CONFIRM_OPTIONS,
 } from './lib.mjs';
 
 function die(msg) {
@@ -40,6 +44,12 @@ function parseArgs(argv) {
 
 const { pos, flags } = parseArgs(process.argv.slice(2));
 const cmd = pos[0];
+if (flags.confirmed !== undefined || flags.force !== undefined) {
+  die(
+    '--confirmed and --force no longer exist. Run `advance` (or `skip`) without them: when the developer must decide, ' +
+      'it prints a question to ask them with AskUserQuestion, and the stage moves on only after they answer it.',
+  );
+}
 const root = findRoot(process.cwd());
 if (!root) die('no .shipline/config.yml found. Run `npx @forgeyard/shipline init` first.');
 
@@ -112,12 +122,71 @@ function describeCurrent(taskDir, manifest, wf) {
     `Current stage: ${sc.name || cur.id} [${cur.id}]`,
     sc.artifact ? `Artifact to produce: ${taskDir}/${sc.artifact}` : 'No required artifact.',
     sc.agent ? `Suggested agent: ${sc.agent}` : null,
-    `Enforcement: ${stageEnforcement(sc)}. Confirm with the developer before advancing: ${sc.confirm_to_advance ? 'YES (pass --confirmed after they agree)' : 'no (auto-advance)'}`,
+    `Enforcement: ${stageEnforcement(sc)}. Confirm with the developer before advancing: ${sc.confirm_to_advance ? 'YES (`advance` prints the question to ask them; it only goes through after they answer it)' : 'no (auto-advance)'}`,
   ].filter(Boolean);
   if (Array.isArray(cfg.skills) && cfg.skills.length) lines.push(`Repo skills you can use: ${cfg.skills.join(', ')}`);
   const rules = rulesFor(cur.id);
   if (rules) lines.push('', `Repo rules for this stage (.shipline/rules/${cur.id}.md):`, rules);
   return lines.join('\n');
+}
+
+// ---------- confirmations ----------
+
+function clearPending() {
+  if (!sessionId) return;
+  const st = readSession(root, sessionId);
+  if (st && st.pending_confirm) {
+    const { pending_confirm: _gone, ...rest } = st;
+    writeJson(statePath(root, sessionId), rest);
+  }
+}
+
+function questionText(q) {
+  return [
+    'Ask the developer this with the AskUserQuestion tool, exactly as written (do not change the wording):',
+    `  header: ${q.header}`,
+    `  question: ${q.question}`,
+    `  options: ${q.options.map((o) => `"${o}"`).join(' and ')}`,
+  ].join('\n');
+}
+
+// The developer's own answer for advancing past / skipping the current stage. Returns the approval it used
+// (and clears pending_confirm), or ends the process after printing the question to ask.
+function requireAnswer(kind, stageId, taskDir, manifest) {
+  const verb = kind === 'advance' ? 'confirm advancing' : 'confirm skipping';
+  if (!sessionId) die(`no session id; confirmations need the session that asked the question. Pass --session <id> or set SHIPLINE_SESSION.`);
+  const q = confirmQuestion(stageId, kind, manifest.task.slug);
+  const st = readSession(root, sessionId) || { session_id: sessionId };
+  const pend = st.pending_confirm;
+  // Re-running keeps the original issued_at, so an answer already given stays valid.
+  const same = pend && pend.stage === stageId && pend.kind === kind && pend.question === q.question && pend.task_dir === taskDir;
+  const pending = same ? pend : { stage: stageId, kind, question: q.question, issued_at: now(), task_dir: taskDir };
+  if (!same) writeJson(statePath(root, sessionId), { ...st, pending_confirm: pending });
+
+  const issued = Date.parse(pending.issued_at);
+  const yes = CONFIRM_OPTIONS[kind].yes;
+  const approval = consumeApproval(
+    root,
+    sessionId,
+    (a) =>
+      a.kind === kind &&
+      a.stage === stageId &&
+      typeof a.task_dir === 'string' && path.resolve(a.task_dir) === path.resolve(taskDir) &&
+      a.answer === yes &&
+      (a.question === undefined || a.question === pending.question) &&
+      Date.parse(a.at) > issued,
+  );
+  if (approval) {
+    clearPending();
+    return approval;
+  }
+  const declined = readApprovals(root, sessionId).some((a) => a.kind === kind && a.stage === stageId && a.answer === CONFIRM_OPTIONS[kind].no && Date.parse(a.at) > issued);
+  console.error(
+    `shipline: stage "${stageId}" needs the developer to ${verb}${declined ? ' (they answered "' + CONFIRM_OPTIONS[kind].no + '" last time)' : ''}.\n` +
+      `${questionText(q)}\n` +
+      `Then run \`${cmd}\` again. Do not pass any flag or edit any progress file to get around this.`,
+  );
+  process.exit(1);
 }
 
 // Moves to the next stage that applies; marks conditional stages that do not apply as skipped.
@@ -132,6 +201,7 @@ function activateNext(manifest, wf) {
       if (manifest.flags.ui === false) {
         ms.status = 'skipped';
         ms.reason = 'not UI work';
+        ms.skipped = { via: 'optional', at: now(), reason: ms.reason };
         ms.updated = now();
         continue;
       }
@@ -202,7 +272,16 @@ switch (cmd) {
     const taskDir = activeTaskDir();
     const { manifest, wf } = load(taskDir);
     if (flags.json) console.log(JSON.stringify({ task_dir: taskDir, ...manifest }, null, 2));
-    else console.log(statusText(taskDir, manifest, wf));
+    else {
+      console.log(statusText(taskDir, manifest, wf));
+      // A confirmation question that is still open (for example after resuming in a new session) is printed again.
+      const cur = currentStage(manifest);
+      const st = sessionId ? readSession(root, sessionId) : null;
+      const pend = st && st.pending_confirm;
+      if (cur && pend && pend.stage === cur.id && pend.task_dir === taskDir) {
+        console.log(`\nA confirmation is still open (run \`${pend.kind}\` after the developer answers).\n${questionText(confirmQuestion(cur.id, pend.kind, manifest.task.slug))}`);
+      }
+    }
     break;
   }
 
@@ -214,17 +293,25 @@ switch (cmd) {
     if (!cur) die('all stages are already done.');
     const sc = stageCfg(wf, cur.id);
     if (cmd === 'advance') {
-      if (sc.confirm_to_advance && !flags.confirmed) {
-        die(`stage "${cur.id}" needs the developer's confirmation to advance. Ask them, then re-run with --confirmed.`);
-      }
-      if (sc.artifact && !flags.force && !existsSync(path.join(taskDir, sc.artifact))) {
+      if (sc.artifact && !existsSync(path.join(taskDir, sc.artifact))) {
         die(`stage "${cur.id}" is not finished: ${taskDir}/${sc.artifact} does not exist yet.`);
       }
+      if (sc.confirm_to_advance) {
+        const a = requireAnswer('advance', cur.id, taskDir, manifest);
+        cur.confirmed = { via: 'answer', at: a.at };
+      } else clearPending();
       cur.status = 'done';
     } else {
-      if (!sc.optional && !sc.condition && !flags.force) die(`stage "${cur.id}" is not optional. Use --force only if the developer agreed.`);
+      const reason = typeof flags.reason === 'string' ? flags.reason : 'skipped';
+      if (!sc.optional && !sc.condition) {
+        const a = requireAnswer('skip', cur.id, taskDir, manifest);
+        cur.skipped = { via: 'answer', at: a.at, reason };
+      } else {
+        clearPending();
+        cur.skipped = { via: 'optional', at: now(), reason };
+      }
       cur.status = 'skipped';
-      cur.reason = typeof flags.reason === 'string' ? flags.reason : 'skipped';
+      cur.reason = reason;
     }
     cur.updated = now();
     activateNext(manifest, wf);
@@ -242,12 +329,17 @@ switch (cmd) {
       if (i > idx) {
         s.status = 'pending';
         delete s.reason;
+        delete s.confirmed;
+        delete s.skipped;
       }
     });
     manifest.stages[idx].status = 'in_progress';
     delete manifest.stages[idx].reason;
+    delete manifest.stages[idx].confirmed;
+    delete manifest.stages[idx].skipped;
     manifest.complete = false;
     save(taskDir, manifest);
+    clearPending();
     console.log(`Reopened ${pos[1]}; later stages reset to pending.\n\n${describeCurrent(taskDir, manifest, wf)}`);
     break;
   }
@@ -262,8 +354,15 @@ switch (cmd) {
     break;
   }
 
+  case 'pr-summary': {
+    const taskDir = activeTaskDir();
+    const { manifest, wf } = load(taskDir);
+    console.log(prSummary(manifest, wf));
+    break;
+  }
+
   default:
-    console.log('usage: stage.mjs workflows | start | resume <task> | status | advance [--confirmed] | skip | reopen <stage> | flag ui true|false');
+    console.log('usage: stage.mjs workflows | start | resume <task> | status | advance | skip | reopen <stage> | flag ui true|false | pr-summary');
     process.exit(cmd ? 1 : 0);
 }
 
@@ -271,4 +370,27 @@ function statusText(taskDir, manifest, wf) {
   const mark = { done: '[x]', skipped: '[-]', in_progress: '[>]', pending: '[ ]' };
   const rows = manifest.stages.map((s) => `${mark[s.status] || '[ ]'} ${s.id}${s.reason ? ` (${s.reason})` : ''}`);
   return `Task ${taskDir} (${wf.id}) ui=${manifest.flags.ui}\n${rows.join('\n')}\n\n${describeCurrent(taskDir, manifest, wf)}`;
+}
+
+// How a finished stage was decided: 'answer' (the developer's own answer), 'auto' (no question was needed), or null.
+function provenance(ms, sc) {
+  if (ms.status === 'done') return ms.confirmed && ms.confirmed.via === 'answer' ? 'answer' : sc.confirm_to_advance ? null : 'auto';
+  if (ms.status === 'skipped') return ms.skipped ? (ms.skipped.via === 'answer' ? 'answer' : 'auto') : 'auto';
+  return null;
+}
+
+// The PR description block: a visible table, then the hidden data that .shipline/bin/ci-check.mjs reads.
+function prSummary(manifest, wf) {
+  const label = { answer: 'your answer', auto: 'auto' };
+  const rows = [];
+  const data = [];
+  for (const ms of manifest.stages) {
+    const sc = stageCfg(wf, ms.id);
+    const status = ms.status === 'done' || ms.status === 'skipped' ? ms.status : 'pending';
+    const confirmed = provenance(ms, sc);
+    rows.push(`| ${ms.id} | ${status} | ${label[confirmed] || '\u2014'} |`);
+    data.push({ id: ms.id, status, enforcement: stageEnforcement(sc), confirmed });
+  }
+  const json = JSON.stringify({ v: 1, workflow: wf.id, task: manifest.task.slug, stages: data });
+  return ['### Shipline', '| Stage | Status | Confirmed |', '| --- | --- | --- |', ...rows, `<!-- shipline:summary ${json} -->`].join('\n');
 }

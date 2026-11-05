@@ -141,6 +141,10 @@ const DEFAULT_CONFIG = {
   skills: [],
 };
 
+// CI check settings (config.yml `ci:`); the section is optional and these apply when it is absent.
+export const CI_MISSING_BLOCK = ['fail-unless-label', 'warn', 'fail'];
+export const DEFAULT_CI = { missing_block: 'fail-unless-label', skip_label: 'shipline:skip' };
+
 export function readYamlFile(file) {
   try {
     return parseYaml(readFileSync(file, 'utf8'));
@@ -153,6 +157,12 @@ export function loadConfig(root) {
   const cfg = { ...DEFAULT_CONFIG, ...(readYamlFile(path.join(root, '.shipline', 'config.yml')) || {}) };
   // skills: names of the repo's own .claude/skills/<name>; anything that is not a list of names is ignored.
   cfg.skills = Array.isArray(cfg.skills) ? cfg.skills.filter((n) => typeof n === 'string' && n) : [];
+  // ci: unknown or malformed values fall back to the defaults.
+  const ci = cfg.ci && typeof cfg.ci === 'object' && !Array.isArray(cfg.ci) ? cfg.ci : {};
+  cfg.ci = {
+    missing_block: CI_MISSING_BLOCK.includes(ci.missing_block) ? ci.missing_block : DEFAULT_CI.missing_block,
+    skip_label: typeof ci.skip_label === 'string' && ci.skip_label.trim() ? ci.skip_label.trim() : DEFAULT_CI.skip_label,
+  };
   return cfg;
 }
 
@@ -299,8 +309,86 @@ export function writeJson(file, data) {
   renameSync(tmp, file); // last write wins if two sessions touch one task
 }
 
+export function approvalsPath(root, sessionId) {
+  return path.join(storeDir(root), 'approvals', `${safeId(sessionId)}.jsonl`);
+}
+
 export function readSession(root, sessionId) {
   return sessionId ? readJson(statePath(root, sessionId)) : null;
+}
+
+// ---------- confirmations (answers the developer gave to stage.mjs's questions) ----------
+
+// The only answers the recorder stores, and the ones that count.
+export const CONFIRM_OPTIONS = {
+  advance: { yes: 'Advance', no: 'Not yet' },
+  skip: { yes: 'Skip', no: "Don't skip" },
+};
+
+// The single source of the exact AskUserQuestion text. kind is 'advance' or 'skip'.
+export function confirmQuestion(stage, kind, slug) {
+  const o = CONFIRM_OPTIONS[kind];
+  if (!o) throw new Error(`unknown confirmation kind "${kind}"`);
+  return {
+    header: 'Shipline',
+    question: kind === 'advance' ? `Advance past "${stage}" in task ${slug}?` : `Skip "${stage}" in task ${slug}?`,
+    options: [o.yes, o.no],
+  };
+}
+
+// Every recorded answer of a session, oldest first. Unreadable lines are skipped.
+export function readApprovals(root, sessionId) {
+  let text;
+  try {
+    text = readFileSync(approvalsPath(root, sessionId), 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') return [];
+    throw e;
+  }
+  const out = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const a = JSON.parse(line);
+      if (a && typeof a === 'object') out.push(a);
+    } catch {
+      // A damaged line never counts as an approval.
+    }
+  }
+  return out;
+}
+
+// Marks the first unused approval for which match(approval) is true as used (the file is rewritten
+// atomically) and returns it, or returns null when there is none.
+export function consumeApproval(root, sessionId, match) {
+  const file = approvalsPath(root, sessionId);
+  let text;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  }
+  const lines = text.split(/\r?\n/);
+  let used = null;
+  for (let i = 0; i < lines.length && !used; i++) {
+    if (!lines[i].trim()) continue;
+    let a;
+    try {
+      a = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    if (!a || typeof a !== 'object' || a.used_at || !match(a)) continue;
+    a.used_at = new Date().toISOString();
+    lines[i] = JSON.stringify(a);
+    used = a;
+  }
+  if (!used) return null;
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, lines.join('\n'));
+  renameSync(tmp, file);
+  return used;
 }
 
 // taskDir is an absolute store path (a repo-relative path still resolves, for state files not yet migrated).

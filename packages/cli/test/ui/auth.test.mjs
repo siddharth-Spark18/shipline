@@ -59,7 +59,7 @@ describe('status and diagnostics', () => {
     assert.ok(files && Object.keys(files).length > 0);
     assert.deepEqual(status.json, {
       uiVersion: pkg,
-      repoVersion: { package: pkg, interface: 3, files, excluded: [] },
+      repoVersion: { package: pkg, interface: 4, files, excluded: [] },
       versionState: 'same',
       root: dir,
       storeDir: storeOf(dir),
@@ -68,7 +68,7 @@ describe('status and diagnostics', () => {
     const d = await api(ui, 'GET', '/api/diagnostics');
     assert.equal(d.status, 200);
     assert.equal(d.json.root, dir);
-    assert.equal(d.json.uiInterface, 3);
+    assert.equal(d.json.uiInterface, 4);
     assert.equal(d.json.storeDir, storeOf(dir));
     assert.equal(d.json.needsUpgrade, false);
     assert.equal(d.json.port, ui.port);

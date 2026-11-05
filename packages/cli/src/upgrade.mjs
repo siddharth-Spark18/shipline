@@ -9,10 +9,10 @@ import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline/promises';
 import { detectEol, parseYaml, toEol } from '../templates/shipline/bin/lib.mjs';
 import {
-  CLAUDE_MD_KEY, END, PACKAGE_VERSION, SETTINGS_KEY, START, VERSION_FILE,
+  CI_WORKFLOW, CI_WORKFLOW_TEMPLATE, CLAUDE_MD_KEY, END, PACKAGE_VERSION, SETTINGS_KEY, START, VERSION_FILE,
   canonicalSettingsPart, claudeMdBlock, claudeMdSection, ownedTemplateFiles, sha256, templateSettings,
 } from './hashes.mjs';
-import { INTERFACE, compareInterface, readRepoVersion } from './interface.mjs';
+import { INTERFACE, STORE_INTERFACE, compareInterface, readRepoVersion } from './interface.mjs';
 import { mergeSettingsObject, parseSettings } from './init.mjs';
 import { configLayout } from './setup-schema.mjs';
 import { encodePath, shiplineHome, storeDir } from './store.mjs';
@@ -177,10 +177,32 @@ function planFiles(root, version, force) {
     }
   }
 
+  // The optional CI workflow: updated only when the repo has it and it is Shipline's unedited copy; never added.
+  const ciAbs = path.join(root, CI_WORKFLOW);
+  if (existsSync(ciAbs) && lstatSync(ciAbs).isFile()) {
+    const data = readFileSync(CI_WORKFLOW_TEMPLATE);
+    const newHash = sha256(data);
+    const current = readFileSync(ciAbs);
+    const curHash = sha256(current);
+    const knownCopy = Boolean(record && record[CI_WORKFLOW]) || Object.prototype.hasOwnProperty.call(KNOWN[CI_WORKFLOW] || {}, curHash);
+    if (knownCopy) {
+      if (curHash === newHash) {
+        plan.same.push(CI_WORKFLOW);
+        plan.hashes[CI_WORKFLOW] = newHash;
+      } else if (isUnedited(curHash, CI_WORKFLOW, record) || force) {
+        plan.replace.push({ to: CI_WORKFLOW, data, forced: !isUnedited(curHash, CI_WORKFLOW, record) });
+        plan.hashes[CI_WORKFLOW] = newHash;
+      } else {
+        plan.skip.push({ to: CI_WORKFLOW, diff: lineDiff(current.toString('utf8'), data.toString('utf8')) });
+        if (record && record[CI_WORKFLOW]) plan.hashes[CI_WORKFLOW] = record[CI_WORKFLOW];
+      }
+    }
+  }
+
   // Shipline files that this version no longer ships: removed only when unedited.
   const candidates = new Set(record ? Object.keys(record) : Object.keys(KNOWN));
   for (const to of candidates) {
-    if (ownedPaths.has(to) || excluded.has(to) || to === CLAUDE_MD_KEY || to === SETTINGS_KEY) continue;
+    if (ownedPaths.has(to) || excluded.has(to) || to === CLAUDE_MD_KEY || to === SETTINGS_KEY || to === CI_WORKFLOW) continue;
     const abs = path.join(root, to);
     if (!existsSync(abs) || !lstatSync(abs).isFile()) continue;
     const curHash = sha256(readFileSync(abs));
@@ -517,7 +539,7 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     return 1;
   }
   const artifactRoot = cfgPlan.artifactRoot || 'docs/shipline';
-  const needsMigration = version.interface < INTERFACE;
+  const needsMigration = version.interface < STORE_INTERFACE;
   const mig = needsMigration
     ? planMigration(root, artifactRoot, storePath, hasGit)
     : { tasks: [], state: [], leftovers: [], problems: [], warnings: [], stateRoot: null };

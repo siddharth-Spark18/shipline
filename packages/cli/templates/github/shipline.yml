@@ -1,0 +1,18 @@
+# Added by Shipline. Fails a pull request whose description has no Shipline summary (see ci: in .shipline/config.yml)
+# or whose summary shows a "block" stage that isn't done. Remove this file to turn the check off.
+name: Shipline
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  shipline:
+    name: Shipline check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node .shipline/bin/ci-check.mjs

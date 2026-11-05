@@ -25,6 +25,8 @@ export function fileLabel(f: { kind: string; id?: string }): string {
       return `workflows/${f.id}.yml`;
     case 'agent':
       return `.claude/agents/${f.id}.md`;
+    case 'ci':
+      return '.github/workflows/shipline.yml';
     default:
       return `rules/${f.id}.md`;
   }

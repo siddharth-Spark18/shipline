@@ -13,6 +13,12 @@
         "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.shipline/bin/prompt-submit.mjs\"" }]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.shipline/bin/record-answer.mjs\"" }]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",

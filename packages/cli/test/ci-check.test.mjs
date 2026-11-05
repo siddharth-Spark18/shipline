@@ -1,0 +1,286 @@
+// Trust plan (docs/plans/shipline-trust.md), C and Tests: .shipline/bin/ci-check.mjs, the pull-request check.
+// Runs the vendored script of a real temp repo the way the GitHub workflow does (cwd = the checkout, with
+// GITHUB_EVENT_PATH and GITHUB_STEP_SUMMARY set). Node 18+, so it stays in test:hooks.
+import { test, before, after, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { makeRepo, removeDir, run, stage, tmpDir } from './helpers.mjs';
+
+let dir;
+let scratch;
+let configText;
+let n = 0;
+
+before(() => {
+  dir = makeRepo({ commitInit: true });
+  scratch = tmpDir('shipline-ci-');
+  configText = readFileSync(path.join(dir, '.shipline', 'config.yml'), 'utf8');
+});
+after(() => {
+  removeDir(dir);
+  removeDir(scratch);
+});
+
+// The shipped config.yml with its ci: block replaced (null = no ci: block at all).
+function setCi(ci) {
+  const base = configText.replace(/\n# Optional\. The pull-request check[\s\S]*$/, '\n');
+  assert.notEqual(base, configText, 'the template ends with the ci block');
+  const block = ci === null ? '' : `\nci:\n${Object.entries(ci).map(([k, v]) => `  ${k}: ${v}`).join('\n')}\n`;
+  writeFileSync(path.join(dir, '.shipline', 'config.yml'), base + block);
+}
+
+// Runs ci-check.mjs for a PR with this body and these labels. Returns { code, stdout, stderr, summary }.
+function check(body, labels = [], { event, cwd = dir, summary = true } = {}) {
+  const i = ++n;
+  const eventPath = path.join(scratch, `event-${i}.json`);
+  const summaryPath = path.join(scratch, `summary-${i}.md`);
+  writeFileSync(eventPath, event !== undefined ? event : JSON.stringify({ action: 'opened', pull_request: { number: 7, body, labels: labels.map((name) => ({ name })) } }));
+  const env = { GITHUB_EVENT_PATH: eventPath, ...(summary ? { GITHUB_STEP_SUMMARY: summaryPath } : {}) };
+  const r = run(process.execPath, [path.join(dir, '.shipline', 'bin', 'ci-check.mjs')], { cwd, env });
+  return { ...r, summary: existsSync(summaryPath) ? readFileSync(summaryPath, 'utf8') : null };
+}
+
+// A PR body with a summary block for the feature workflow. Every stage is done (confirm stages by answer) unless
+// overridden: overrides = { <id>: { status, confirmed } | null (left out) }.
+const FEATURE = ['jira', 'feasibility', 'questions', 'plan', 'wireframes', 'implement', 'verify', 'pr'];
+const CONFIRM = new Set(['questions', 'plan', 'wireframes', 'verify']);
+function featureSummary(overrides = {}, extra = {}) {
+  const stages = FEATURE.filter((id) => overrides[id] !== null).map((id) => ({
+    id,
+    status: 'done',
+    enforcement: id === 'plan' || id === 'verify' ? 'block' : 'guide',
+    confirmed: CONFIRM.has(id) ? 'answer' : 'auto',
+    ...(overrides[id] || {}),
+  }));
+  return { v: 1, workflow: 'feature', task: 'add-export', stages, ...extra };
+}
+const block = (data) => `<!-- shipline:summary ${typeof data === 'string' ? data : JSON.stringify(data)} -->`;
+const body = (data) => `Adds the CSV export.\n\n### Shipline\n| Stage | Status | Confirmed |\n| --- | --- | --- |\n${block(data)}\n`;
+
+const errors = (r) => r.stdout.split('\n').filter((l) => l.startsWith('::error title=Shipline::'));
+
+describe('no summary block: ci.missing_block', () => {
+  test('fail-unless-label (the default): fails without the label, passes with "shipline:skip"', () => {
+    setCi({ missing_block: 'fail-unless-label', skip_label: 'shipline:skip' });
+    const r = check('Just a description.');
+    assert.equal(r.code, 1, r.stdout);
+    assert.deepEqual(errors(r), [
+      '::error title=Shipline::This pull request has no Shipline summary. Run `node .shipline/bin/stage.mjs pr-summary` and paste its output into the description, or add the "shipline:skip" label.',
+    ]);
+    const ok = check('Just a description.', ['bug', 'shipline:skip']);
+    assert.equal(ok.code, 0, ok.stdout);
+    assert.match(ok.stdout, /^::notice title=Shipline::No Shipline summary, but the "shipline:skip" label is set\.$/m);
+  });
+
+  test('fail-unless-label with a custom skip_label: only that label counts', () => {
+    setCi({ missing_block: 'fail-unless-label', skip_label: 'no-shipline' });
+    assert.equal(check('x', ['shipline:skip']).code, 1);
+    const r = check('x', ['no-shipline']);
+    assert.equal(r.code, 0, r.stdout);
+    assert.match(r.stdout, /"no-shipline" label is set/);
+  });
+
+  test('warn: passes with a ::warning:: annotation, with or without the label', () => {
+    setCi({ missing_block: 'warn', skip_label: 'shipline:skip' });
+    for (const labels of [[], ['shipline:skip']]) {
+      const r = check('x', labels);
+      assert.equal(r.code, 0, r.stdout);
+      assert.match(r.stdout, /^::warning title=Shipline::This pull request has no Shipline summary\./m);
+      assert.deepEqual(errors(r), []);
+    }
+  });
+
+  test('fail: always fails, even with the label', () => {
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip' });
+    for (const labels of [[], ['shipline:skip']]) {
+      const r = check('x', labels);
+      assert.equal(r.code, 1, r.stdout);
+      assert.deepEqual(errors(r), ['::error title=Shipline::This pull request has no Shipline summary. Run `node .shipline/bin/stage.mjs pr-summary` and paste its output into the description.']);
+    }
+  });
+
+  test('no ci: section, or an unknown mode: the defaults apply (fail-unless-label, shipline:skip)', () => {
+    for (const ci of [null, { missing_block: 'ignore', skip_label: '""' }]) {
+      setCi(ci);
+      assert.equal(check('x').code, 1, JSON.stringify(ci));
+      assert.equal(check('x', ['shipline:skip']).code, 0, JSON.stringify(ci));
+    }
+  });
+
+  test('a null body counts as no summary', () => {
+    setCi({ missing_block: 'fail-unless-label', skip_label: 'shipline:skip' });
+    const r = check(null, [], { event: JSON.stringify({ pull_request: { body: null, labels: [] } }) });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /has no Shipline summary/);
+  });
+});
+
+describe('a summary block', () => {
+  before(() => setCi({ missing_block: 'fail', skip_label: 'shipline:skip' }));
+
+  test('a valid block passes and writes the table to the job summary', () => {
+    const r = check(body(featureSummary()));
+    assert.equal(r.code, 0, r.stdout);
+    assert.deepEqual(errors(r), []);
+    assert.match(r.stdout, /the feature workflow summary checks out \(8 stages\)/);
+    assert.equal(
+      r.summary,
+      [
+        '### Shipline: feature / add-export',
+        '| Stage | Status | Confirmed |',
+        '| --- | --- | --- |',
+        '| jira | done | auto |',
+        '| feasibility | done | auto |',
+        '| questions | done | your answer |',
+        '| plan | done | your answer |',
+        '| wireframes | done | your answer |',
+        '| implement | done | auto |',
+        '| verify | done | your answer |',
+        '| pr | done | auto |',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  test('skipped stages pass when they are not block stages, or when the skip was answered or automatic', () => {
+    const r = check(
+      body(featureSummary({ jira: { status: 'skipped', confirmed: 'auto' }, wireframes: { status: 'skipped', confirmed: 'auto' }, verify: { status: 'skipped', confirmed: 'answer' } })),
+    );
+    assert.equal(r.code, 0, r.stdout);
+  });
+
+  test('a block stage that is not done fails (pending, missing from the summary, or skipped with no recorded decision)', () => {
+    const cases = [
+      [{ plan: { status: 'pending', confirmed: null } }, 'Stage "plan" is a block stage and is not done (it is pending).'],
+      [{ verify: null }, 'Stage "verify" is a block stage and is not done (it is missing from the summary).'],
+      [{ verify: { status: 'skipped', confirmed: null } }, 'Stage "verify" is a block stage and is not done (it is skipped).'],
+    ];
+    for (const [over, message] of cases) {
+      const r = check(body(featureSummary(over)));
+      assert.equal(r.code, 1, r.stdout);
+      assert.ok(errors(r).includes(`::error title=Shipline::${message}`), r.stdout);
+      assert.ok(r.summary.includes(`- ${message}`), 'the problems are listed in the job summary too');
+    }
+  });
+
+  test('enforcement comes from the repo\'s current workflow, not from the summary', () => {
+    const r = check(body(featureSummary({ plan: { status: 'pending', enforcement: 'guide', confirmed: null } })));
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /Stage "plan" is a block stage and is not done/);
+  });
+
+  test('a confirm_to_advance stage marked done without confirmed: "answer" fails', () => {
+    for (const confirmed of ['auto', null, undefined]) {
+      const r = check(body(featureSummary({ questions: { confirmed } })));
+      assert.equal(r.code, 1, `${confirmed}: ${r.stdout}`);
+      assert.deepEqual(errors(r), ['::error title=Shipline::Stage "questions" needs the developer\'s confirmation, but the summary doesn\'t show their answer.']);
+    }
+  });
+
+  test('JSON that doesn\'t parse fails', () => {
+    const r = check(body('{"v":1,"workflow":"feature",'));
+    assert.equal(r.code, 1);
+    assert.match(errors(r)[0], /The Shipline summary in the description is not valid JSON \(.+\)\. Paste the output of `stage\.mjs pr-summary` again, unchanged\./);
+    assert.equal(r.summary, null, 'nothing to summarize');
+  });
+
+  test('a block with no stage list fails', () => {
+    const r = check(body({ v: 1, workflow: 'feature', task: 'x' }));
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /has no stage list/);
+  });
+
+  test('an unknown workflow (or a bad workflow id) fails', () => {
+    for (const workflow of ['research', '../config', '']) {
+      const r = check(body(featureSummary({}, { workflow })));
+      assert.equal(r.code, 1, workflow);
+      assert.match(errors(r)[0], /The Shipline summary names a workflow this repo doesn't have/, workflow);
+    }
+  });
+
+  test('the last block in the description wins', () => {
+    const bad = block(featureSummary({ plan: { status: 'pending' } }));
+    assert.equal(check(`${bad}\n\nUpdated:\n${body(featureSummary())}`).code, 0);
+    assert.equal(check(`${body(featureSummary())}\n${bad}`).code, 1);
+  });
+
+  test('without GITHUB_STEP_SUMMARY it still checks, and writes no summary', () => {
+    const r = check(body(featureSummary()), [], { summary: false });
+    assert.equal(r.code, 0, r.stdout);
+    assert.equal(r.summary, null);
+  });
+});
+
+describe('the event and the checkout', () => {
+  test('an event with no pull_request fails', () => {
+    const r = check('', [], { event: JSON.stringify({ push: {} }) });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /This check only runs on pull_request events\./);
+  });
+
+  test('an unreadable event file fails', () => {
+    const r = check('', [], { event: 'not json' });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /Couldn't read the pull request event/);
+  });
+
+  test('a checkout without .shipline/config.yml fails', () => {
+    const empty = tmpDir('shipline-ci-empty-');
+    try {
+      const r = check('x', [], { cwd: empty });
+      assert.equal(r.code, 1);
+      assert.match(r.stdout, /No \.shipline\/config\.yml in this checkout/);
+    } finally {
+      removeDir(empty);
+    }
+  });
+});
+
+describe('end to end: stage.mjs pr-summary output pasted into a PR', () => {
+  test('passes once every block stage is done with the developer\'s answers; fails while one is still open', () => {
+    setCi({ missing_block: 'fail-unless-label', skip_label: 'shipline:skip' });
+    const wf = `id: mini
+name: Mini
+stages:
+  - id: plan
+    enforcement: block
+    confirm_to_advance: true
+  - id: build
+    enforcement: guide
+  - id: verify
+    enforcement: block
+`;
+    writeFileSync(path.join(dir, '.shipline', 'workflows', 'mini.yml'), wf);
+    try {
+      const s = 'ci-e2e';
+      assert.equal(stage(dir, ['start', '--workflow', 'mini', '--title', 'E2E'], s).code, 0);
+      const q = 'Advance past "plan" in task e2e?';
+      assert.equal(stage(dir, ['advance'], s).code, 1);
+      const rec = run(process.execPath, [path.join(dir, '.shipline', 'bin', 'record-answer.mjs')], {
+        cwd: dir,
+        input: JSON.stringify({
+          session_id: s,
+          cwd: dir,
+          hook_event_name: 'PostToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_use_id: 'toolu_e2e',
+          tool_input: { questions: [{ question: q, header: 'Shipline', options: [{ label: 'Advance' }, { label: 'Not yet' }], multiSelect: false }] },
+          tool_response: { answers: { [q]: 'Advance' } },
+        }),
+      });
+      assert.equal(rec.code, 0, rec.stderr);
+      assert.equal(stage(dir, ['advance'], s).code, 0, 'plan');
+      assert.equal(stage(dir, ['advance'], s).code, 0, 'build');
+      const open = check(`Change.\n\n${stage(dir, ['pr-summary'], s).stdout}`);
+      assert.equal(open.code, 1, open.stdout);
+      assert.match(open.stdout, /Stage "verify" is a block stage and is not done \(it is pending\)/);
+      assert.equal(stage(dir, ['advance'], s).code, 0, 'verify');
+      const done = check(`Change.\n\n${stage(dir, ['pr-summary'], s).stdout}`);
+      assert.equal(done.code, 0, done.stdout);
+      assert.match(done.summary, /\| plan \| done \| your answer \|/);
+    } finally {
+      rmSync(path.join(dir, '.shipline', 'workflows', 'mini.yml'), { force: true });
+    }
+  });
+});

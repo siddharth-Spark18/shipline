@@ -4,7 +4,7 @@
 const NONE = '__none__'; // a select value cannot reliably be null
 
 // info: { workflows, agents, repoAgents, repoSkills, missingStageAgents(selection) } (see init.mjs).
-// Returns { workflows, agents, clashes, stageAgents, skills }.
+// Returns { workflows, agents, clashes, stageAgents, skills, ci }.
 export async function askSelection(info) {
   let prompts;
   try {
@@ -13,7 +13,7 @@ export async function askSelection(info) {
     // @inquirer/prompts 8 needs Node 20.17+; init and the hooks otherwise run on Node 18.
     throw new Error(`the interactive questions could not be loaded (${e.message}). They need Node 20.17 or newer; on older Node, run \`init --yes\`.`);
   }
-  const { checkbox, select } = prompts;
+  const { checkbox, confirm, select } = prompts;
 
   // 1. Workflows (at least one).
   const workflows = await checkbox({
@@ -76,5 +76,8 @@ export async function askSelection(info) {
     });
   }
 
-  return { workflows, agents, clashes, stageAgents, skills };
+  // 6. The optional pull-request check (default No).
+  const ci = await confirm({ message: 'Add a Shipline CI check for pull requests?', default: false });
+
+  return { workflows, agents, clashes, stageAgents, skills, ci };
 }

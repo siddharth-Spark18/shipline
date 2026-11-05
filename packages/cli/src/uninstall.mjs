@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import {
-  CLAUDE_MD_KEY, SETTINGS_KEY, VERSION_FILE, ownedTemplateFiles, removeClaudeMdBlock, removeShiplineFromSettings,
+  CI_WORKFLOW, CLAUDE_MD_KEY, SETTINGS_KEY, VERSION_FILE, ownedTemplateFiles, removeClaudeMdBlock, removeShiplineFromSettings, sha256,
 } from './hashes.mjs';
 import { parseSettings } from './init.mjs';
 import { encodePath, isInside, shiplineHome } from './store.mjs';
@@ -65,6 +65,7 @@ function readVersionFiles(root) {
     if (v && typeof v === 'object' && v.files && typeof v.files === 'object' && !Array.isArray(v.files)) {
       return {
         files: Object.keys(v.files),
+        hashes: v.files,
         excluded: Array.isArray(v.excluded) ? v.excluded.filter((p) => typeof p === 'string') : [],
       };
     }
@@ -119,6 +120,12 @@ export async function runUninstall({ target, yes = false, dryRun = false, purge 
     if (!/^\.claude\//.test(rel) || rel.split('/').includes('..')) continue; // .shipline/ goes as a whole
     const abs = path.join(root, rel);
     if (existsSync(abs) && lstatSync(abs).isFile()) files.push(rel);
+  }
+  // The optional CI workflow goes only when VERSION.files recorded it and the file is still what Shipline wrote.
+  const ciAbs = path.join(root, CI_WORKFLOW);
+  if (version && version.hashes[CI_WORKFLOW] && existsSync(ciAbs) && lstatSync(ciAbs).isFile()) {
+    if (sha256(readFileSync(ciAbs)) === version.hashes[CI_WORKFLOW]) files.push(CI_WORKFLOW);
+    else notes.push(`${CI_WORKFLOW} was edited since Shipline wrote it; left as it is`);
   }
   const skillsDir = path.join(root, '.claude', 'skills');
   if (existsSync(skillsDir)) {

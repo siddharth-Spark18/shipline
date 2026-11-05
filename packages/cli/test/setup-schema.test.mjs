@@ -53,6 +53,22 @@ describe('config.yml checks', () => {
   test('a pattern with an unknown variable is rejected', () => bad({ branch_pattern: '{slug}-{date}' }, 'branch_pattern', /\{date\} is not allowed/));
   test('commands must be a map', () => bad({ commands: 'pnpm test' }, 'commands', /map/));
   test('a line break in a command is rejected', () => bad({ commands: { test: 'a\nb' } }, 'commands.test', /line breaks are not allowed here/));
+  // Trust plan, Config: ci.missing_block is an enum, ci.skip_label non-empty and at most 50 characters; ci is optional.
+  test('the shipped config.yml has the ci section with its defaults', () => {
+    assert.deepEqual(baseConfig().ci, { missing_block: 'fail-unless-label', skip_label: 'shipline:skip' });
+  });
+  test('ci is optional, and each mode and a 50-character label are accepted', () => {
+    const { ci: _ci, ...noCi } = baseConfig();
+    assert.deepEqual(validateConfig(noCi), []);
+    assert.deepEqual(validateConfig({ ...baseConfig(), ci: null }), []);
+    for (const m of ['fail-unless-label', 'warn', 'fail']) {
+      assert.deepEqual(validateConfig({ ...baseConfig(), ci: { missing_block: m, skip_label: 'x'.repeat(50) } }), [], m);
+    }
+  });
+  test('ci must be a map', () => bad({ ci: 'warn' }, 'ci', /map/));
+  test('an unknown ci.missing_block is rejected', () => bad({ ci: { missing_block: 'ignore' } }, 'ci.missing_block', /fail-unless-label, warn, fail/));
+  test('an empty ci.skip_label is rejected', () => bad({ ci: { skip_label: '  ' } }, 'ci.skip_label', /non-empty/));
+  test('a ci.skip_label over 50 characters is rejected', () => bad({ ci: { skip_label: 'x'.repeat(51) } }, 'ci.skip_label', /at most 50/));
   test('unknown keys are allowed (kept)', () => {
     assert.deepEqual(validateConfig({ ...baseConfig(), team_owner: 'x', commands: { test: '', typecheck: 'tsc' } }), []);
   });
@@ -218,8 +234,9 @@ describe('workflow checks', () => {
 
 describe('known fields, header and layout', () => {
   test('KNOWN_FIELDS lists the form fields from the schema table', () => {
-    assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands', 'skills']);
+    assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands', 'skills', 'ci']);
     assert.deepEqual(KNOWN_FIELDS.config.commands, ['test', 'lint', 'build']);
+    assert.deepEqual(KNOWN_FIELDS.config.ci, ['missing_block', 'skip_label']);
     for (const f of ['id', 'name', 'description', 'branch_type', 'stages']) assert.ok(KNOWN_FIELDS.workflow.top.includes(f), f);
     for (const f of ['id', 'name', 'artifact', 'description', 'optional', 'confirm_to_advance', 'condition', 'agent', 'enforcement', 'blocks']) {
       assert.ok(KNOWN_FIELDS.workflow.stage.includes(f), f);

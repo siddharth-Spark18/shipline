@@ -2,11 +2,15 @@ import type {
   AgentsChange,
   AgentsPreviewResponse,
   ApiErrorEnvelope,
+  ChatCommand,
+  CiChange,
+  CiPreviewResponse,
   ChatDetail,
   ChatsResponse,
   Diagnostics,
   FileMode,
   FileResponse,
+  ImageData,
   PreviewResponse,
   PromptAnswer,
   SaveRequest,
@@ -78,17 +82,36 @@ export const api = {
   agentsPreview: (req: AgentsChange) =>
     request<AgentsPreviewResponse>('POST', '/api/setup/agents?preview=1', req),
   agentsApply: (req: AgentsChange) => request<unknown>('POST', '/api/setup/agents', req),
+  ciPreview: (req: CiChange) => request<CiPreviewResponse>('POST', '/api/setup/ci?preview=1', req),
+  ciApply: (req: CiChange) => request<unknown>('POST', '/api/setup/ci', req),
   tasks: () => request<TasksData>('GET', '/api/tasks'),
   file: (path: string, mode: FileMode) =>
     request<FileResponse>('GET', `/api/file?path=${encodeURIComponent(path)}&mode=${mode}`),
   diagnostics: () => request<Diagnostics>('GET', '/api/diagnostics'),
   chats: () => request<ChatsResponse>('GET', '/api/chats'),
   chat: (id: string) => request<ChatDetail>('GET', `/api/chats/${encodeURIComponent(id)}`),
-  createChat: (message: string) => request<{ id: string }>('POST', '/api/chats', { message }),
-  sendMessage: (id: string, text: string) =>
-    request<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/message`, { text }),
+  createChat: (message: string, images: ImageData[] = []) =>
+    request<{ id: string }>('POST', '/api/chats', {
+      message,
+      ...(images.length > 0 ? { images } : {}),
+    }),
+  sendMessage: (id: string, text: string, images: ImageData[] = []) =>
+    request<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/message`, {
+      text,
+      ...(images.length > 0 ? { images } : {}),
+    }),
+  listCommands: () => request<{ commands: ChatCommand[] }>('GET', '/api/chat/commands'),
+  startShell: (id: string, command: string) =>
+    request<{ runId: string }>('POST', `/api/chats/${encodeURIComponent(id)}/shell`, { command }),
+  stopShell: (id: string, runId: string) =>
+    request<{ stopped: true }>(
+      'POST',
+      `/api/chats/${encodeURIComponent(id)}/shell/${encodeURIComponent(runId)}/stop`,
+    ),
   stopChat: (id: string) =>
     request<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/stop`),
+  killChat: (id: string) =>
+    request<{ killed: true }>('POST', `/api/chats/${encodeURIComponent(id)}/kill`),
   continueChat: (id: string) =>
     request<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/continue`),
   answerPrompt: (id: string, answer: PromptAnswer) =>

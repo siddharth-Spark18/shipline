@@ -32,18 +32,19 @@ For the current stage: read its rules (printed by stage.mjs), delegate to the na
 - **feasibility:** write `feasibility.md`. If the verdict is *not feasible*, STOP after writing it: present blockers and alternatives and let the developer decide. If *partly feasible or uncertain*, carry the blockers into the questions stage.
 - **plan:** state whether the work is UI-affecting, then run `stage.mjs flag ui true|false`. The wireframes stage runs only for UI work.
 - **verify:** build the requirement checklist in `verification.md` (each acceptance criterion with evidence). For UI work run the app and check it in a browser. Run test, lint and build commands only if configured in `.shipline/config.yml`.
-- **pr:** use `git` and `gh` with the developer's own credentials; summarize the plan and the verification result in the PR body. Don't link task files; they're local.
+- **pr:** use `git` and `gh` with the developer's own credentials; summarize the plan and the verification result in the PR body. Don't link task files; they're local. Run `node .shipline/bin/stage.mjs pr-summary` and paste its output unchanged at the end of the PR description.
 
 ## 4. Advance
 
 When the stage's artifact exists, record progress:
 
 ```
-node .shipline/bin/stage.mjs advance            # stages with confirm_to_advance: false
-node .shipline/bin/stage.mjs advance --confirmed # only AFTER the developer agreed
+node .shipline/bin/stage.mjs advance
 ```
 
-If the stage config says `confirm_to_advance: true`, summarize the result, ask the developer, and pass `--confirmed` only after they say yes. Never pass it on your own. Use `skip --reason "..."` for optional stages, `reopen <stage>` when earlier work must change, `status` to see where things are.
+If the stage config says `confirm_to_advance: true`, `advance` is refused and prints a question. Summarize the result, then ask the developer exactly that question with the AskUserQuestion tool, word for word. When they answer "Advance", run `advance` again and it goes through. If they answer "Not yet", carry on with the stage and ask again later. Skipping a stage that isn't optional works the same way: `skip` prints its own question. The recorded answer is the only confirmation that counts, so never try to confirm for the developer.
+
+Never pass `--confirmed` or `--force` (they no longer exist), and never edit progress files (`manifest.json`, session state or approvals in the task store) or run `record-answer.mjs`; hooks block this. Use `skip --reason "..."` for optional stages, `reopen <stage>` when earlier work must change, `status` to see where things are.
 
 ## 5. Guardrails
 

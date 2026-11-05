@@ -5,7 +5,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { CLI_ROOT, cleanEnv, homeFor, makeRepo, removeDir, stage, tmpDir } from './helpers.mjs';
 
@@ -32,10 +32,19 @@ const payload = (event) => {
 const hookEnv = (PATH) => ({ ...cleanEnv({ CLAUDE_PROJECT_DIR: dir, SHIPLINE_HOME: homeFor(dir) }), PATH });
 
 // Runs a hook command the way Claude Code does on POSIX: through sh -c, in the repo, with the payload on stdin.
+// The payload comes from a file, not a pipe: when node is missing, sh exits without reading stdin, and
+// writing to the closed pipe fails with EPIPE (seen on Linux CI).
 function viaShell(command, event, PATH) {
-  const r = spawnSync('/bin/sh', ['-c', command], { cwd: dir, env: hookEnv(PATH), input: JSON.stringify(payload(event)), encoding: 'utf8' });
-  if (r.error) throw r.error;
-  return { code: r.status, stdout: r.stdout, stderr: r.stderr };
+  const input = path.join(scratch, `payload-${event}.json`);
+  writeFileSync(input, JSON.stringify(payload(event)));
+  const fd = openSync(input, 'r');
+  try {
+    const r = spawnSync('/bin/sh', ['-c', command], { cwd: dir, env: hookEnv(PATH), stdio: [fd, 'pipe', 'pipe'], encoding: 'utf8' });
+    if (r.error) throw r.error;
+    return { code: r.status, stdout: r.stdout, stderr: r.stderr };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 before(() => {

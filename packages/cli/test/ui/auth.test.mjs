@@ -59,6 +59,7 @@ describe('status and diagnostics', () => {
     const files = JSON.parse(readFileSync(path.join(dir, '.shipline', 'bin', 'VERSION'), 'utf8')).files;
     assert.ok(files && Object.keys(files).length > 0);
     assert.deepEqual(status.json, {
+      mode: 'repo',
       uiVersion: pkg,
       repoVersion: { package: pkg, interface: INTERFACE, files, excluded: [] },
       versionState: 'same',
@@ -335,13 +336,32 @@ describe('command line', () => {
     }
   });
 
-  test('a folder with no Shipline setup exits 1 and says to run init', () => {
+  // Setup wizard plan, C: no setup here starts the install wizard (test/ui/install.test.mjs has the rest).
+  test('a folder with no Shipline setup starts the install wizard instead of exiting, and writes nothing', async () => {
     const empty = tmpDir();
+    const home = homeFor(empty);
+    const child = spawn(process.execPath, [BIN, 'ui', empty, '--no-open'], { env: cleanEnv({ SHIPLINE_HOME: home }), stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (c) => (out += c));
+    const exited = new Promise((resolve) => child.on('exit', resolve));
     try {
-      const r = ui([empty, '--no-open']);
-      assert.equal(r.status, 1);
-      assert.match(r.stderr, /run `npx @forgeyard\/shipline init` first/i);
+      const deadline = Date.now() + 10000;
+      while (!/\/\?t=/.test(out) && Date.now() < deadline && child.exitCode === null) await new Promise((r) => setTimeout(r, 50));
+      assert.match(out, new RegExp(`Shipline setup for ${empty.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}\\r?\\n`));
+      assert.match(out, /Nothing is written until you press Install in the browser\./);
+      const m = /http:\/\/127\.0\.0\.1:(\d+)\/\?t=([0-9a-f]{64})/.exec(out);
+      assert.ok(m, out);
+      const r = await fetch(m[0], { redirect: 'manual' });
+      assert.equal(r.status, 302);
+      const cookie = r.headers.get('set-cookie').split(';')[0];
+      const status = await (await fetch(`http://127.0.0.1:${m[1]}/api/status`, { headers: { cookie } })).json();
+      assert.equal(status.mode, 'install');
+      assert.equal(status.state, 'clean');
+      assert.deepEqual(readdirSync(empty), []);
+      assert.deepEqual(readdirSync(home), [], 'no store and no UI log in install mode');
     } finally {
+      child.kill('SIGKILL');
+      await exited;
       removeDir(empty);
     }
   });

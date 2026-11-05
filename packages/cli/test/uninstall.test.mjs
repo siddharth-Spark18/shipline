@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { BIN, FIXTURES, git, makeRepo, removeDir, run, runInit, storeOf, tmpDir } from './helpers.mjs';
+import { BIN, FIXTURES, git, makeRepo, removeDir, run, runInitAll, storeOf, tmpDir } from './helpers.mjs';
 
 const sha = (data) => createHash('sha256').update(data).digest('hex');
 const dirs = [];
@@ -48,8 +48,9 @@ function bareRepo(prepare) {
   return dir;
 }
 
+// The full install (every workflow and agent), so uninstall has everything to remove.
 function initAndCommit(dir) {
-  const r = runInit(dir);
+  const r = runInitAll(dir);
   assert.equal(r.code, 0, r.stderr);
   git(dir, 'add', '-A');
   git(dir, 'commit', '-q', '-m', 'shipline init');

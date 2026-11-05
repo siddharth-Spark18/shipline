@@ -1,5 +1,6 @@
 // Finds the repo the UI serves and loads its own vendored lib.mjs, so parsing always uses the code the
 // hooks run. Node 20+, no dependencies.
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -16,6 +17,28 @@ function findRepoRoot(dir) {
     if (up === cur) return null;
     cur = up;
   }
+}
+
+// The git root of `dir`, or null when it isn't in a git repository (or git isn't installed). Found as `dir` plus
+// git's way up (`--show-cdup`, e.g. '../../'), so the root keeps the caller's spelling of the path: on Windows
+// `--show-toplevel` gives the long form of a short (8.3) temp path, which would name the store differently.
+export function gitRootOf(dir) {
+  try {
+    const up = execFileSync('git', ['rev-parse', '--show-cdup'], {
+      cwd: dir,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .toString()
+      .trim();
+    return path.resolve(dir, up);
+  } catch {
+    return null;
+  }
+}
+
+// Where the install wizard installs: the git root of `dir`, or `dir` itself outside git.
+export function installRootFor(dir) {
+  return gitRootOf(dir) || path.resolve(dir);
 }
 
 export async function resolveRepo(dir) {

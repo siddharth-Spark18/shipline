@@ -122,33 +122,75 @@ describe('an existing install', () => {
   });
 });
 
+// A workflow template's text with whole stage blocks removed (from `  - id: <stage>` to the next one).
+function withoutStages(text, ids) {
+  const out = [];
+  let skip = false;
+  for (const line of text.split('\n')) {
+    const m = /^ {2}- id: (\S+)$/.exec(line);
+    if (m) skip = ids.includes(m[1]);
+    if (!skip) out.push(line);
+  }
+  return out.join('\n');
+}
+
+// Setup wizard plan, B: --yes installs only what the chosen (all) workflows use, with `ui` from detection.
 describe('--yes', () => {
-  test('defaults: every workflow and agent, no skills, stage agents as shipped, nothing excluded', () => {
+  const STAGE_AGENTS = ['planner', 'builder', 'qa-bug-hunter', 'researcher'];
+
+  test('no UI detected: every workflow without the UI-only stages, only the agents their stages use, no skills', () => {
     const dir = repo({ '.claude/skills/deploy/SKILL.md': '# Deploy\n' });
     const r = runInit(dir);
     assert.equal(r.code, 0, r.stderr);
     assert.deepEqual(list(dir, '.shipline/workflows'), ALL_WORKFLOWS.map((w) => `${w}.yml`));
-    for (const w of ALL_WORKFLOWS) assert.equal(read(dir, `.shipline/workflows/${w}.yml`), wfTemplate(w), w);
-    assert.deepEqual(list(dir, '.claude/agents'), ALL_AGENTS.map((a) => `${a}.md`).sort());
+    for (const w of ALL_WORKFLOWS) {
+      const want = w === 'feature' ? withoutStages(wfTemplate(w), ['wireframes']) : wfTemplate(w);
+      assert.equal(read(dir, `.shipline/workflows/${w}.yml`), want, w);
+    }
+    assert.ok(!exists(dir, '.shipline/rules/wireframes.md'), 'the UI-only stage has no rules file');
+    assert.deepEqual(list(dir, '.claude/agents'), STAGE_AGENTS.map((a) => `${a}.md`).sort());
     assert.deepEqual(parseYaml(read(dir, '.shipline/config.yml')).skills, []);
     assert.equal(read(dir, '.shipline/config.yml'), readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8'));
-    assert.deepEqual(versionOf(dir).excluded, []);
+    assert.deepEqual(versionOf(dir).excluded, [AGENT('reviewer'), AGENT('wireframe-proposer')]);
     assert.ok(!/Kept your own agents/.test(r.stdout));
+    assert.match(
+      r.stdout,
+      /--yes installs only what the chosen workflows use\. Left out: agents not used by these workflows: reviewer, wireframe-proposer; UI-only stages \(no UI detected here\): feature\.wireframes\. Add them later in `npx @forgeyard\/shipline ui` -> Setup\./,
+    );
+  });
+
+  test('a UI detected: the UI-only stages and wireframe-proposer are kept; the standalone reviewer is still left out', () => {
+    for (const files of [
+      { 'package.json': JSON.stringify({ dependencies: { react: '^18.0.0' } }) },
+      { 'web/index.html': '<!doctype html>\n' },
+    ]) {
+      const dir = repo(files);
+      const r = runInit(dir);
+      assert.equal(r.code, 0, r.stderr);
+      for (const w of ALL_WORKFLOWS) assert.equal(read(dir, `.shipline/workflows/${w}.yml`), wfTemplate(w), w);
+      assert.ok(exists(dir, '.shipline/rules/wireframes.md'));
+      assert.deepEqual(list(dir, '.claude/agents'), ALL_AGENTS.filter((a) => a !== 'reviewer').map((a) => `${a}.md`).sort());
+      assert.deepEqual(versionOf(dir).excluded, [AGENT('reviewer')]);
+      assert.match(r.stdout, /Left out: agents not used by these workflows: reviewer\. Add them later/);
+      assert.ok(!/UI-only stages/.test(r.stdout));
+    }
   });
 
   test('keeps the repo\'s own agent on every clash, lists them in the summary, and records them in excluded', () => {
-    const dir = repo({ [AGENT('planner')]: '# our planner\n', [AGENT('reviewer')]: '# our reviewer\n' });
+    const dir = repo({ [AGENT('planner')]: '# our planner\n', [AGENT('builder')]: '# our builder\n', [AGENT('reviewer')]: '# our reviewer\n' });
     const r = runInit(dir);
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /Kept your own agents \(used where Shipline's would be\): planner, reviewer\. To use Shipline's instead: `npx @forgeyard\/shipline ui` -> Setup -> Agents & skills, or uninstall and re-run `init` interactively\./);
+    assert.match(r.stdout, /Kept your own agents \(used where Shipline's would be\): planner, builder\. To use Shipline's instead: `npx @forgeyard\/shipline ui` -> Setup -> Agents & skills, or uninstall and re-run `init` interactively\./);
     assert.equal(read(dir, AGENT('planner')), '# our planner\n');
+    assert.equal(read(dir, AGENT('builder')), '# our builder\n');
+    // reviewer isn't installed by --yes, so the repo's own file is no clash: left alone, and excluded.
     assert.equal(read(dir, AGENT('reviewer')), '# our reviewer\n');
     const v = versionOf(dir);
-    assert.deepEqual(v.excluded, [AGENT('planner'), AGENT('reviewer')]);
+    assert.deepEqual(v.excluded, [AGENT('builder'), AGENT('planner'), AGENT('reviewer'), AGENT('wireframe-proposer')]);
     assert.ok(!(AGENT('planner') in v.files));
-    assert.equal(v.files[AGENT('builder')], sha(agentTemplate('builder')));
+    assert.equal(v.files[AGENT('qa-bug-hunter')], sha(agentTemplate('qa-bug-hunter')));
     // A kept clash counts as present: the stage keeps its agent.
-    assert.equal(read(dir, '.shipline/workflows/feature.yml'), wfTemplate('feature'));
+    assert.equal(read(dir, '.shipline/workflows/feature.yml'), withoutStages(wfTemplate('feature'), ['wireframes']));
   });
 
   test('--dry-run lists the excluded paths and writes nothing', () => {
@@ -262,7 +304,7 @@ describe('selection logic (prompts stubbed)', () => {
     const dir = repo({ [AGENT('mine')]: '# our agent\n' });
     let missing;
     const r = await initWith(dir, (info) => {
-      const sel = selection({ workflows: ['feature'], agents: ['builder', 'qa-bug-hunter', 'reviewer'] });
+      const sel = selection({ workflows: ['feature'], ui: true, agents: ['builder', 'qa-bug-hunter', 'reviewer'] });
       missing = info.missingStageAgents(sel);
       sel.stageAgents = { 'feature.plan': 'reviewer', 'feature.feasibility': 'mine', 'feature.wireframes': null };
       return sel;
@@ -499,5 +541,120 @@ describe('commands and tracker (Teams Phase 1)', () => {
   test('the final message nudges to tailor the rules', async () => {
     const r = await initWith(repo(), selection());
     assert.match(r.stdout, /Next: tailor the rules to this repo\. Run `\/shipline-setup` in Claude Code, or open `npx @forgeyard\/shipline ui` and use Setup -> Set up with Claude\./);
+  });
+});
+
+// Setup wizard plan, B and C: the questions init adds (the UI question and the standalone agents get what they
+// need through info), the browser-or-terminal question (Node 20+, interactive runs only), and the dry run.
+describe('setup wizard: the new questions', () => {
+  const NODE20 = Number(process.versions.node.split('.')[0]) >= 20;
+
+  test('info carries the detected UI, which stages use each agent, and the default agents for an answer', async () => {
+    const dir = repo({ 'web/app.tsx': 'x' });
+    const r = await initWith(dir, selection({ ui: true }));
+    assert.equal(r.code, 0, r.stderr);
+    const [info] = r.calls;
+    assert.equal(info.uiDetected, true);
+    assert.deepEqual(info.agentUse.reviewer, [], 'reviewer is the standalone agent');
+    assert.deepEqual(info.agentUse['wireframe-proposer'], ['feature.wireframes']);
+    assert.deepEqual(info.defaultAgents(['feature'], false), ['planner', 'builder', 'qa-bug-hunter', 'researcher']);
+    assert.deepEqual(info.defaultAgents(['feature'], true), ['planner', 'builder', 'qa-bug-hunter', 'wireframe-proposer', 'researcher']);
+    assert.deepEqual(info.defaultAgents(['hotfix'], true), ['builder', 'qa-bug-hunter']);
+    assert.equal(info.state, 'clean');
+  });
+
+  test('the UI answer decides the UI-only stages; with no answer, detection decides', async () => {
+    const no = repo();
+    assert.equal((await initWith(no, selection({ ui: false }))).code, 0);
+    assert.ok(!parseYaml(read(no, '.shipline/workflows/feature.yml')).stages.some((s) => s.id === 'wireframes'));
+    assert.ok(!exists(no, '.shipline/rules/wireframes.md'));
+    const yes = repo();
+    assert.equal((await initWith(yes, selection({ ui: true }))).code, 0);
+    assert.equal(read(yes, '.shipline/workflows/feature.yml'), wfTemplate('feature'));
+    assert.ok(exists(yes, '.shipline/rules/wireframes.md'));
+    const detected = repo({ 'index.html': 'x' });
+    assert.equal((await initWith(detected, selection())).code, 0);
+    assert.equal(read(detected, '.shipline/workflows/feature.yml'), wfTemplate('feature'));
+    const notDetected = repo();
+    assert.equal((await initWith(notDetected, selection())).code, 0);
+    assert.ok(!exists(notDetected, '.shipline/rules/wireframes.md'));
+  });
+
+  test('"Browser" starts the UI on the folder instead of asking, and writes nothing itself', { skip: NODE20 ? false : 'the browser option needs Node 20' }, async () => {
+    const dir = repo();
+    const started = [];
+    let asked = 0;
+    const r = await initWith(dir, selection(), {
+      where: async () => {
+        asked++;
+        return 'browser';
+      },
+      startUi: async (root) => started.push(root),
+    });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(asked, 1);
+    assert.deepEqual(started, [dir]);
+    assert.equal(r.calls.length, 0, 'the terminal questions are not asked');
+    assert.deepEqual(readdirSync(dir), []);
+  });
+
+  test('"Terminal" goes on to the questions', { skip: NODE20 ? false : 'the browser option needs Node 20' }, async () => {
+    const dir = repo();
+    let started = 0;
+    const r = await initWith(dir, selection(), { where: async () => 'terminal', startUi: async () => started++ });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.calls.length, 1);
+    assert.equal(started, 0);
+    assert.ok(exists(dir, '.shipline/config.yml'));
+  });
+
+  test('a cancelled browser-or-terminal question writes nothing', { skip: NODE20 ? false : 'the browser option needs Node 20' }, async () => {
+    const dir = repo();
+    const r = await initWith(dir, selection(), {
+      where: async () => {
+        throw new Error('User force closed the prompt');
+      },
+    });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /init cancelled, nothing was written\. User force closed the prompt/);
+    assert.deepEqual(readdirSync(dir), []);
+  });
+
+  test('the question is offered only on interactive runs on Node 20+: never with --yes, --dry-run, below Node 20, or on an existing install', async () => {
+    let asked = 0;
+    const where = async () => {
+      asked++;
+      return 'browser';
+    };
+    const startUi = async () => {
+      throw new Error('must not start');
+    };
+    assert.equal((await initWith(repo(), selection(), { yes: true, where, startUi })).code, 0);
+    assert.equal((await initWith(repo(), selection(), { dryRun: true, where, startUi })).code, 0);
+    assert.equal((await initWith(repo({ '.shipline/config.yml': 'tracker: jira\n' }), selection(), { where, startUi })).code, 0);
+    assert.equal(asked, 0);
+    if (!NODE20) {
+      // The CI hooks job (Node 18): the UI can't run, so the question is skipped silently.
+      const r = await initWith(repo(), selection(), { where, startUi });
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(asked, 0);
+    }
+  });
+
+  test('the --dry-run format is unchanged: + created, ~ overwritten or merged, = excluded', async () => {
+    const dir = repo({ 'CLAUDE.md': '# Team\n', [AGENT('builder')]: '# ours\n' });
+    const before = tree(dir);
+    const r = await initWith(dir, selection({ ui: false, agents: ['builder', 'qa-bug-hunter'], clashes: { builder: 'ours' }, workflows: ['hotfix'] }), { dryRun: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(tree(dir), before);
+    const lines = r.stdout.split('\n');
+    assert.equal(lines[0], 'Dry run, nothing written. Would create:');
+    assert.ok(lines.includes('  + .shipline/workflows/hotfix.yml'));
+    assert.ok(lines.includes('  ~ .claude/agents/builder.md'));
+    assert.ok(lines.includes('  + .shipline/bin/VERSION'));
+    assert.ok(lines.includes('  + .claude/settings.json (hooks and allow rules merged)'));
+    assert.ok(lines.includes('  ~ CLAUDE.md (marked block appended)'));
+    for (const n of ['planner', 'researcher', 'reviewer', 'wireframe-proposer']) assert.ok(lines.includes(`  = ${AGENT(n)} (not installed; recorded as excluded)`), n);
+    assert.ok(lines.every((l, i) => i === 0 || /^ {2}[+~=] \S/.test(l)), r.stdout);
   });
 });

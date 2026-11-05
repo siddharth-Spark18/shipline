@@ -34,11 +34,26 @@ Run it from the root of the repo you want to set up:
 npx @forgeyard/shipline init          # interactive: choose workflows, agents and skills
 npx @forgeyard/shipline init --yes    # install the defaults, no questions
 npx @forgeyard/shipline init --dry-run  # preview only
+npx @forgeyard/shipline ui            # in a repo without Shipline: the setup wizard in the browser (Node 20+)
 ```
+
+**Installing from the browser.** `shipline ui` in a folder without Shipline opens a short wizard (workflows and
+whether the repo has a UI, agents and skills, commands and tracker, the CI check, then a review of every file).
+Nothing is written to the repo or to `~/.shipline` until you press **Install**; closing the page writes
+nothing. After Install the same page opens the normal UI, without restarting the command. Interactive `init`
+(Node 20+) first asks whether to set up in the terminal or in the browser.
+
+**Only the files your choices need.** The same answers give the same files from the wizard, interactive `init`
+and `init --yes`. With "no UI", stages marked `condition: ui_only` (Feature's wireframes) and their rules are
+left out. Agents are installed only when a stage of a chosen workflow uses them; standalone agents such as
+`reviewer` are off by default. Agents that are not installed are recorded as excluded, so `upgrade` does not add
+them. The CI check is written only when you pick it. Later, **Setup → Add shipped workflow** adds a workflow
+Shipline ships (with its missing rules and agents).
 
 In a terminal, `init` asks which workflows, which Shipline agents and which of your repo's own skills to use,
 and what to do when one of Shipline's agent names already exists in `.claude/agents/` (keep yours, use ours,
-or skip). `--yes` installs everything and keeps your own agent files on a clash. Without a terminal and
+or skip), and whether the repo has a UI. `--yes` installs every workflow, uses detection for "has a UI", installs
+only the agents those workflows use (no standalone agents) and keeps your own agent files on a clash. Without a terminal and
 without `--yes` it refuses. If any other file name collides, it aborts with nothing written. Running it again
 reports "already initialized".
 

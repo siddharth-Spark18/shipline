@@ -1,4 +1,5 @@
 import type {
+  AddWorkflowRequest,
   AgentsChange,
   AgentsPreviewResponse,
   ApiErrorEnvelope,
@@ -12,6 +13,10 @@ import type {
   FileMode,
   FileResponse,
   ImageData,
+  InstallBase,
+  InstallInfo,
+  InstallPreview,
+  InstallSelection,
   PreviewResponse,
   PickedControls,
   PromptAnswer,
@@ -85,6 +90,19 @@ export const api = {
   agentsPreview: (req: AgentsChange) =>
     request<AgentsPreviewResponse>('POST', '/api/setup/agents?preview=1', req),
   agentsApply: (req: AgentsChange) => request<unknown>('POST', '/api/setup/agents', req),
+  addWorkflowPreview: (req: AddWorkflowRequest) =>
+    request<AgentsPreviewResponse & { paths: string[] }>(
+      'POST',
+      '/api/setup/add-workflow?preview=1',
+      req,
+    ),
+  addWorkflow: (req: AddWorkflowRequest) =>
+    request<unknown>('POST', '/api/setup/add-workflow', req),
+  installInfo: () => request<InstallInfo>('GET', '/api/install/info'),
+  installPreview: (selection: InstallSelection) =>
+    request<InstallPreview>('POST', '/api/install/preview', { selection }),
+  install: (selection: InstallSelection, base: InstallBase) =>
+    request<{ installed: true }>('POST', '/api/install', { selection, base }),
   ciPreview: (req: CiChange) => request<CiPreviewResponse>('POST', '/api/setup/ci?preview=1', req),
   ciApply: (req: CiChange) => request<unknown>('POST', '/api/setup/ci', req),
   tasks: () => request<TasksData>('GET', '/api/tasks'),

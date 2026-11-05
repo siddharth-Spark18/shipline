@@ -10,6 +10,7 @@ import { useChatSelection } from '@/lib/use-chat-selection';
 import SetupPage from '@/pages/setup/setup-page';
 import ChatPage from '@/pages/chat/chat-page';
 import { DiagnosticsSheet } from '@/pages/diagnostics';
+import { InstallWizard } from '@/pages/install/install-wizard';
 
 const VIEWS = ['setup', 'chat'] as const;
 
@@ -20,7 +21,15 @@ function viewFromHash(): View {
   return (VIEWS as readonly string[]).includes(h) ? (h as View) : 'chat';
 }
 
+/** Install mode (no repo installed yet) shows only the setup wizard; everything else needs an installed repo. */
 export default function App() {
+  const status = useQuery({ queryKey: queryKeys.status, queryFn: api.status });
+  if (status.isPending) return null;
+  if (status.data?.mode === 'install') return <InstallWizard />;
+  return <RepoApp />;
+}
+
+function RepoApp() {
   const queryClient = useQueryClient();
   const [view, setView] = useState<View>(viewFromHash);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);

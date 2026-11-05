@@ -29,11 +29,13 @@ describe('init writes VERSION', () => {
     assert.ok(text.endsWith('}\n'));
     const v = JSON.parse(text);
     assert.deepEqual(Object.keys(v), ['package', 'interface', 'files', 'excluded']);
-    assert.deepEqual(v.excluded, [], '--yes installs every agent, so nothing is excluded');
+    // Setup wizard plan, B: --yes installs only the agents the workflows' stages use (no UI here).
+    const excluded = ['.claude/agents/reviewer.md', '.claude/agents/wireframe-proposer.md'];
+    assert.deepEqual(v.excluded, excluded, '--yes leaves out the standalone reviewer and, with no UI, wireframe-proposer');
     assert.equal(v.package, PACKAGE_VERSION);
     assert.equal(v.interface, INTERFACE);
     assert.equal(INTERFACE, 5);
-    assert.deepEqual(readRepoVersion(dir), { package: PACKAGE_VERSION, interface: INTERFACE, files: v.files, excluded: [] });
+    assert.deepEqual(readRepoVersion(dir), { package: PACKAGE_VERSION, interface: INTERFACE, files: v.files, excluded });
   });
 
   test('VERSION.files hashes every Shipline-owned file as written, plus the two virtual entries; team files are not in it', () => {

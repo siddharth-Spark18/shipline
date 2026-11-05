@@ -11,7 +11,10 @@ const SOURCE_LABEL: Record<ChatCommand['source'], string> = {
 };
 
 /** The command list, fetched each time the menu opens so new files show up. */
-export function useSlashCommands(open: boolean): {
+export function useSlashCommands(
+  open: boolean,
+  chatId?: string | null,
+): {
   commands: ChatCommand[];
   loading: boolean;
   error: boolean;
@@ -24,7 +27,7 @@ export function useSlashCommands(open: boolean): {
     let cancelled = false;
     setState((s) => ({ ...s, loading: true, error: false }));
     api
-      .listCommands()
+      .listCommands(chatId)
       .then((r) => {
         if (!cancelled) setState({ commands: r.commands, loading: false, error: false });
       })
@@ -34,7 +37,7 @@ export function useSlashCommands(open: boolean): {
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, chatId]);
   return state;
 }
 

@@ -9,13 +9,13 @@ import { HttpError } from './http.mjs';
 import { log } from './log.mjs';
 import { uiStateDir } from './sessions.mjs';
 
-// How long a prompt waits for the developer. 600 000 ms by default.
-// UNVERIFIED (chat test Q5): claude itself lets a permission-prompt call wait this long. If the test records a
-// shorter limit, set this to that limit minus 30 s (see claude.mjs MCP_TOOL_TIMEOUT_ENV).
-export const PROMPT_TIMEOUT_MS = 600_000;
+// How long a prompt waits for the developer: 5 minutes.
+// Not checked (chat test Q5): whether a permission-prompt call can wait 10 minutes, so the limit was lowered to
+// something assumed safe (see claude.mjs MCP_TOOL_TIMEOUT_ENV).
+export const PROMPT_TIMEOUT_MS = 300_000;
 
 export const DENY_MESSAGE = 'Denied by the developer in Shipline UI';
-// UNVERIFIED (chat test Q3): AskUserQuestion arrives here and is answered through updatedInput.answers.
+// Verified 2026-11-04 (claude 2.1.317): AskUserQuestion arrives here and is answered through updatedInput.answers.
 export const ASK_USER_QUESTION = 'AskUserQuestion';
 const MCP_SERVER_NAME = 'shipline_ui';
 const RELAY_PATH = fileURLToPath(new URL('./relay.mjs', import.meta.url));

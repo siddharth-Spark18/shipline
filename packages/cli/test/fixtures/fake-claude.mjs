@@ -32,9 +32,29 @@
 //                              notifications/initialized / tools/list, then tools/call approve with <json> as the
 //                              arguments. The parsed answer is appended to $FAKE_CLAUDE_RELAY_OUT and a stream-json
 //                              tool_result for arguments.tool_use_id is emitted (is_error for a deny).
+//   {{MCP_SERVERS}} in a stream line becomes $FAKE_CLAUDE_MCP_SERVERS (raw JSON), or the 2026-11-05 capture's list
+//   (the claude.ai Atlassian connector at needs-auth) when unset. {{MODEL}} is the resolved --model (or set_model)
+//   value, default claude-opus-5-5; {{PERMISSION_MODE}} is the current mode in control terms (manual -> default).
 //   After the script, every further user message gets a short default turn (assistant text + result).
 //   With $FAKE_CLAUDE_STDIN_OUT set, every stream-json user message read from stdin is appended there as one
 //   JSON line, exactly as received (the image tests check the content blocks).
+//   Control messages (chat controls, docs/plans/shipline-chat-reliability.md): every stdin
+//   {"type":"control_request","request_id","request":{subtype,…}} line gets a control_response in the shape
+//   captured on 2026-11-05 (claude 2.1.317/2.1.318), written straight away (even mid-script):
+//     initialize           { models[], current_permission_mode, account, … } (account must never reach the UI)
+//     get_settings         { effective: {…the user's whole merged settings…}, applied: { effort, model? } }
+//     get_context_usage    { totalTokens, maxTokens, autoCompactThreshold, isAutoCompactEnabled, percentage, model,
+//                            categories[], … }; totalTokens grows by 1000 per result emitted, so a fresh reading
+//                            can be told from an old one
+//     set_model            { model: <resolved id> }, then a replayed <local-command-stdout> user event
+//                          (isReplay: true) and a fresh system/init with the new model
+//     set_permission_mode  { mode }, then system/status { permissionMode }
+//     apply_flag_settings  {} (settings.effortLevel becomes get_settings.applied.effort)
+//     anything else        subtype error "Unsupported control request subtype"
+//   $FAKE_CLAUDE_CONTROL_FAIL (comma-separated subtypes) answers those with an error instead;
+//   $FAKE_CLAUDE_CONTROL_SILENT (comma-separated subtypes) never answers them (the server's 10 s timeout).
+//   With $FAKE_CLAUDE_CONTROL_OUT set, each control_request is appended there as
+//   { request_id, request, results } (results = how many result events had been emitted when it arrived).
 //   Exits 0 when stdin closes.
 import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from 'node:fs';
@@ -45,6 +65,11 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const OTHER_SESSION_ID = '00000000-0000-4000-8000-0000000000ff';
+// system/init.mcp_servers as captured on 2026-11-05 with the claude.ai Atlassian connector added but not authenticated.
+const CAPTURED_MCP_SERVERS = JSON.stringify([
+  { name: 'shipline_ui', status: 'connected' },
+  { name: 'claude.ai Atlassian', status: 'needs-auth', source: 'claudeai' },
+]);
 
 if (argv[0] === '--version') {
   process.stdout.write(`${process.env.FAKE_CLAUDE_VERSION || '99.0.0'} (Claude Code)\n`);
@@ -96,13 +121,28 @@ const record = (obj) => {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const out = (obj) => process.stdout.write((typeof obj === 'string' ? obj : JSON.stringify(obj)) + '\n');
+let resultsEmitted = 0;
+let lastInit = null; // the last system/init written, re-sent (with the new model) after set_model
+const out = (obj) => {
+  const line = typeof obj === 'string' ? obj : JSON.stringify(obj);
+  try {
+    const parsed = typeof obj === 'string' ? JSON.parse(obj) : obj;
+    if (parsed && parsed.type === 'result') resultsEmitted++;
+    if (parsed && parsed.type === 'system' && parsed.subtype === 'init') lastInit = parsed;
+  } catch {
+    // An @raw invalid line.
+  }
+  process.stdout.write(line + '\n');
+};
 // Stream lines are JSON, so there {{CWD}} is JSON-escaped (a Windows path has backslashes); directive
 // arguments are plain text and get the raw path.
 const fill = (s, json = false) =>
   s
     .replaceAll('{{SESSION_ID}}', sessionId)
     .replaceAll('{{OTHER_SESSION_ID}}', OTHER_SESSION_ID)
+    .replaceAll('{{MCP_SERVERS}}', process.env.FAKE_CLAUDE_MCP_SERVERS || CAPTURED_MCP_SERVERS)
+    .replaceAll('{{MODEL}}', current.model || 'claude-opus-5-5')
+    .replaceAll('{{PERMISSION_MODE}}', current.mode)
     .replaceAll('{{CWD}}', json ? JSON.stringify(process.cwd()).slice(1, -1) : process.cwd());
 
 // stdin: stream-json user messages.
@@ -119,6 +159,7 @@ rl.on('line', (line) => {
   } catch {
     return;
   }
+  if (msg.type === 'control_request') return control(msg);
   if (msg.type !== 'user') return;
   if (process.env.FAKE_CLAUDE_STDIN_OUT) appendFileSync(process.env.FAKE_CLAUDE_STDIN_OUT, JSON.stringify(msg) + '\n');
   if (userWaiter) {
@@ -138,6 +179,109 @@ function defaultTurn(msg) {
   const text = msg.message && Array.isArray(msg.message.content) ? msg.message.content.map((b) => b.text).join('') : '';
   out({ type: 'assistant', session_id: sessionId, message: { role: 'assistant', content: [{ type: 'text', text: `echo: ${text}` }] } });
   out({ type: 'result', subtype: 'success', is_error: false, session_id: sessionId, result: `echo: ${text}`, total_cost_usd: 0.001 });
+}
+
+// ---------- control_request / control_response (shapes from the 2026-11-05 captures) ----------
+
+// initialize's models[] as captured (2.1.318), trimmed to a few entries; extra fields the server must drop included.
+const MODELS = [
+  { value: 'default', resolvedModel: 'claude-opus-5-5', displayName: 'Default (recommended)', description: 'Opus 5.5', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsAutoMode: true, isDefault: true },
+  { value: 'opus', resolvedModel: 'claude-opus-5-5', displayName: 'Opus', description: 'Opus 5.5 for complex work', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsAutoMode: true },
+  { value: 'sonnet', resolvedModel: 'claude-sonnet-5', displayName: 'Sonnet', description: 'Sonnet 5 for everyday tasks', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high'], supportsAutoMode: true },
+  { value: 'haiku', resolvedModel: 'claude-haiku-4-5', displayName: 'Haiku', description: 'Haiku 4.5 for quick answers', supportsEffort: false, supportedEffortLevels: [], supportsAutoMode: false },
+];
+const resolveModel = (m) => {
+  const hit = MODELS.find((x) => x.value === m);
+  return hit ? hit.resolvedModel : m;
+};
+const listEnv = (name) => (process.env[name] || '').split(',').map((x) => x.trim()).filter(Boolean);
+const toControlMode = (m) => (m === 'manual' ? 'default' : m);
+const current = {
+  model: flag('--model') ? resolveModel(flag('--model')) : null,
+  effort: flag('--effort') || null,
+  mode: toControlMode(flag('--permission-mode') || 'default'),
+};
+
+function controlAnswer(request) {
+  switch (request.subtype) {
+    case 'initialize':
+      return {
+        commands: [{ name: 'context', description: 'Show context usage', argumentHint: '' }],
+        output_style: 'default',
+        available_output_styles: ['default', 'Explanatory', 'Learning'],
+        models: MODELS,
+        current_permission_mode: current.mode,
+        account: { email: 'dev@example.com', organization: 'Example Org', subscriptionType: 'max' },
+        pid: process.pid,
+      };
+    case 'get_settings':
+      return {
+        effective: { env: { SECRET_TOKEN: 'do-not-forward' }, permissions: { allow: ['Bash(ls:*)'] }, theme: 'dark' },
+        sources: [{ source: 'userSettings', path: '/home/dev/.claude/settings.json' }],
+        applied: { effort: current.effort || 'high', ...(current.model ? { model: current.model } : {}) },
+      };
+    case 'get_context_usage': {
+      const totalTokens = 19614 + 1000 * resultsEmitted;
+      return {
+        totalTokens,
+        maxTokens: 1000000,
+        rawMaxTokens: 1000000,
+        autoCompactThreshold: 967000,
+        isAutoCompactEnabled: true,
+        percentage: Math.round((totalTokens / 1000000) * 100),
+        model: current.model || 'claude-opus-5-5',
+        memoryFiles: [{ path: '/home/dev/.claude/CLAUDE.md', tokens: 900 }],
+        categories: [
+          { name: 'System prompt', tokens: 3100, color: 'promptBorder' },
+          { name: 'System tools', tokens: 11800, color: 'inactive' },
+          { name: 'MCP tools', tokens: 1200, color: 'cyan_FOR_SUBAGENTS_ONLY' },
+          { name: 'Memory files', tokens: 900, color: 'claude' },
+          { name: 'Skills', tokens: 600, color: 'warning' },
+          { name: 'Messages', tokens: 2014 + 1000 * resultsEmitted, color: 'purple_FOR_SUBAGENTS_ONLY' },
+          { name: 'Free space', tokens: 0, color: 'promptBorder', isDeferred: true },
+        ],
+      };
+    }
+    case 'set_model':
+      current.model = resolveModel(request.model);
+      return { model: current.model };
+    case 'set_permission_mode':
+      current.mode = request.mode;
+      return { mode: request.mode };
+    case 'apply_flag_settings':
+      if (request.settings && request.settings.effortLevel) current.effort = request.settings.effortLevel;
+      return {};
+    default:
+      return null;
+  }
+}
+
+function control(msg) {
+  const request = (msg && msg.request) || {};
+  if (process.env.FAKE_CLAUDE_CONTROL_OUT)
+    appendFileSync(process.env.FAKE_CLAUDE_CONTROL_OUT, JSON.stringify({ request_id: msg.request_id, request, results: resultsEmitted }) + '\n');
+  if (listEnv('FAKE_CLAUDE_CONTROL_SILENT').includes(request.subtype)) return;
+  const fail = listEnv('FAKE_CLAUDE_CONTROL_FAIL').includes(request.subtype);
+  const answer = fail ? null : controlAnswer(request);
+  if (!answer) {
+    out({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: msg.request_id, error: fail ? `Fake failure for ${request.subtype}` : 'Unsupported control request subtype' },
+    });
+    return;
+  }
+  out({ type: 'control_response', response: { subtype: 'success', request_id: msg.request_id, response: answer } });
+  if (request.subtype === 'set_model') {
+    out({
+      type: 'user',
+      session_id: sessionId,
+      isReplay: true,
+      message: { role: 'user', content: `<local-command-stdout>Set model to ${current.model}</local-command-stdout>` },
+    });
+    if (lastInit) out({ ...lastInit, model: current.model, permissionMode: current.mode });
+  }
+  if (request.subtype === 'set_permission_mode')
+    out({ type: 'system', subtype: 'status', session_id: sessionId, status: null, permissionMode: current.mode });
 }
 
 // The MCP server from --mcp-config, started on first @approve, as claude would start it.

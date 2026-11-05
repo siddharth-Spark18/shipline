@@ -1,0 +1,20 @@
+# Reproduces the 2026-11-05 capture (claude 2.1.317, Haiku, stream-json, a throwaway repo with Shipline installed),
+# docs/plans/shipline-chat-reliability.md "Results of the 2026-11-05 checks". Read by test/fixtures/fake-claude.mjs
+# (# lines are comments, @ lines are directives, see its header). Values (ids, paths, tokens) are the fake's own.
+# - stderr: the workspace-trust warning, printed twice (the server must send one banner). Captured text up to
+#   "has not been trusted." and from "set projects[...]" on; the sentence between was elided in the plan's record.
+# - system/init: mcp_servers {name, status, source} ({{MCP_SERVERS}}: the claude.ai Atlassian connector at
+#   needs-auth unless the test sets FAKE_CLAUDE_MCP_SERVERS), slash_commands (all of them, including the
+#   terminal-only ones, a plugin command and a skill) and terminal_slash_commands.
+# - a hook's systemMessage: its own system/informational event, content "<Event>:<Tool> says: <message>".
+# The turn waits for $FAKE_CLAUDE_RELEASE before system/init, so a test can look at a chat that has no init yet.
+@wait-user
+@stderr Ignoring 2 permissions.allow entries from .claude/settings.json: this workspace has not been trusted. Open it in interactive claude and accept the trust dialog, or set projects["{{CWD}}"].hasTrustDialogAccepted: true in ~/.claude.json
+@stderr Ignoring 2 permissions.allow entries from .claude/settings.json: this workspace has not been trusted. Open it in interactive claude and accept the trust dialog, or set projects["{{CWD}}"].hasTrustDialogAccepted: true in ~/.claude.json
+@wait-release
+{"type":"system","subtype":"init","session_id":"{{SESSION_ID}}","cwd":"{{CWD}}","model":"{{MODEL}}","tools":["Bash","Edit","Write","AskUserQuestion"],"mcp_servers":{{MCP_SERVERS}},"permissionMode":"{{PERMISSION_MODE}}","slash_commands":["context","usage","cost","compact","clear","model","init","help","status","review","security-review","shipline-workflow","doctor","color","focus","reload-plugins","example-plugin:deploy"],"terminal_slash_commands":["doctor","color","focus","reload-plugins"],"apiKeySource":"none","output_style":"default"}
+{"type":"assistant","session_id":"{{SESSION_ID}}","message":{"id":"msg_r1","role":"assistant","model":"{{MODEL}}","content":[{"type":"tool_use","id":"toolu_r_edit","name":"Edit","input":{"file_path":"{{CWD}}/src/a.js","old_string":"a","new_string":"b"}}]}}
+{"type":"system","subtype":"informational","level":"notice","session_id":"{{SESSION_ID}}","content":"PreToolUse:Edit says: Shipline reminder: the \"Plan\" stage isn't done yet (warn mode). Finish it, then record it with: node .shipline/bin/stage.mjs advance"}
+{"type":"user","session_id":"{{SESSION_ID}}","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_r_edit","is_error":false,"content":"The file src/a.js has been updated."}]}}
+{"type":"assistant","session_id":"{{SESSION_ID}}","message":{"id":"msg_r2","role":"assistant","model":"{{MODEL}}","content":[{"type":"text","text":"Edited src/a.js."}]}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"{{SESSION_ID}}","duration_ms":1500,"num_turns":2,"result":"Edited src/a.js.","total_cost_usd":0.002,"usage":{"input_tokens":12,"output_tokens":30},"modelUsage":{"{{MODEL}}":{"inputTokens":12,"outputTokens":30,"contextWindow":1000000}}}

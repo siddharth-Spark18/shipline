@@ -3,6 +3,7 @@ import type {
   AgentsPreviewResponse,
   ApiErrorEnvelope,
   ChatCommand,
+  ChatControls,
   CiChange,
   CiPreviewResponse,
   ChatDetail,
@@ -12,9 +13,11 @@ import type {
   FileResponse,
   ImageData,
   PreviewResponse,
+  PickedControls,
   PromptAnswer,
   SaveRequest,
   SaveResponse,
+  SetControlsResponse,
   SetupData,
   Status,
   TasksData,
@@ -100,7 +103,20 @@ export const api = {
       text,
       ...(images.length > 0 ? { images } : {}),
     }),
-  listCommands: () => request<{ commands: ChatCommand[] }>('GET', '/api/chat/commands'),
+  listCommands: (chatId?: string | null) =>
+    request<{ commands: ChatCommand[] }>(
+      'GET',
+      `/api/chat/commands${chatId ? `?chat=${encodeURIComponent(chatId)}` : ''}`,
+    ),
+  getControls: (chatId?: string | null) =>
+    request<ChatControls>(
+      'GET',
+      `/api/chat/controls${chatId ? `?chat=${encodeURIComponent(chatId)}` : ''}`,
+    ),
+  setControls: (body: PickedControls & { chat?: string }) =>
+    request<SetControlsResponse>('POST', '/api/chat/controls', body),
+  trustRepo: (path: string) =>
+    request<{ trusted: true; takesEffect: string }>('POST', '/api/trust', { path }),
   startShell: (id: string, command: string) =>
     request<{ runId: string }>('POST', `/api/chats/${encodeURIComponent(id)}/shell`, { command }),
   stopShell: (id: string, runId: string) =>

@@ -12,17 +12,22 @@ import {
   readImages,
   type Attachment,
 } from '@/pages/chat/attachments';
+import { ChatControls } from '@/pages/chat/chat-controls';
 import { filterCommands, SlashMenu, useSlashCommands } from '@/pages/chat/slash-menu';
 
-/** Built-ins that need a terminal; sending one to `claude -p` would do nothing useful. */
+/** Built-ins that need a terminal or aren't available in `claude -p`. Same list as the server's INTERACTIVE_ONLY. */
 const INTERACTIVE_ONLY = [
-  'config',
+  'help',
+  'status',
   'login',
   'logout',
-  'model',
+  'config',
   'permissions',
   'doctor',
   'terminal-setup',
+  'color',
+  'focus',
+  'reload-plugins',
 ];
 
 const IS_WINDOWS = typeof navigator !== 'undefined' && /windows/i.test(navigator.userAgent);
@@ -70,7 +75,7 @@ export function Composer({
   const shellMode = text.startsWith('!');
   const shellCommand = shellMode ? text.slice(1).trim() : '';
   const slashOpen = !off && !dismissed && /^\/\S*$/.test(text);
-  const slash = useSlashCommands(slashOpen);
+  const slash = useSlashCommands(slashOpen, chatId);
   const matches = useMemo(
     () => filterCommands(slash.commands, text.slice(1)),
     [slash.commands, text],
@@ -132,6 +137,17 @@ export function Composer({
         setImages([]);
         setNote(null);
       }
+    } finally {
+      setSending(false);
+    }
+  };
+
+  // Compact now: `/compact` as a normal message, so it waits for the turn to end.
+  const compact = async () => {
+    if (off || busy || !chatId) return;
+    setSending(true);
+    try {
+      await onSend('/compact', []);
     } finally {
       setSending(false);
     }
@@ -257,6 +273,12 @@ export function Composer({
           {shellMode ? 'Run' : 'Send'}
         </Button>
       </div>
+      <ChatControls
+        chatId={chatId}
+        busy={busy}
+        disabled={disabled}
+        onCompact={() => void compact()}
+      />
       {line && (
         <p
           className={cn('text-xs', note ? 'text-destructive' : 'text-muted-foreground')}

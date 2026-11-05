@@ -321,18 +321,28 @@ export interface Diagnostics {
 
 // --- SSE events ---
 
-export type BannerKind = 'version' | 'fail-open' | 'lost-task' | 'usage-limit' | 'watch';
+export type BannerKind = 'version' | 'fail-open' | 'lost-task' | 'usage-limit' | 'watch' | 'trust';
 
 export interface BannerEvent {
   id: string;
   kind: BannerKind;
   text: string;
+  /** kind 'trust': the repo path Claude Code reported, exactly as it keys it in ~/.claude.json. */
+  path?: string;
 }
 
 export interface ChatEvent {
   chatId: string;
-  kind: 'event' | 'fatal' | 'ended' | 'task' | 'orphans' | 'orphans-cleared';
+  kind:
+    'event' | 'fatal' | 'ended' | 'task' | 'orphans' | 'orphans-cleared' | 'controls' | 'context';
   event?: unknown;
+  /** kind 'controls': the chat's current values, the model list, changes waiting for the turn to end, and an error to toast. */
+  controls?: PickedControls;
+  models?: ModelOption[];
+  pending?: PickedControls | null;
+  error?: string;
+  /** kind 'context': the latest reading. */
+  context?: ContextUsage;
   /** kind 'orphans': the process group that still has members after Stop. */
   pgid?: number;
   /** kind 'task': the task folder this chat's session got bound to. */
@@ -347,6 +357,49 @@ export interface ChatEvent {
 export interface ImageData {
   media_type: string;
   data: string;
+}
+
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+/** `manual` is what Claude Code calls `default`. */
+export type PermissionModeValue = 'manual' | 'acceptEdits' | 'plan' | 'auto';
+
+/** What is chosen so far; a key is missing when it was never picked (Claude's own settings apply). */
+export interface PickedControls {
+  model?: string;
+  effort?: EffortLevel;
+  permissionMode?: PermissionModeValue;
+}
+
+/** One model from Claude's `initialize` response (only these fields are kept by the server). */
+export interface ModelOption {
+  value: string;
+  resolvedModel: string | null;
+  displayName: string;
+  description: string;
+  supportsEffort: boolean;
+  supportedEffortLevels: EffortLevel[];
+  supportsAutoMode: boolean;
+}
+
+export interface ContextUsage {
+  totalTokens: number;
+  maxTokens: number;
+  autoCompactThreshold: number;
+  isAutoCompactEnabled: boolean;
+  percentage: number;
+  categories: { name: string; tokens: number }[];
+}
+
+/** GET /api/chat/controls. `models` is empty until a chat in this repo has run. */
+export interface ChatControls extends PickedControls {
+  models: ModelOption[];
+  context: ContextUsage | null;
+  pending: PickedControls | null;
+}
+
+export interface SetControlsResponse {
+  controls: PickedControls;
+  applied: 'now' | 'after-turn' | 'next-start';
 }
 
 /** One entry of GET /api/chat/commands. */
@@ -397,7 +450,11 @@ export interface ChatDetail {
   chat: ChatSummary;
   history: unknown[] | null;
   unavailable?: boolean;
+  /** The Atlassian connector in this chat; null until the chat has started. */
+  jira?: JiraStatus | null;
 }
+
+export type JiraStatus = 'connected' | 'needs-auth' | 'failed' | 'missing';
 
 export interface PromptAnswer {
   decision: 'allow' | 'deny';

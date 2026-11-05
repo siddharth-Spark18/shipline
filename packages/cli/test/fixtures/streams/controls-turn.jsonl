@@ -1,0 +1,10 @@
+# Reproduces the 2026-11-05 capture's turn shape (claude 2.1.318) for the chat-controls tests: system/init reports
+# the model in force ({{MODEL}}: the resolved --model, default claude-opus-5-5) and permissionMode in control terms
+# ({{PERMISSION_MODE}}: --permission-mode manual is reported as "default"). Read by test/fixtures/fake-claude.mjs,
+# which also answers the server's control_request lines (see its header). The first turn stays running until
+# $FAKE_CLAUDE_RELEASE exists; later messages get the fake's default turn.
+@wait-user
+{"type":"system","subtype":"init","session_id":"{{SESSION_ID}}","cwd":"{{CWD}}","model":"{{MODEL}}","tools":["Bash","Edit","Write","AskUserQuestion"],"mcp_servers":[{"name":"shipline_ui","status":"connected"}],"permissionMode":"{{PERMISSION_MODE}}","slash_commands":["context","compact","model"],"terminal_slash_commands":[]}
+{"type":"assistant","session_id":"{{SESSION_ID}}","message":{"id":"msg_c1","role":"assistant","model":"{{MODEL}}","content":[{"type":"text","text":"Working on it."}]}}
+@wait-release
+{"type":"result","subtype":"success","is_error":false,"session_id":"{{SESSION_ID}}","duration_ms":900,"num_turns":1,"result":"Done.","total_cost_usd":0.001,"usage":{"input_tokens":10,"output_tokens":20}}

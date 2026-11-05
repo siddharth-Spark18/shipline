@@ -1,10 +1,14 @@
-// Chat API handlers: GET/POST /api/chats, GET /api/chats/<id>, and <id>/message, /stop, /kill, /continue.
+// Chat API handlers: GET/POST /api/chats, GET /api/chats/<id>, <id>/message, /stop, /kill, /continue, plus
+// /api/chat/commands, /api/chat/controls and /api/trust.
 // Node 20+, no dependencies.
 import { MIN_CLAUDE_VERSION, claudeHealth } from './claude.mjs';
 import { listCommands } from './commands.mjs';
+import { readDefaults, validateControls } from './controls.mjs';
 import { HttpError, MAX_IMAGE_BODY } from './http.mjs';
 import { getChat, listChats, readLock } from './sessions.mjs';
 import { startShell, stopRun } from './shell.mjs';
+import { jiraStatus } from './stream.mjs';
+import { trustRepo } from './trust.mjs';
 import { readHistory } from './transcript.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -111,9 +115,11 @@ export function routes(app) {
       handler: ({ params }) => {
         const chat = withStatus(app, requireChat(app, params.id));
         const h = readHistory(root, chat.id);
+        const init = app.chats.initInfo(chat.id);
+        const jira = init ? jiraStatus(init.mcpServers) : null;
         return h.unavailable
-          ? { chat, history: null, unavailable: true }
-          : { chat, history: h.history };
+          ? { chat, history: null, unavailable: true, jira }
+          : { chat, history: h.history, jira };
       },
     },
     {
@@ -164,7 +170,45 @@ export function routes(app) {
     {
       method: 'GET',
       path: '/api/chat/commands',
-      handler: () => ({ commands: listCommands(root, { parseYaml: app.repo.lib.parseYaml }) }),
+      handler: ({ url }) => {
+        const chatId = url && url.searchParams.get('chat');
+        const init = chatId ? app.chats.initInfo(chatId) : null;
+        return {
+          commands: listCommands(root, {
+            parseYaml: app.repo.lib.parseYaml,
+            initCommands: init ? init.slashCommands : [],
+            terminalCommands: init ? init.terminalSlashCommands : [],
+          }),
+        };
+      },
+    },
+    {
+      method: 'GET',
+      path: '/api/chat/controls',
+      handler: ({ url }) => {
+        const chatId = url.searchParams.get('chat');
+        if (chatId) requireChat(app, chatId);
+        return app.chats.getControls(chatId || null);
+      },
+    },
+    {
+      method: 'POST',
+      path: '/api/chat/controls',
+      handler: ({ body }) => {
+        if (!body || typeof body !== 'object' || Array.isArray(body))
+          throw new HttpError(400, 'bad-request', 'A JSON object is required');
+        const { chat: chatId, ...rest } = body;
+        if (chatId !== undefined && chatId !== null) requireChat(app, chatId);
+        const patch = validateControls(rest, readDefaults(root).models);
+        if (!Object.keys(patch).length)
+          throw new HttpError(400, 'bad-control', 'Nothing to change');
+        return app.chats.setControls(chatId || null, patch);
+      },
+    },
+    {
+      method: 'POST',
+      path: '/api/trust',
+      handler: ({ body }) => trustRepo(root, body && body.path),
     },
     {
       method: 'POST',

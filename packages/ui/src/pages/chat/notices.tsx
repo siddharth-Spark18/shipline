@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import {
   BanIcon,
   BellIcon,
@@ -6,12 +7,14 @@ import {
   HandIcon,
   InfoIcon,
   OctagonAlertIcon,
+  PlugZapIcon,
   ShieldAlertIcon,
 } from 'lucide-react';
 import { cn } from 'cn';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import type { JiraStatus } from '@/lib/types';
 import type { FatalInfo } from '@/pages/chat/chat-store';
 import type { ChatResult, NoticeLevel } from '@/pages/chat/timeline';
 
@@ -193,4 +196,33 @@ export function ResultLine({ result }: { result: ChatResult }) {
   if (result.turns !== undefined) parts.push(`${result.turns} turns`);
   if (parts.length === 0) return null;
   return <p className="text-xs text-muted-foreground">Last turn: {parts.join(' · ')}</p>;
+}
+
+const JIRA_TEXT: Record<Exclude<JiraStatus, 'connected'>, ReactNode> = {
+  missing:
+    "Jira isn't connected. Add the Atlassian connector in claude.ai → Settings → Connectors. Claude will skip the Jira stage for now.",
+  'needs-auth': (
+    <>
+      Jira needs authenticating. Run <code className="font-mono">claude</code> in a terminal, then{' '}
+      <code className="font-mono">/mcp</code> → claude.ai Atlassian → Authenticate. Claude will skip
+      the Jira stage for now.
+    </>
+  ),
+  failed: (
+    <>
+      The Jira connector failed to start. Check <code className="font-mono">/mcp</code> in a
+      terminal <code className="font-mono">claude</code>. Claude will skip the Jira stage for now.
+    </>
+  ),
+};
+
+/** The task is at the `jira` stage but the Atlassian connector can't be used. */
+export function JiraNotice({ status }: { status: Exclude<JiraStatus, 'connected'> }) {
+  return (
+    <Alert className="border-l-4 border-l-notice-reminder">
+      <PlugZapIcon />
+      <AlertTitle>Jira</AlertTitle>
+      <AlertDescription>{JIRA_TEXT[status]}</AlertDescription>
+    </Alert>
+  );
 }

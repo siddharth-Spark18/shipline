@@ -3,13 +3,15 @@
 import { execFile } from 'node:child_process';
 import { accessSync, constants, statSync } from 'node:fs';
 import path from 'node:path';
+import { controlArgs } from './controls.mjs';
 import { meetsMinVersion, parseVersion } from './versions.mjs';
 
-// UNVERIFIED (chat test item 19, recorded version): 2.1.317 is the installed version, not yet the version the chat test records.
-export const MIN_CLAUDE_VERSION = '2.1.317';
+// Verified 2026-11-05: the chat controls (--model, --effort, --permission-mode, control_request messages) were
+// checked on claude 2.1.318; everything else on 2.1.317.
+export const MIN_CLAUDE_VERSION = '2.1.318';
 
-// UNVERIFIED (chat test Q5): whether MCP_TOOL_TIMEOUT in claude's environment raises its limit on a
-// long permission-prompt call. null = leave the environment alone; set to '660000' if Q5 says it helps.
+// Not checked (chat test Q5): whether MCP_TOOL_TIMEOUT in claude's environment raises its limit on a long
+// permission-prompt call. null = leave the environment alone. The prompt timeout is 5 minutes instead.
 export const MCP_TOOL_TIMEOUT_ENV = null;
 
 export const PERMISSION_TOOL = 'mcp__shipline_ui__approve';
@@ -129,7 +131,7 @@ export async function claudeHealth(minVersion = MIN_CLAUDE_VERSION) {
 
 // The exact argv from the plan. A new chat passes --session-id, a continued one --resume (never
 // --fork-session). Throws if a forbidden flag is ever included.
-export function buildArgs({ sessionId, resume = false, mcpConfig }) {
+export function buildArgs({ sessionId, resume = false, mcpConfig, controls }) {
   const argv = [
     '-p',
     '--input-format',
@@ -138,14 +140,16 @@ export function buildArgs({ sessionId, resume = false, mcpConfig }) {
     'stream-json',
     '--verbose',
     '--include-partial-messages',
-    // UNVERIFIED (chat test Q1): the session id stays the same across --session-id and --resume.
+    // Verified 2026-11-05 (claude 2.1.317): the same id across --session-id and --resume; system/init reports it.
     resume ? '--resume' : '--session-id',
     sessionId,
     '--mcp-config',
     mcpConfig,
-    // UNVERIFIED (chat test Q3): AskUserQuestion is routed through --permission-prompt-tool under -p.
+    // Verified 2026-11-04/05 (claude 2.1.317): AskUserQuestion goes through --permission-prompt-tool under -p and
+    // the relay's updatedInput.answers reaches Claude.
     '--permission-prompt-tool',
     PERMISSION_TOOL,
+    ...controlArgs(controls),
   ];
   for (const a of argv) {
     if (FORBIDDEN_FLAGS.includes(a) || a === '--fork-session')

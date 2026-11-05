@@ -17,5 +17,5 @@ Order chosen by the author: Phase 1, then install, friction, trust, rollout.
 
 **Notes (2026-11-04):**
 - Phase 5 is covered by `shipline-cleanup-rollout.md`, minus metrics (dropped).
-- The rest of Phase 2 (Node preflight) and Phase 3 (Jira in the `-p` chat) move into a separate *Chat reliability* plan.
+- The rest of Phase 2 (Node preflight) and Phase 3 (Jira in the `-p` chat) move into a separate *Chat reliability* plan, now covered by `shipline-chat-reliability.md` (ships as 0.9.0; it also closes the chat test's `UNVERIFIED` items and adds the chat's model, effort, mode and context controls).
 - Phase 4 (Trust) is its own plan.

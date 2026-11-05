@@ -5,6 +5,19 @@ import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 
+// ---------- Node version check ----------
+// The hooks need Node 18+. On an older Node a hook prints one warning (SessionStart) or exits quietly (the
+// others), so Claude is never blocked. stage.mjs and ci-check.mjs are not hooks and are left alone.
+const NODE_TOO_OLD_MESSAGE = "Shipline needs Node.js 18 or newer on this machine; its workflow hooks are off until it's installed.";
+if (Number(process.versions.node.split('.')[0]) < 18) {
+  const script = path.basename(String(process.argv[1] || ''));
+  if (script === 'session-start.mjs') {
+    process.stdout.write(JSON.stringify({ systemMessage: NODE_TOO_OLD_MESSAGE }));
+    process.exit(0);
+  }
+  if (['guard.mjs', 'prompt-submit.mjs', 'record-answer.mjs'].includes(script)) process.exit(0);
+}
+
 // ---------- tiny YAML subset parser ----------
 // Supported: nested maps (2-space or deeper indent), lists of scalars or maps ("- key: v"), inline
 // lists [a, b], single/double quoted strings, # comments, true/false/null/numbers.

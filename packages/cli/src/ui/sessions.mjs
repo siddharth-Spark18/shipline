@@ -20,7 +20,7 @@ export const uiStateDir = (root) => uiDir(root);
 const sessionsFile = (root) => path.join(uiStateDir(root), 'sessions.json');
 const lockFile = (root) => path.join(uiStateDir(root), 'lock.json');
 
-function writeAtomic(file, text) {
+export function writeAtomic(file, text) {
   mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, text);

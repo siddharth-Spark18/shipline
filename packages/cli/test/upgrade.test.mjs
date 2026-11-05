@@ -219,6 +219,8 @@ describe('the node-check hook wrappers (0.8.0 -> 0.9.0)', () => {
     const sf = path.join(dir, '.claude', 'settings.json');
     const s = readJson(sf);
     for (const [event, cmd] of Object.entries(OLD_COMMANDS)) s.hooks[event][0].hooks[0].command = cmd;
+    // 0.8.0's allow rules (0.10.1 added the stage.mjs Bash rule).
+    s.permissions.allow = s.permissions.allow.filter((r) => r !== 'Bash(node .shipline/bin/stage.mjs:*)');
     const oldHash = sha(canonicalSettingsPart(s));
     if (edit) edit(s);
     writeFileSync(sf, JSON.stringify(s, null, 2) + '\n');
@@ -525,7 +527,7 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
   test('settings.json: Shipline hook entries replaced, ~/.shipline allow rules added, the team\'s deny rules kept', () => {
     const s = readJson(path.join(dir, '.claude/settings.json'));
     assert.deepEqual(s.permissions.deny, orig.settings.permissions.deny);
-    assert.deepEqual(s.permissions.allow, ['Read(~/.shipline/**)', 'Edit(~/.shipline/**)']);
+    assert.deepEqual(s.permissions.allow, ['Read(~/.shipline/**)', 'Edit(~/.shipline/**)', 'Bash(node .shipline/bin/stage.mjs:*)']);
     assert.deepEqual(s.hooks, readJson(path.join(TEMPLATES_ROOT, 'settings-hooks.json')).hooks);
   });
 

@@ -1,6 +1,6 @@
 {
   "permissions": {
-    "allow": ["Read(~/.shipline/**)", "Edit(~/.shipline/**)"]
+    "allow": ["Read(~/.shipline/**)", "Edit(~/.shipline/**)", "Bash(node .shipline/bin/stage.mjs:*)"]
   },
   "hooks": {
     "SessionStart": [

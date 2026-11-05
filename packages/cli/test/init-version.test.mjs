@@ -65,7 +65,7 @@ describe('init writes VERSION', () => {
     writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash(ls:*)', 'Read(~/.shipline/**)'] } }));
     assert.equal(runInit(dir).code, 0);
     const s = JSON.parse(readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'));
-    assert.deepEqual(s.permissions.allow, ['Bash(ls:*)', 'Read(~/.shipline/**)', 'Edit(~/.shipline/**)']);
+    assert.deepEqual(s.permissions.allow, ['Bash(ls:*)', 'Read(~/.shipline/**)', 'Edit(~/.shipline/**)', 'Bash(node .shipline/bin/stage.mjs:*)']);
     assert.ok(s.hooks.PreToolUse.some((e) => JSON.stringify(e).includes('.shipline/bin/guard.mjs')));
   });
 

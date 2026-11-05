@@ -26,7 +26,7 @@ This creates the task folder (outside the repo, under `~/.shipline`; `stage.mjs`
 
 ## 3. Work each stage
 
-For the current stage: read its rules (printed by stage.mjs), delegate to the named agent if one is suggested, and write the stage's artifact into the task folder that `stage.mjs` prints. Artifacts are the source of truth for later stages; read them instead of relying on memory.
+For the current stage: read its rules (printed by stage.mjs), delegate to the named agent if one is suggested, and write the stage's artifact into the task folder that `stage.mjs` prints. Artifacts are the source of truth for later stages; read them instead of relying on memory. To look at the task folder, use `stage.mjs status` and the Read or Glob tools (they are pre-allowed for `~/.shipline`), not `ls` or `cat` through Bash, which would ask the developer for permission.
 
 - **ticket:** `.shipline/config.yml` says which tracker the repo uses (`tracker: jira`, the default, or `github`); `stage.mjs` names it when the stage starts. Read the ticket (read-only, never create or edit issues) and save the key facts to `ticket.md`. If the developer pastes ticket details, use those instead. Pass `--ticket` at start when you know the key or issue number.
   - **jira:** use the Atlassian MCP if it is connected. If the Atlassian tools are not available (not connected, or needing authentication), skip the stage with `stage.mjs skip --reason "Jira not connected"`.

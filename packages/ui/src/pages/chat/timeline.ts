@@ -187,16 +187,15 @@ function assistantEvent(out: Item[], ev: Rec) {
     if (block.type === 'text') {
       const text = asStr(block.text) ?? '';
       if (!text.trim()) continue;
-      // The final text replaces the finished partial it was streamed as.
+      // The final text replaces the partial it was streamed as, in place. Claude 2.1.318 sends the
+      // `assistant` event for a block *before* that block's content_block_stop, so the partial may not
+      // be marked done yet; matching only finished partials showed every streamed text twice.
       const at = out.findIndex(
-        (i) =>
-          i.kind === 'text' &&
-          i.streaming !== undefined &&
-          i.streaming.msgId === msgId &&
-          i.streaming.done,
+        (i) => i.kind === 'text' && i.streaming !== undefined && i.streaming.msgId === msgId,
       );
-      if (at >= 0) out.splice(at, 1);
-      out.push({ kind: 'text', id: nextId('a'), text });
+      const final: Item = { kind: 'text', id: nextId('a'), text };
+      if (at >= 0) out[at] = final;
+      else out.push(final);
     } else if (block.type === 'tool_use') {
       const id = asStr(block.id) ?? nextId('t');
       const item: Item = {

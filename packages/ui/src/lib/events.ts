@@ -98,6 +98,12 @@ export function connectEvents(queryClient: QueryClient): () => void {
       chatListeners.forEach((fn) => fn(data));
       // The list shows status and last activity; refresh it when a chat ends or a turn finishes.
       const type = (data.event as { type?: unknown } | undefined)?.type;
+      const subtype = (data.event as { subtype?: unknown } | undefined)?.subtype;
+      // controls and context are live readings, not a change to the chat list.
+      if (data.kind === 'controls' || data.kind === 'context') return;
+      // system/init carries the connector list, which GET /api/chats/<id> reports as `jira`.
+      if (type === 'system' && subtype === 'init')
+        void queryClient.invalidateQueries({ queryKey: queryKeys.chat(data.chatId) });
       if (data.kind !== 'event' || type === 'result') {
         void queryClient.invalidateQueries({ queryKey: queryKeys.chats });
         if (data.kind !== 'event') {

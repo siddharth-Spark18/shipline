@@ -89,11 +89,19 @@ function blockText(content: unknown): string {
     .join('\n');
 }
 
-/** A hook `systemMessage` in an event. Where it appears under `-p` is test-dependent (item 19 q8). */
+/** The `<Event>:<Tool> says: ` prefix Claude adds to a hook message in a `system`/`informational` event. */
+const INFORMATIONAL_PREFIX = /^[A-Za-z]+(?::[^\s:]+)? says: /;
+
+/**
+ * A hook `systemMessage` in an event. Verified 2026-11-05 (claude 2.1.317): it arrives as
+ * `{ type: 'system', subtype: 'informational', content: '<Event>:<Tool> says: <message>' }`.
+ */
 export function hookMessage(ev: Rec): string | null {
   const direct = asStr(ev.systemMessage);
   if (direct) return direct;
   if (ev.type === 'system') {
+    const content = asStr(ev.content);
+    if (ev.subtype === 'informational' && content) return content.replace(INFORMATIONAL_PREFIX, '');
     for (const key of ['output', 'stdout']) {
       const raw = asStr(ev[key]);
       if (!raw || !raw.includes('systemMessage')) continue;
@@ -106,6 +114,13 @@ export function hookMessage(ev: Rec): string | null {
     }
   }
   return null;
+}
+
+const LOCAL_COMMAND_OUTPUT = /^\s*<local-command-stdout>/;
+
+function firstText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  return blockText(content);
 }
 
 function replaceAt(out: Item[], index: number, item: Item) {
@@ -182,9 +197,6 @@ function assistantEvent(out: Item[], ev: Rec) {
       );
       if (at >= 0) out.splice(at, 1);
       out.push({ kind: 'text', id: nextId('a'), text });
-      if (USAGE_LIMIT.test(text) && /limit reached/i.test(text)) {
-        out.push({ kind: 'notice', id: nextId('n'), level: 'usage-limit', text });
-      }
     } else if (block.type === 'tool_use') {
       const id = asStr(block.id) ?? nextId('t');
       const item: Item = {
@@ -203,6 +215,8 @@ function assistantEvent(out: Item[], ev: Rec) {
 function userEvent(out: Item[], ev: Rec, ctx: StreamCtx) {
   const msg = ev.message;
   if (!isRec(msg) || ev.isMeta === true) return;
+  // Claude replays the output of a local command (for example `/model`) as a user event: not a message.
+  if (ev.isReplay === true && LOCAL_COMMAND_OUTPUT.test(firstText(msg.content))) return;
   if (typeof msg.content === 'string') {
     // Live: the composer already added the message. History: this is the real thing.
     if (ctx.history && msg.content.trim())
@@ -266,13 +280,13 @@ function userEvent(out: Item[], ev: Rec, ctx: StreamCtx) {
 function resultEvent(out: Item[], ev: Rec) {
   const text = asStr(ev.result) ?? '';
   const isError = ev.is_error === true || (asStr(ev.subtype) ?? '').startsWith('error');
+  // The usage-limit message is already Claude's own text and the server's banner; any other error text that
+  // repeats the last assistant text is not shown twice.
+  const lastText = [...out].reverse().find((i) => i.kind === 'text');
+  const repeated = lastText?.kind === 'text' && lastText.text.trim() === text.trim();
   if (isError && text) {
-    out.push({
-      kind: 'notice',
-      id: nextId('n'),
-      level: USAGE_LIMIT.test(text) ? 'usage-limit' : 'info',
-      text,
-    });
+    if (!USAGE_LIMIT.test(text) && !repeated)
+      out.push({ kind: 'notice', id: nextId('n'), level: 'info', text });
   } else if (isError) {
     out.push({
       kind: 'notice',

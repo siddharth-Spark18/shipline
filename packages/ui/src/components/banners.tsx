@@ -3,7 +3,17 @@ import { useQuery } from '@tanstack/react-query';
 import { cn } from 'cn';
 import { InfoIcon, TriangleAlertIcon, XIcon } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
 import type { BannerEvent, BannerKind, Status } from '@/lib/types';
 
@@ -18,6 +28,7 @@ const TITLES: Record<BannerKind, string> = {
   'lost-task': 'Task not tracked',
   'usage-limit': 'Usage limit',
   watch: 'Live updates',
+  trust: 'Repo not trusted',
 };
 
 function repoPackage(status: Status): string {
@@ -55,6 +66,25 @@ function BannerItem({
   onOpenDiagnostics?: () => void;
 }) {
   const Icon = banner.kind === 'version' && !destructive ? InfoIcon : TriangleAlertIcon;
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [trusted, setTrusted] = useState(false);
+  const trustPath = banner.kind === 'trust' ? banner.path : undefined;
+
+  const trust = async () => {
+    if (!trustPath) return;
+    setBusy(true);
+    try {
+      await api.trustRepo(trustPath);
+      setTrusted(true);
+      setConfirming(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't trust this repo");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Alert
       variant={destructive ? 'destructive' : 'default'}
@@ -63,7 +93,15 @@ function BannerItem({
       <Icon className={destructive ? undefined : 'text-notice-reminder'} />
       <AlertTitle>{TITLES[banner.kind] ?? 'Shipline'}</AlertTitle>
       <AlertDescription>
-        {banner.text}
+        {trusted ? 'Trusted. Takes effect when a chat starts.' : banner.text}
+        {trustPath && !trusted && (
+          <>
+            {' '}
+            <Button size="xs" variant="outline" onClick={() => setConfirming(true)}>
+              Trust this repo
+            </Button>
+          </>
+        )}
         {onOpenDiagnostics && (
           <>
             {' '}
@@ -86,6 +124,30 @@ function BannerItem({
       >
         <XIcon />
       </Button>
+      {trustPath && (
+        <Dialog open={confirming} onOpenChange={(o) => !busy && setConfirming(o)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Trust this repo?</DialogTitle>
+              <DialogDescription>
+                This changes one setting in Claude Code's own config file. Nothing else in it is
+                touched.
+              </DialogDescription>
+            </DialogHeader>
+            <code className="rounded bg-muted px-2 py-1 font-mono text-xs break-all">
+              ~/.claude.json: projects["{trustPath}"].hasTrustDialogAccepted → true
+            </code>
+            <DialogFooter>
+              <Button variant="outline" disabled={busy} onClick={() => setConfirming(false)}>
+                Cancel
+              </Button>
+              <Button disabled={busy} onClick={() => void trust()}>
+                {busy ? 'Trusting...' : 'Trust this repo'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </Alert>
   );
 }

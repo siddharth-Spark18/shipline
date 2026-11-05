@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { BIN, CLI_ROOT, FIXTURES, git, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
+import { SETTINGS_KEY, canonicalSettingsPart } from '../src/hashes.mjs';
 
 const LEGACY = path.join(FIXTURES, 'legacy-0.6');
 const TEMPLATES_ROOT = path.join(CLI_ROOT, 'templates');
@@ -198,6 +199,73 @@ describe('a fresh interface-3 install', () => {
     const r = upgrade(dir, '--yes');
     assert.equal(r.code, 0, r.stderr);
     assert.equal(r.stdout, 'Already up to date.\n');
+  });
+});
+
+// Chat reliability plan, G: 0.9.0 wraps every Shipline hook command in a node check. upgrade swaps the 0.8.0
+// commands for the new ones in repos that haven't edited them, and leaves an edited entry alone.
+describe('the node-check hook wrappers (0.8.0 -> 0.9.0)', () => {
+  const OLD_COMMANDS = {
+    SessionStart: 'node "$CLAUDE_PROJECT_DIR/.shipline/bin/session-start.mjs"',
+    UserPromptSubmit: 'node "$CLAUDE_PROJECT_DIR/.shipline/bin/prompt-submit.mjs"',
+    PostToolUse: 'node "$CLAUDE_PROJECT_DIR/.shipline/bin/record-answer.mjs"',
+    PreToolUse: 'node "$CLAUDE_PROJECT_DIR/.shipline/bin/guard.mjs"',
+  };
+  const tplHooks = () => readJson(path.join(TEMPLATES_ROOT, 'settings-hooks.json')).hooks;
+  // A repo whose settings.json has the 0.8.0 hook commands; `record` says what VERSION.files records for it.
+  function repoWith08Hooks({ record = 'old', edit } = {}) {
+    const dir = makeRepo({ commitInit: true });
+    dirs.push(dir);
+    const sf = path.join(dir, '.claude', 'settings.json');
+    const s = readJson(sf);
+    for (const [event, cmd] of Object.entries(OLD_COMMANDS)) s.hooks[event][0].hooks[0].command = cmd;
+    const oldHash = sha(canonicalSettingsPart(s));
+    if (edit) edit(s);
+    writeFileSync(sf, JSON.stringify(s, null, 2) + '\n');
+    const v = version(dir);
+    if (record === 'old') v.files[SETTINGS_KEY] = oldHash;
+    else delete v.files[SETTINGS_KEY];
+    writeFileSync(path.join(dir, '.shipline', 'bin', 'VERSION'), JSON.stringify(v, null, 2) + '\n');
+    git(dir, 'commit', '-q', '-am', 'as installed by 0.8.0');
+    return { dir, sf, oldHash, settings: s };
+  }
+
+  test('the 0.8.0 settings part is a known 0.8.0 hash, and the template differs from it', () => {
+    const { oldHash } = repoWith08Hooks();
+    const known = readJson(path.join(CLI_ROOT, 'src', 'known-hashes.json'))[SETTINGS_KEY];
+    assert.equal(known[oldHash], '0.8.0');
+    assert.notEqual(oldHash, sha(canonicalSettingsPart({ hooks: tplHooks(), permissions: { allow: ['Read(~/.shipline/**)', 'Edit(~/.shipline/**)'] } })));
+  });
+
+  test('unedited (recorded in VERSION.files): replaced by the wrappers; the record is updated', () => {
+    const { dir, sf } = repoWith08Hooks();
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /\.claude\/settings\.json \(hook entries, allow rules for ~\/\.shipline\): replace/);
+    const after = readJson(sf);
+    assert.deepEqual(after.hooks, tplHooks());
+    for (const entries of Object.values(after.hooks))
+      for (const e of entries) for (const h of e.hooks) assert.ok(h.command.startsWith('command -v node >/dev/null 2>&1 && node '), h.command);
+    assert.equal(version(dir).files[SETTINGS_KEY], sha(canonicalSettingsPart(after)));
+    assert.equal(upgrade(dir, '--yes').stdout, 'Already up to date.\n');
+  });
+
+  test('unedited with no record: matched through known-hashes.json and replaced', () => {
+    const { dir, sf } = repoWith08Hooks({ record: 'none' });
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(readJson(sf).hooks, tplHooks());
+  });
+
+  test('a team edit to the 0.8.0 entries is skipped (the old commands stay); --force writes the wrappers', () => {
+    const { dir, sf } = repoWith08Hooks({ edit: (s) => (s.hooks.PreToolUse[0].matcher = 'Edit|Write') });
+    const text = readFileSync(sf, 'utf8');
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /Skipped \(edited by your team; use --force to replace\): \.claude\/settings\.json/);
+    assert.equal(readFileSync(sf, 'utf8'), text);
+    assert.equal(upgrade(dir, '--yes', '--force').code, 0);
+    assert.deepEqual(readJson(sf).hooks, tplHooks());
   });
 });
 

@@ -5,24 +5,24 @@
   "hooks": {
     "SessionStart": [
       {
-        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.shipline/bin/session-start.mjs\"" }]
+        "hooks": [{ "type": "command", "command": "command -v node >/dev/null 2>&1 && node \"$CLAUDE_PROJECT_DIR/.shipline/bin/session-start.mjs\" || echo '{\"systemMessage\":\"Shipline needs Node.js 18 or newer on this machine; its workflow hooks are off until it'\\''s installed.\"}'" }]
       }
     ],
     "UserPromptSubmit": [
       {
-        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.shipline/bin/prompt-submit.mjs\"" }]
+        "hooks": [{ "type": "command", "command": "command -v node >/dev/null 2>&1 && node \"$CLAUDE_PROJECT_DIR/.shipline/bin/prompt-submit.mjs\" || true" }]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "AskUserQuestion",
-        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.shipline/bin/record-answer.mjs\"" }]
+        "hooks": [{ "type": "command", "command": "command -v node >/dev/null 2>&1 && node \"$CLAUDE_PROJECT_DIR/.shipline/bin/record-answer.mjs\" || true" }]
       }
     ],
     "PreToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
-        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.shipline/bin/guard.mjs\"" }]
+        "hooks": [{ "type": "command", "command": "command -v node >/dev/null 2>&1 && node \"$CLAUDE_PROJECT_DIR/.shipline/bin/guard.mjs\" || true" }]
       }
     ]
   }

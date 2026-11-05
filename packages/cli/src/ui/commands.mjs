@@ -5,19 +5,30 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseYaml as vendoredParseYaml } from '../../templates/shipline/bin/lib.mjs';
 
-// Built-in commands that are known to work under `claude -p`. Empty on purpose: entries are added only once the
-// chat test confirms them. Known not to work in -p (interactive only): see INTERACTIVE_ONLY.
-export const BUILTIN_COMMANDS = [];
+// Built-in commands verified to work under `claude -p` (2026-11-05, claude 2.1.317).
+export const BUILTIN_COMMANDS = [
+  { name: 'context', description: 'Show context usage' },
+  { name: 'usage', description: 'Show plan usage' },
+  { name: 'cost', description: 'Show usage and cost' },
+  { name: 'compact', description: 'Compact the conversation' },
+  { name: 'clear', description: 'Clear the conversation' },
+  { name: 'model', description: 'Show or change the model' },
+  { name: 'init', description: 'Draft a CLAUDE.md' },
+];
 
-// Built-ins that need Claude Code's terminal UI; the composer refuses to send them.
+// Built-ins that need Claude Code's terminal UI or aren't available in -p; the composer refuses to send them.
 export const INTERACTIVE_ONLY = [
-  'config',
+  'help',
+  'status',
   'login',
   'logout',
-  'model',
+  'config',
   'permissions',
   'doctor',
   'terminal-setup',
+  'color',
+  'focus',
+  'reload-plugins',
 ];
 
 const MAX_DEPTH = 6;
@@ -118,7 +129,10 @@ function scanSkills(dir, source, parseYaml, out) {
 }
 
 // [{ name, description, source: 'repo'|'user'|'builtin', kind: 'command'|'skill' }], sorted by name. A repo
-// entry wins over a user entry of the same name. `opts.parseYaml` and `opts.home` exist for tests.
+// entry wins over a user entry of the same name. `opts.initCommands` (a running chat's system/init
+// slash_commands) adds names that aren't listed yet, as description-less built-ins; names in
+// `opts.terminalCommands`, names containing `:` (plugin or MCP commands) and INTERACTIVE_ONLY names are left out.
+// `opts.parseYaml` and `opts.home` exist for tests.
 export function listCommands(root, opts = {}) {
   const parseYaml = opts.parseYaml || vendoredParseYaml;
   const home = opts.home || os.homedir();
@@ -131,8 +145,18 @@ export function listCommands(root, opts = {}) {
     scanCommands(path.join(base, 'commands'), source, parseYaml, found);
     scanSkills(path.join(base, 'skills'), source, parseYaml, found);
   }
-  for (const name of BUILTIN_COMMANDS)
+  for (const b of BUILTIN_COMMANDS)
+    found.push({ name: b.name, description: b.description, source: 'builtin', kind: 'command' });
+  const terminal = new Set(opts.terminalCommands || []);
+  const listed = new Set(found.map((c) => c.name));
+  for (const raw of opts.initCommands || []) {
+    const name = typeof raw === 'string' ? raw.replace(/^\//, '') : '';
+    if (!name || name.includes(':') || terminal.has(name) || INTERACTIVE_ONLY.includes(name))
+      continue;
+    if (listed.has(name)) continue;
+    listed.add(name);
     found.push({ name, description: '', source: 'builtin', kind: 'command' });
+  }
   const seen = new Set();
   const out = [];
   for (const c of found) {

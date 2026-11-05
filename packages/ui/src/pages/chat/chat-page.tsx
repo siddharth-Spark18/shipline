@@ -19,11 +19,13 @@ import { queryKeys } from '@/lib/events';
 import { findTask, useMediaQuery, usePrompts, useTasks } from '@/lib/queries';
 import type { ChatSummary, ChatsResponse, ImageData, PromptEvent, VersionState } from '@/lib/types';
 import { chatStore, useChatLive } from '@/pages/chat/chat-store';
+import { ChatControls } from '@/pages/chat/chat-controls';
 import { Composer } from '@/pages/chat/composer';
 import { MessageList } from '@/pages/chat/message-list';
 import {
   ClaudeMissingNotice,
   FatalNotice,
+  JiraNotice,
   LockHeldNotice,
   OrphansNotice,
   ResultLine,
@@ -328,6 +330,14 @@ function ChatView({
 
   const ended = live.ended ?? chat?.status === 'ended';
   const busy = live.busy ?? chat?.busy ?? false;
+  // The Jira notice: the task is at the `jira` stage (the one in progress, else the first pending) and the
+  // Atlassian connector can't be used. `jira` is null until the chat has started.
+  const chatTask = findTask(tasks.data?.tasks, chat?.task_dir);
+  const currentStage =
+    chatTask?.stages.find((s) => s.status === 'in_progress') ??
+    chatTask?.stages.find((s) => s.status === 'pending');
+  const jira = detail.data?.jira;
+  const jiraProblem = currentStage?.id === 'jira' && jira && jira !== 'connected' ? jira : null;
   const resumeCommand = live.fatal?.resumeCommand ?? `claude --resume ${id}`;
   const missing = blocker?.code.startsWith('claude-') ? blocker : null;
 
@@ -439,6 +449,7 @@ function ChatView({
       {live.fatal && <FatalNotice chatId={id} fatal={live.fatal} onNewChat={onNewChat} />}
       {live.orphans && <OrphansNotice onKill={() => void killOrphans()} killing={killing} />}
       {live.result && <ResultLine result={live.result} />}
+      {jiraProblem && !ended && <JiraNotice status={jiraProblem} />}
 
       {missing ? (
         <ClaudeMissingNotice code={missing.code} message={missing.message} />
@@ -451,6 +462,9 @@ function ChatView({
               : ' You can continue it here or in a terminal.'}
           </p>
           {!live.fatal && <ResumeCommand command={resumeCommand} />}
+          {live.fatal?.reason !== 'resume-failed' && (
+            <ChatControls chatId={id} ended disabled={readOnly} />
+          )}
           {live.fatal?.reason !== 'resume-failed' && (
             <div>
               <Button size="sm" disabled={readOnly} onClick={() => void resume()}>

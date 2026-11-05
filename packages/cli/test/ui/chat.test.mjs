@@ -4,7 +4,7 @@
 // test/fixtures/fake-claude.mjs; never the real claude.
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CLI_ROOT, hook, makeRepo, removeDir, stage, storeOf } from '../helpers.mjs';
@@ -32,6 +32,7 @@ import {
 } from './chat-helpers.mjs';
 import { FORBIDDEN_FLAGS, MIN_CLAUDE_VERSION, PERMISSION_TOOL, buildArgs } from '../../src/ui/claude.mjs';
 import { guardDenial } from '../../src/ui/stream.mjs';
+import { initLog } from '../../src/ui/log.mjs';
 
 const RELAY = path.join(CLI_ROOT, 'src', 'ui', 'relay.mjs');
 const OTHER_SESSION_ID = '00000000-0000-4000-8000-0000000000ff'; // fake-claude.mjs {{OTHER_SESSION_ID}}
@@ -699,5 +700,413 @@ describe('leftover processes after Stop (Trust plan, E)', {
     const r = await kill('00000000-0000-4000-8000-00000000abcd');
     assert.equal(r.status, 404);
     assert.equal(r.json.error.code, 'not-found');
+  });
+});
+
+// ---------- Chat reliability plan (docs/plans/shipline-chat-reliability.md) ----------
+
+// Paths from claude's own output compared with the repo: Windows paths are case-insensitive.
+const samePath = (a, b) =>
+  process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b);
+
+describe('chat reliability: reminders, trust, Jira, commands (2026-11-05 captures)', () => {
+  let id;
+  let since;
+
+  // The needs-upgrade test's second server pointed the (process-wide) log at its own repo; point it back.
+  before(() => initLog(dir));
+
+  test('a hook reminder (system/informational) is forwarded with a reminder notice, prefix stripped', async () => {
+    fake.release(); // reliability.jsonl waits for the release before system/init
+    fake.script('reliability');
+    since = ev.mark();
+    id = await startChat(ui, ev);
+    await ev.waitFor(isEventType(id, 'result'), 10_000, since);
+    const info = ev.events.slice(since).find(isEventType(id, 'system', 'informational'));
+    assert.ok(info, 'the informational event is forwarded');
+    assert.equal(info.data.notices.length, 1);
+    assert.equal(info.data.notices[0].kind, 'reminder');
+    assert.match(info.data.notices[0].text, /^Shipline reminder: the "Plan" stage isn't done yet/);
+    assert.ok(!ev.events.slice(since).some((e) => e.type === 'banner' && ['fail-open', 'lost-task'].includes(e.data.kind)));
+  });
+
+  test('the trust warning on stderr (printed twice) gives one trust banner, with the path from projects["…"]', async () => {
+    const banner = await ev.waitFor((e) => e.type === 'banner' && e.data.kind === 'trust', 5000, since);
+    assert.equal(banner.data.id, 'trust');
+    assert.ok(samePath(banner.data.path, dir), `${banner.data.path} is the repo`);
+    assert.match(banner.data.text, /ignores this repo's Shipline permission rules until the repo is trusted/);
+    await sleep(200);
+    assert.equal(ev.events.slice(since).filter((e) => e.type === 'banner' && e.data.kind === 'trust').length, 1);
+    const logged = readUiLog(dir).filter((l) => l.event === 'trust-needed' && l.chatId === id);
+    assert.equal(logged.length, 1, 'once per chat');
+    assert.ok(samePath(logged[0].path, dir));
+  });
+
+  test('GET /api/chat/commands?chat=<id> merges that chat\'s slash_commands, minus terminal, namespaced and interactive-only ones', async () => {
+    const plain = await api(ui, 'GET', '/api/chat/commands');
+    assert.equal(plain.status, 200, plain.text);
+    const merged = await api(ui, 'GET', `/api/chat/commands?chat=${id}`);
+    assert.equal(merged.status, 200, merged.text);
+    const names = (r) => r.json.commands.map((c) => c.name);
+    const m = Object.fromEntries(merged.json.commands.map((c) => [c.name, c]));
+    for (const n of ['review', 'security-review']) {
+      assert.ok(!names(plain).includes(n), `${n} is not listed without ?chat=`);
+      assert.deepEqual(m[n], { name: n, description: '', source: 'builtin', kind: 'command' });
+    }
+    for (const n of ['doctor', 'color', 'focus', 'reload-plugins', 'example-plugin:deploy', 'help', 'status'])
+      assert.ok(!(n in m), `${n} is left out`);
+    assert.equal(m.context.description, 'Show context usage', 'a verified built-in keeps its description');
+    assert.equal(names(merged).filter((n) => n === 'shipline-workflow').length, 1, 'no duplicate of a listed name');
+    assert.equal(new Set(names(merged)).size, names(merged).length);
+    const unknown = await api(ui, 'GET', '/api/chat/commands?chat=00000000-0000-4000-8000-00000000beef');
+    assert.deepEqual(names(unknown), names(plain), 'an unknown chat adds nothing');
+  });
+
+  test('GET /api/chats/<id> reports jira from system/init.mcp_servers (the captured needs-auth), and keeps it after the chat ends', async () => {
+    const r = await api(ui, 'GET', `/api/chats/${id}`);
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.jira, 'needs-auth');
+    await stopChat(ui, ev, id);
+    assert.equal((await api(ui, 'GET', `/api/chats/${id}`)).json.jira, 'needs-auth');
+  });
+
+  test('jira is null before system/init, then each of connected / failed / missing', async () => {
+    fake.unrelease();
+    fake.script('reliability');
+    const mark = ev.mark();
+    const pending = await startChat(ui, ev, 'Add a CSV export', { waitInit: false });
+    try {
+      const before = await api(ui, 'GET', `/api/chats/${pending}`);
+      assert.equal(before.status, 200, before.text);
+      assert.equal(before.json.jira, null);
+      fake.release();
+      await ev.waitFor(isEventType(pending, 'result'), 10_000, mark);
+      assert.equal((await api(ui, 'GET', `/api/chats/${pending}`)).json.jira, 'needs-auth');
+    } finally {
+      await stopChat(ui, ev, pending);
+    }
+    const cases = [
+      ['connected', [{ name: 'shipline_ui', status: 'connected' }, { name: 'claude.ai Atlassian', status: 'connected', source: 'claudeai' }]],
+      ['failed', [{ name: 'claude.ai Atlassian', status: 'failed', source: 'claudeai' }]],
+      ['missing', [{ name: 'shipline_ui', status: 'connected' }]],
+    ];
+    for (const [want, servers] of cases) {
+      fake.script('reliability', { FAKE_CLAUDE_MCP_SERVERS: JSON.stringify(servers) });
+      const m = ev.mark();
+      const cid = await startChat(ui, ev);
+      try {
+        await ev.waitFor(isEventType(cid, 'result'), 10_000, m);
+        assert.equal((await api(ui, 'GET', `/api/chats/${cid}`)).json.jira, want);
+      } finally {
+        await stopChat(ui, ev, cid);
+      }
+    }
+  });
+});
+
+describe('chat controls: model, effort, permission mode, context', () => {
+  const controlsFile = () => path.join(uiDir(dir), 'controls.json');
+  const controlsOut = () => path.join(fake.scratch, `controls-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`);
+  const readControlOut = (f) =>
+    existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+  const subtypes = (f) => readControlOut(f).map((r) => r.request.subtype);
+  const setControls = (body) => api(ui, 'POST', '/api/chat/controls', { body });
+  const isControls = (cid, pred = () => true) => (e) => isChat(cid, 'controls')(e) && pred(e.data);
+  const isContext = (cid) => isChat(cid, 'context');
+  const flagsOf = (argv) => {
+    const out = {};
+    for (const f of ['--model', '--effort', '--permission-mode']) if (argv.includes(f)) out[f] = argv[argv.indexOf(f) + 1];
+    return out;
+  };
+
+  before(() => {
+    initLog(dir); // see the reliability describe
+    rmSync(controlsFile(), { force: true });
+    fake.release();
+  });
+  after(() => {
+    rmSync(controlsFile(), { force: true });
+    fake.unrelease();
+  });
+
+  let idle; // a running chat with its first turn done
+  let idleOut;
+
+  test('a new chat with no picks passes no control flags; start-up sends initialize then get_settings, and keeps only models[] and applied.*', async () => {
+    idleOut = controlsOut();
+    fake.script('controls-turn', { FAKE_CLAUDE_CONTROL_OUT: idleOut });
+    const since = ev.mark();
+    idle = await startChat(ui, ev);
+    await ev.waitFor(isEventType(idle, 'result'), 10_000, since);
+    const ctx = await ev.waitFor(isContext(idle), 10_000, since);
+
+    assert.deepEqual(flagsOf(fake.runs()[0].argv), {}, 'nothing picked yet: Claude\'s own settings apply');
+    const reqs = readControlOut(idleOut);
+    assert.deepEqual(reqs.slice(0, 2).map((r) => r.request), [{ subtype: 'initialize' }, { subtype: 'get_settings' }]);
+    assert.ok(reqs.every((r) => /^shipline-\d+$/.test(r.request_id)), 'every request_id is shipline-<n>');
+    assert.equal(new Set(reqs.map((r) => r.request_id)).size, reqs.length);
+    assert.ok(reqs.slice(0, 2).every((r) => r.results === 0), 'sent before the first turn ended');
+
+    // context: after the result, the listed fields only, top 5 categories by tokens.
+    assert.ok(reqs.some((r) => r.request.subtype === 'get_context_usage' && r.results === 1), 'get_context_usage after the result');
+    assert.deepEqual(Object.keys(ctx.data.context).sort(), ['autoCompactThreshold', 'categories', 'isAutoCompactEnabled', 'maxTokens', 'percentage', 'totalTokens']);
+    assert.equal(ctx.data.context.totalTokens, 20614);
+    assert.equal(ctx.data.context.autoCompactThreshold, 967000);
+    assert.equal(ctx.data.context.maxTokens, 1000000);
+    assert.equal(ctx.data.context.isAutoCompactEnabled, true);
+    assert.deepEqual(ctx.data.context.categories.map((c) => c.name), ['System tools', 'System prompt', 'Messages', 'MCP tools', 'Memory files']);
+    assert.ok(ctx.data.context.categories.every((c) => Object.keys(c).join() === 'name,tokens'));
+
+    // controls: effort from get_settings.applied, mode from initialize (default -> manual), models cached.
+    const c = await api(ui, 'GET', `/api/chat/controls?chat=${idle}`);
+    assert.equal(c.status, 200, c.text);
+    assert.equal(c.json.effort, 'high');
+    assert.equal(c.json.permissionMode, 'manual');
+    assert.equal(c.json.pending, null);
+    assert.equal(c.json.context.totalTokens, 20614);
+    assert.deepEqual(c.json.models.map((m) => m.value), ['default', 'opus', 'sonnet', 'haiku']);
+    const saved = JSON.parse(readFileSync(controlsFile(), 'utf8'));
+    assert.deepEqual(saved.models.map((m) => m.value), ['default', 'opus', 'sonnet', 'haiku']);
+    assert.ok(!('isDefault' in saved.models[0]), 'only the listed model fields are kept');
+    assert.equal(saved.model, undefined, 'nothing picked, nothing remembered');
+
+    // initialize's account and get_settings' merged settings never leave the server.
+    const everything = [
+      readFileSync(path.join(uiDir(dir), 'ui.log'), 'utf8'),
+      readFileSync(controlsFile(), 'utf8'),
+      readFileSync(path.join(uiDir(dir), 'sessions.json'), 'utf8'),
+      JSON.stringify(ev.events.slice(since)),
+      c.text,
+    ].join('\n');
+    for (const secret of ['dev@example.com', 'Example Org', 'do-not-forward', 'SECRET_TOKEN'])
+      assert.ok(!everything.includes(secret), `${secret} is never stored, logged or forwarded`);
+  });
+
+  test('control_response lines are not forwarded as chat events and never log unknown-event-type', () => {
+    assert.ok(!ev.events.some((e) => e.type === 'chat' && e.data.kind === 'event' && e.data.event.type === 'control_response'));
+    assert.ok(!readUiLog(dir).some((l) => l.event === 'unknown-event-type' && l.type === 'control_response'));
+  });
+
+  test('idle chat: a pick is sent now (set_model, set_permission_mode, apply_flag_settings) and remembered', async () => {
+    let since = ev.mark();
+    const r = await setControls({ chat: idle, model: 'sonnet' });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.applied, 'now');
+    assert.equal(r.json.controls.model, 'sonnet');
+    await ev.waitFor(isControls(idle, (d) => d.controls.model === 'sonnet' && d.pending === null && !d.error), 5000, since);
+    await ev.waitFor(isContext(idle), 5000, since); // a fresh reading after a successful set_model
+    let reqs = readControlOut(idleOut);
+    const setModel = reqs.find((x) => x.request.subtype === 'set_model');
+    assert.deepEqual(setModel.request, { subtype: 'set_model', model: 'sonnet' });
+    assert.ok(reqs.indexOf(setModel) < reqs.findLastIndex((x) => x.request.subtype === 'get_context_usage'));
+
+    since = ev.mark();
+    assert.equal((await setControls({ chat: idle, permissionMode: 'plan' })).json.applied, 'now');
+    await ev.waitFor(isControls(idle, (d) => d.controls.permissionMode === 'plan'), 5000, since);
+    assert.equal((await setControls({ chat: idle, effort: 'low' })).json.applied, 'now');
+    await ev.waitFor(isControls(idle, (d) => d.controls.effort === 'low'), 5000, since);
+    assert.equal((await setControls({ chat: idle, permissionMode: 'manual' })).json.applied, 'now');
+    await ev.waitFor(isControls(idle, (d) => d.controls.permissionMode === 'manual'), 5000, since);
+    reqs = readControlOut(idleOut);
+    assert.deepEqual(reqs.filter((x) => x.request.subtype === 'set_permission_mode').map((x) => x.request.mode), ['plan', 'default'], 'manual is "default" in control messages');
+    assert.deepEqual(reqs.find((x) => x.request.subtype === 'apply_flag_settings').request, { subtype: 'apply_flag_settings', settings: { effortLevel: 'low' } });
+    assert.ok(!reqs.some((x) => x.request.subtype === 'set_effort'), 'set_effort is unsupported');
+
+    // The chat keeps working, and the picks are on its sessions.json entry and in the repo defaults.
+    const m = ev.mark();
+    assert.equal((await api(ui, 'POST', `/api/chats/${idle}/message`, { body: { text: 'next' } })).status, 200);
+    await ev.waitFor(isEventType(idle, 'result'), 10_000, m);
+    assert.deepEqual(sessionOf(idle).controls, { model: 'sonnet', effort: 'low', permissionMode: 'manual' });
+    const saved = JSON.parse(readFileSync(controlsFile(), 'utf8'));
+    assert.deepEqual([saved.model, saved.effort, saved.permissionMode], ['sonnet', 'low', 'manual']);
+    const c = (await api(ui, 'GET', `/api/chat/controls?chat=${idle}`)).json;
+    assert.deepEqual([c.model, c.effort, c.permissionMode, c.pending], ['sonnet', 'low', 'manual', null]);
+    await stopChat(ui, ev, idle);
+  });
+
+  test('a new chat starts with the repo defaults as separate argv flags', async () => {
+    const d = await api(ui, 'GET', '/api/chat/controls');
+    assert.deepEqual([d.json.model, d.json.effort, d.json.permissionMode, d.json.context, d.json.pending], ['sonnet', 'low', 'manual', null, null]);
+    fake.script('controls-turn', { FAKE_CLAUDE_CONTROL_OUT: controlsOut() });
+    const since = ev.mark();
+    const cid = await startChat(ui, ev);
+    try {
+      await ev.waitFor(isEventType(cid, 'result'), 10_000, since);
+      const argv = fake.runs()[0].argv;
+      assert.deepEqual(argv.slice(-6), ['--model', 'sonnet', '--effort', 'low', '--permission-mode', 'manual']);
+      // system/init reports the resolved id and "default"; the controls show the picker's values.
+      const c = (await api(ui, 'GET', `/api/chat/controls?chat=${cid}`)).json;
+      assert.deepEqual([c.model, c.effort, c.permissionMode], ['sonnet', 'low', 'manual']);
+      assert.deepEqual(sessionOf(cid).controls, { model: 'sonnet', effort: 'low', permissionMode: 'manual' });
+    } finally {
+      await stopChat(ui, ev, cid);
+    }
+  });
+
+  test('a picked alias that shares its resolved id with another (opus and default) stays as picked after system/init', async () => {
+    assert.equal((await setControls({ model: 'opus' })).json.applied, 'next-start');
+    fake.script('controls-turn');
+    const since = ev.mark();
+    const cid = await startChat(ui, ev);
+    try {
+      const init = await ev.waitFor(isEventType(cid, 'system', 'init'), 10_000, since);
+      assert.equal(init.data.event.model, 'claude-opus-5-5', 'init reports the resolved id, which default also resolves to');
+      await ev.waitFor(isEventType(cid, 'result'), 10_000, since);
+      assert.equal((await api(ui, 'GET', `/api/chat/controls?chat=${cid}`)).json.model, 'opus');
+      assert.ok(!ev.events.slice(since).some(isControls(cid, (d) => d.controls.model === 'default')), 'never shown as Default');
+    } finally {
+      await stopChat(ui, ev, cid);
+      await setControls({ model: 'sonnet' });
+    }
+  });
+
+  test('busy chat: picks wait for the result (last value of each wins), then are sent; pending is mirrored to sessions.json', async () => {
+    fake.unrelease();
+    const out = controlsOut();
+    fake.script('controls-turn', { FAKE_CLAUDE_CONTROL_OUT: out });
+    const since = ev.mark();
+    const cid = await startChat(ui, ev);
+    try {
+      let r = await setControls({ chat: cid, model: 'haiku' });
+      assert.equal(r.status, 200, r.text);
+      assert.equal(r.json.applied, 'after-turn');
+      await ev.waitFor(isControls(cid, (d) => d.pending && d.pending.model === 'haiku'), 5000, since);
+      r = await setControls({ chat: cid, model: 'opus', effort: 'max' });
+      assert.equal(r.json.applied, 'after-turn');
+      const c = (await api(ui, 'GET', `/api/chat/controls?chat=${cid}`)).json;
+      assert.deepEqual(c.pending, { model: 'opus', effort: 'max' });
+      assert.deepEqual(sessionOf(cid).controls.pending, { model: 'opus', effort: 'max' });
+      await sleep(300);
+      assert.ok(!subtypes(out).some((s) => s === 'set_model' || s === 'apply_flag_settings'), 'nothing is sent mid-turn');
+
+      const m = ev.mark();
+      fake.release();
+      await ev.waitFor(isEventType(cid, 'result'), 10_000, m);
+      await ev.waitFor(isControls(cid, (d) => d.controls.model === 'opus' && d.controls.effort === 'max' && d.pending === null), 5000, m);
+      const reqs = readControlOut(out);
+      const sent = reqs.filter((x) => ['set_model', 'apply_flag_settings'].includes(x.request.subtype));
+      assert.deepEqual(sent.map((x) => x.request), [
+        { subtype: 'set_model', model: 'opus' },
+        { subtype: 'apply_flag_settings', settings: { effortLevel: 'max' } },
+      ]);
+      assert.ok(sent.every((x) => x.results === 1), 'sent after the turn\'s result');
+      assert.equal((await api(ui, 'GET', `/api/chat/controls?chat=${cid}`)).json.pending, null);
+      const entry = sessionOf(cid).controls;
+      assert.equal(entry.pending, undefined);
+      assert.deepEqual([entry.model, entry.effort], ['opus', 'max']);
+    } finally {
+      await stopChat(ui, ev, cid);
+    }
+  });
+
+  test('ended chat: a pick (and a pending one left by a stop mid-turn) is passed as flags when the chat continues', async () => {
+    fake.unrelease();
+    fake.script('controls-turn');
+    const cid = await startChat(ui, ev);
+    // Picked during the turn, then the chat stops before the result: the pick stays pending on the entry.
+    assert.equal((await setControls({ chat: cid, permissionMode: 'acceptEdits' })).json.applied, 'after-turn');
+    await stopChat(ui, ev, cid);
+    assert.deepEqual(sessionOf(cid).controls.pending, { permissionMode: 'acceptEdits' });
+    const pend = (await api(ui, 'GET', `/api/chat/controls?chat=${cid}`)).json;
+    assert.deepEqual(pend.pending, { permissionMode: 'acceptEdits' });
+
+    const r = await setControls({ chat: cid, model: 'haiku' });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.applied, 'next-start');
+    assert.equal(r.json.controls.model, 'haiku');
+    assert.equal(sessionOf(cid).controls.model, 'haiku');
+
+    fake.release();
+    fake.script('controls-turn');
+    const since = ev.mark();
+    assert.equal((await api(ui, 'POST', `/api/chats/${cid}/continue`)).status, 200);
+    try {
+      assert.equal((await api(ui, 'POST', `/api/chats/${cid}/message`, { body: { text: 'go on' } })).status, 200);
+      await ev.waitFor(isEventType(cid, 'result'), 10_000, since);
+      const flags = flagsOf(fake.runs()[0].argv);
+      assert.equal(flags['--model'], 'haiku');
+      assert.equal(flags['--permission-mode'], 'acceptEdits', 'the pending pick is merged in at continue');
+      assert.ok(fake.runs()[0].argv.includes('--resume'));
+      const entry = sessionOf(cid).controls;
+      assert.equal(entry.pending, undefined);
+      assert.equal(entry.permissionMode, 'acceptEdits');
+    } finally {
+      await stopChat(ui, ev, cid);
+    }
+  });
+
+  test('system/status (Claude changing the mode itself) emits controls with the new mode', async () => {
+    fake.script('status-change');
+    const since = ev.mark();
+    const cid = await startChat(ui, ev);
+    try {
+      const e = await ev.waitFor(isControls(cid, (d) => d.controls.permissionMode === 'acceptEdits'), 10_000, since);
+      assert.equal(e.data.chatId, cid);
+      await ev.waitFor(isEventType(cid, 'result'), 10_000, since);
+      assert.equal((await api(ui, 'GET', `/api/chat/controls?chat=${cid}`)).json.permissionMode, 'acceptEdits');
+    } finally {
+      await stopChat(ui, ev, cid);
+    }
+  });
+
+  test('an error response reverts the value and sends the error for the toast', async () => {
+    fake.script('controls-turn', { FAKE_CLAUDE_CONTROL_FAIL: 'set_model' });
+    const since = ev.mark();
+    const cid = await startChat(ui, ev);
+    try {
+      await ev.waitFor(isEventType(cid, 'result'), 10_000, since);
+      const before = (await api(ui, 'GET', `/api/chat/controls?chat=${cid}`)).json.model;
+      const m = ev.mark();
+      assert.equal((await setControls({ chat: cid, model: 'opus' })).json.applied, 'now');
+      const e = await ev.waitFor(isControls(cid, (d) => d.error), 5000, m);
+      assert.match(e.data.error, /^Couldn't change model: Fake failure for set_model/);
+      assert.equal(e.data.controls.model, before);
+      assert.equal((await api(ui, 'GET', `/api/chat/controls?chat=${cid}`)).json.model, before);
+    } finally {
+      await stopChat(ui, ev, cid);
+    }
+  });
+
+  test('no response within 10 s reverts the value; the chat refuses messages while the change is in flight', { timeout: 30_000 }, async () => {
+    fake.script('controls-turn', { FAKE_CLAUDE_CONTROL_SILENT: 'set_permission_mode' });
+    const since = ev.mark();
+    const cid = await startChat(ui, ev);
+    try {
+      await ev.waitFor(isEventType(cid, 'result'), 10_000, since);
+      const before = (await api(ui, 'GET', `/api/chat/controls?chat=${cid}`)).json.permissionMode;
+      const m = ev.mark();
+      assert.equal((await setControls({ chat: cid, permissionMode: 'plan' })).json.applied, 'now');
+      const busy = await api(ui, 'POST', `/api/chats/${cid}/message`, { body: { text: 'hi' } });
+      assert.equal(busy.status, 409);
+      assert.equal(busy.json.error.code, 'busy');
+      const e = await ev.waitFor(isControls(cid, (d) => d.error), 15_000, m);
+      assert.match(e.data.error, /^Couldn't change mode: No answer from Claude within 10 seconds/);
+      assert.equal(e.data.controls.permissionMode, before);
+    } finally {
+      await stopChat(ui, ev, cid);
+    }
+  });
+
+  test('POST /api/chat/controls without a chat updates the repo defaults only; bad values are 400 bad-control', async () => {
+    const r = await setControls({ effort: 'medium' });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.applied, 'next-start');
+    assert.equal(r.json.controls.effort, 'medium');
+    assert.equal(JSON.parse(readFileSync(controlsFile(), 'utf8')).effort, 'medium');
+    for (const body of [
+      { model: 'opus; rm -rf /' },
+      { model: '$(whoami)' },
+      { effort: 'extreme' },
+      { permissionMode: 'bypassPermissions' },
+      { permissionMode: 'dontAsk' },
+      { permissionMode: 'default' },
+      {},
+    ]) {
+      const x = await setControls(body);
+      assert.equal(x.status, 400, JSON.stringify(body));
+      assert.equal(x.json.error.code, 'bad-control');
+    }
+    const unknown = await setControls({ chat: '00000000-0000-4000-8000-00000000cafe', effort: 'low' });
+    assert.equal(unknown.status, 404);
   });
 });

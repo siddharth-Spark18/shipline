@@ -35,7 +35,7 @@ export function useFakeClaude() {
       process.env.FAKE_CLAUDE_SCRIPT = name;
       process.env.FAKE_CLAUDE_ARGV_OUT = path.join(scratch, `argv-${++n}.jsonl`);
       process.env.FAKE_CLAUDE_RELAY_OUT = path.join(scratch, `relay-${n}.jsonl`);
-      for (const k of ['FAKE_CLAUDE_VERSION', 'FAKE_CLAUDE_LOGGED_OUT', 'FAKE_CLAUDE_DELETE_SELF', 'FAKE_CLAUDE_STDIN_OUT']) delete process.env[k];
+      for (const k of ['FAKE_CLAUDE_VERSION', 'FAKE_CLAUDE_LOGGED_OUT', 'FAKE_CLAUDE_DELETE_SELF', 'FAKE_CLAUDE_STDIN_OUT', 'FAKE_CLAUDE_CONTROL_OUT', 'FAKE_CLAUDE_CONTROL_FAIL', 'FAKE_CLAUDE_CONTROL_SILENT', 'FAKE_CLAUDE_MCP_SERVERS']) delete process.env[k];
       Object.assign(process.env, extra);
       return process.env.FAKE_CLAUDE_ARGV_OUT;
     },

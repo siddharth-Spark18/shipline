@@ -4,12 +4,15 @@
 // Event types the chat forwards. A valid JSON line with another `type` is logged and skipped.
 export const KNOWN_TYPES = new Set(['system', 'assistant', 'user', 'result', 'stream_event']);
 
-// UNVERIFIED (chat test Q6): the guard's deny reason reaches Claude as a tool_result error whose text
-// contains the `Shipline (` prefix (templates/shipline/bin/guard.mjs). The exact wrapping is not captured yet.
+// Verified 2026-11-05 (claude 2.1.317): the guard's denial arrives as a tool_result with is_error: true and the
+// text `PreToolUse:Edit hook error: Shipline (…): …`, so the `Shipline (` prefix is inside the first 300 characters.
 export const GUARD_DENIAL_PATTERN = /Shipline \(/;
 const GUARD_DENIAL_WINDOW = 300;
 
-// UNVERIFIED (chat test Q8): a hook systemMessage may not appear in -p stream-json at all.
+// Verified 2026-11-05 (claude 2.1.317): a hook's systemMessage arrives as its own event,
+// {type:'system', subtype:'informational', level:'notice', content:'<Event>:<Tool> says: <message>'}. There is no
+// hook_response event for PreToolUse.
+const INFORMATIONAL_PREFIX = /^[A-Za-z]+(?::[^\s:]+)? says: /;
 const FAIL_OPEN_PATTERN = /^Shipline: ignoring a problem and continuing without enforcement/;
 const LOST_TASK_PATTERN = /^Shipline: branch .* isn't tracking it/s;
 
@@ -81,10 +84,12 @@ function asObject(v) {
   return null;
 }
 
-// UNVERIFIED (chat test Q8): where a hook's systemMessage sits in the event. Looks at the event itself, at
-// `output`/`stdout`/`data` (an object or a JSON string). Returns the text or null.
+// The text of a hook's systemMessage, or null. Reads the `system`/`informational` event's `content` (prefix
+// stripped), otherwise the event itself or `output`/`stdout`/`data` (an object or a JSON string).
 export function hookSystemMessage(event) {
   if (!event || event.type !== 'system') return null;
+  if (event.subtype === 'informational' && typeof event.content === 'string' && event.content)
+    return event.content.replace(INFORMATIONAL_PREFIX, '');
   for (const holder of [
     event,
     asObject(event.output),
@@ -103,4 +108,17 @@ export function classifyHookMessage(text) {
   if (FAIL_OPEN_PATTERN.test(text)) return { kind: 'notice', banner: 'fail-open' };
   if (LOST_TASK_PATTERN.test(text)) return { kind: 'notice', banner: 'lost-task' };
   return { kind: 'notice' };
+}
+
+// system/init.mcp_servers is [{ name, status: 'connected' | 'needs-auth' | 'failed', source }].
+// -> 'connected' | 'needs-auth' | 'failed' | 'missing' for the Atlassian / Jira server, or null when there is no
+// list yet (no system/init seen). Several matches: the first connected one wins, otherwise the first match.
+export function jiraStatus(mcpServers) {
+  if (!Array.isArray(mcpServers)) return null;
+  const matches = mcpServers.filter(
+    (s) => s && typeof s.name === 'string' && /atlassian|jira/i.test(s.name),
+  );
+  if (!matches.length) return 'missing';
+  const hit = matches.find((s) => s.status === 'connected') || matches[0];
+  return hit.status === 'connected' || hit.status === 'needs-auth' ? hit.status : 'failed';
 }

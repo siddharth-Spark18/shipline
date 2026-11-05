@@ -136,6 +136,24 @@ describe('stale locks', () => {
     assert.equal(existsSync(lockPath(dir)), false);
   });
 
+  test('a chat named by a dead server\'s leftover lock is listed as ended, so the UI offers Continue', async () => {
+    fake.script('hang');
+    const id = await startChat(ui, ev);
+    await stopChat(ui, ev, id);
+    // A server that exited without cleaning up: sessions.json still says active, lock.json names the chat.
+    const sessions = readSessions(dir).map((c) => (c.id === id ? { ...c, status: 'active' } : c));
+    writeFileSync(path.join(uiDir(dir), 'sessions.json'), JSON.stringify(sessions, null, 2));
+    writeLock({ pid: deadPid(), hostname: os.hostname(), port: 1, session_id: id });
+    try {
+      const list = await api(ui, 'GET', '/api/chats');
+      assert.equal(list.json.chats.find((x) => x.id === id).status, 'ended');
+      const one = await api(ui, 'GET', `/api/chats/${id}`);
+      assert.equal(one.json.chat.status, 'ended');
+    } finally {
+      removeDir(lockPath(dir));
+    }
+  });
+
   test('an empty lock file older than 10 s is replaced', async () => {
     writeLock('', 20_000);
     fake.script('hang');

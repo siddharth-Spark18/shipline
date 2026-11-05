@@ -1,0 +1,8 @@
+# Reproduces the 2026-11-05 capture's system/status shape (claude 2.1.318): when the permission mode changes
+# (here Claude switches it itself, as when it leaves plan mode), claude sends {"type":"system","subtype":"status",
+# "permissionMode":…}. Read by test/fixtures/fake-claude.mjs (see its header).
+@wait-user
+{"type":"system","subtype":"init","session_id":"{{SESSION_ID}}","cwd":"{{CWD}}","model":"{{MODEL}}","tools":["Bash","Edit","Write","AskUserQuestion","ExitPlanMode"],"mcp_servers":[{"name":"shipline_ui","status":"connected"}],"permissionMode":"{{PERMISSION_MODE}}"}
+{"type":"assistant","session_id":"{{SESSION_ID}}","message":{"id":"msg_p1","role":"assistant","model":"{{MODEL}}","content":[{"type":"text","text":"Plan ready."}]}}
+{"type":"system","subtype":"status","session_id":"{{SESSION_ID}}","status":null,"permissionMode":"acceptEdits"}
+{"type":"result","subtype":"success","is_error":false,"session_id":"{{SESSION_ID}}","duration_ms":700,"num_turns":1,"result":"Plan ready.","total_cost_usd":0.001,"usage":{"input_tokens":10,"output_tokens":20}}

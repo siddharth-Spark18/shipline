@@ -20,7 +20,7 @@ export const uiStateDir = (root) => uiDir(root);
 const sessionsFile = (root) => path.join(uiStateDir(root), 'sessions.json');
 const lockFile = (root) => path.join(uiStateDir(root), 'lock.json');
 
-function writeAtomic(file, text) {
+export function writeAtomic(file, text) {
   mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, text);
@@ -64,6 +64,19 @@ export function readLock(root) {
   } catch {
     return null;
   }
+}
+
+// The lock held by *another* UI server that is still running, or null. A lock left behind by a server
+// that exited without releasing it (same host, dead pid) does not count, and neither does this
+// server's own lock (same pid and `ownPort`): the caller asks its own chats for that.
+export function liveLock(root, ownPort) {
+  const lock = readLock(root);
+  if (!lock || typeof lock !== 'object') return null;
+  if (lock.hostname === os.hostname()) {
+    if (lock.pid === process.pid && lock.port === ownPort) return null;
+    if (lock.pid !== process.pid && !pidAlive(lock.pid)) return null;
+  }
+  return lock;
 }
 
 export function pidAlive(pid) {

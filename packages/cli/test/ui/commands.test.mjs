@@ -28,6 +28,8 @@ function put(file, text) {
   writeFileSync(file, text);
 }
 
+// The repo's and the user's own entries (the 7 built-ins are always listed too).
+const own = (list) => list.filter((c) => c.source !== 'builtin');
 const byName = (list) => Object.fromEntries(list.map((c) => [c.name, c]));
 const SYMLINK_SKIP =
   process.platform === 'win32' &&
@@ -42,7 +44,7 @@ describe('listCommands', () => {
     put(path.join(home, '.claude', 'commands', 'mine.md'), 'A user command\n');
     put(path.join(home, '.claude', 'skills', 'retro', 'SKILL.md'), '---\ndescription: Runs a retro\n---\n');
 
-    const list = listCommands(root, { home });
+    const list = own(listCommands(root, { home }));
     assert.deepEqual(list, [
       { name: 'git:commit', description: 'Commit the staged changes', source: 'repo', kind: 'command' },
       { name: 'hello', description: 'Say hello', source: 'repo', kind: 'command' },
@@ -55,14 +57,14 @@ describe('listCommands', () => {
   test('a skill is named by its folder, not its frontmatter name', () => {
     const { root, home } = scratch();
     put(path.join(root, '.claude', 'skills', 'ideate', 'SKILL.md'), '---\nname: feature-ideator\ndescription: Ideas\n---\n');
-    const names = listCommands(root, { home }).map((c) => c.name);
+    const names = own(listCommands(root, { home })).map((c) => c.name);
     assert.deepEqual(names, ['ideate']);
   });
 
   test('nested subfolders become folder:sub:name', () => {
     const { root, home } = scratch();
     put(path.join(root, '.claude', 'commands', 'a', 'b', 'c.md'), 'deep\n');
-    assert.deepEqual(listCommands(root, { home }).map((c) => c.name), ['a:b:c']);
+    assert.deepEqual(own(listCommands(root, { home })).map((c) => c.name), ['a:b:c']);
   });
 
   test('the description is the frontmatter description, else the first non-empty body line (heading marks stripped)', () => {
@@ -87,7 +89,7 @@ describe('listCommands', () => {
     put(path.join(home, '.claude', 'commands', 'hello.md'), 'user hello\n');
     put(path.join(root, '.claude', 'skills', 'plan', 'SKILL.md'), '---\ndescription: repo plan\n---\n');
     put(path.join(home, '.claude', 'skills', 'plan', 'SKILL.md'), '---\ndescription: user plan\n---\n');
-    const list = listCommands(root, { home });
+    const list = own(listCommands(root, { home }));
     assert.deepEqual(
       list.map((c) => [c.name, c.source, c.description]),
       [
@@ -99,14 +101,14 @@ describe('listCommands', () => {
 
   test('missing folders, empty folders and non-command files give an empty list', () => {
     const { root, home } = scratch();
-    assert.deepEqual(listCommands(root, { home }), [], 'no .claude anywhere');
-    assert.deepEqual(listCommands(path.join(root, 'does-not-exist'), { home: path.join(home, 'nope') }), []);
+    assert.deepEqual(own(listCommands(root, { home })), [], 'no .claude anywhere');
+    assert.deepEqual(own(listCommands(path.join(root, 'does-not-exist'), { home: path.join(home, 'nope') })), []);
     mkdirSync(path.join(root, '.claude', 'commands'), { recursive: true });
     mkdirSync(path.join(root, '.claude', 'skills', 'no-skill-md'), { recursive: true });
     mkdirSync(path.join(home, '.claude'), { recursive: true });
     put(path.join(root, '.claude', 'commands', 'notes.txt'), 'not a command\n');
     put(path.join(root, '.claude', 'skills', 'README.md'), 'a file, not a skill folder\n');
-    assert.deepEqual(listCommands(root, { home }), []);
+    assert.deepEqual(own(listCommands(root, { home })), []);
   });
 
   test('a symlinked skill folder and a symlinked commands subfolder are listed', { skip: SYMLINK_SKIP }, () => {
@@ -120,32 +122,84 @@ describe('listCommands', () => {
     symlinkSync(path.join(shared, 'cmds'), path.join(home, '.claude', 'commands', 'ops'), 'dir');
     // A dangling link is ignored, not an error.
     symlinkSync(path.join(shared, 'gone'), path.join(root, '.claude', 'skills', 'dangling'), 'dir');
-    assert.deepEqual(listCommands(root, { home }), [
+    assert.deepEqual(own(listCommands(root, { home })), [
       { name: 'linked-skill', description: 'From a link', source: 'repo', kind: 'skill' },
       { name: 'ops:deploy', description: 'Linked command', source: 'user', kind: 'command' },
     ]);
   });
 
-  test('the built-in list is empty, so no entry has source builtin', () => {
-    assert.deepEqual(BUILTIN_COMMANDS, []);
+  test('the 7 built-ins verified under -p are listed with descriptions, as source builtin', () => {
+    assert.deepEqual(
+      BUILTIN_COMMANDS.map((c) => c.name),
+      ['context', 'usage', 'cost', 'compact', 'clear', 'model', 'init'],
+    );
+    for (const c of BUILTIN_COMMANDS) assert.ok(typeof c.description === 'string' && c.description.length > 0, c.name);
     const { root, home } = scratch();
-    put(path.join(root, '.claude', 'commands', 'x.md'), 'x\n');
-    assert.ok(listCommands(root, { home }).every((c) => c.source !== 'builtin'));
-    // The interactive-only names the composer refuses (plan A).
-    assert.deepEqual([...INTERACTIVE_ONLY].sort(), ['config', 'doctor', 'login', 'logout', 'model', 'permissions', 'terminal-setup']);
+    const builtins = listCommands(root, { home }).filter((c) => c.source === 'builtin');
+    assert.deepEqual(
+      builtins.map((c) => c.name),
+      ['clear', 'compact', 'context', 'cost', 'init', 'model', 'usage'],
+    );
+    assert.ok(builtins.every((c) => c.kind === 'command' && c.description));
+  });
+
+  test('INTERACTIVE_ONLY no longer has model (it works in -p) and has the unavailable ones', () => {
+    assert.ok(!INTERACTIVE_ONLY.includes('model'));
+    assert.deepEqual(
+      [...INTERACTIVE_ONLY].sort(),
+      ['color', 'config', 'doctor', 'focus', 'help', 'login', 'logout', 'permissions', 'reload-plugins', 'status', 'terminal-setup'],
+    );
+  });
+
+  test('a repo or user command with a built-in name wins over the built-in', () => {
+    const { root, home } = scratch();
+    put(path.join(root, '.claude', 'commands', 'clear.md'), '---\ndescription: Repo clear\n---\n');
+    put(path.join(home, '.claude', 'skills', 'init', 'SKILL.md'), '---\ndescription: User init\n---\n');
+    const m = byName(listCommands(root, { home }));
+    assert.deepEqual(m.clear, { name: 'clear', description: 'Repo clear', source: 'repo', kind: 'command' });
+    assert.deepEqual(m.init, { name: 'init', description: 'User init', source: 'user', kind: 'skill' });
+    assert.equal(listCommands(root, { home }).filter((c) => c.name === 'clear').length, 1);
+  });
+
+  test('initCommands adds unlisted names as description-less built-ins, minus terminal, namespaced and interactive-only ones', () => {
+    const { root, home } = scratch();
+    put(path.join(root, '.claude', 'commands', 'hello.md'), 'Repo hello\n');
+    const list = listCommands(root, {
+      home,
+      initCommands: ['hello', 'context', 'review', '/security-review', 'doctor', 'focus', 'plugin:thing', 'mcp__x:y', 'help', ''],
+      terminalCommands: ['doctor', 'color', 'focus', 'reload-plugins'],
+    });
+    const m = byName(list);
+    assert.deepEqual(m.review, { name: 'review', description: '', source: 'builtin', kind: 'command' });
+    assert.deepEqual(m['security-review'], { name: 'security-review', description: '', source: 'builtin', kind: 'command' });
+    assert.equal(m.hello.source, 'repo', 'an already-listed repo command is not replaced');
+    assert.equal(m.context.description, 'Show context usage', 'an already-listed built-in keeps its description');
+    for (const gone of ['doctor', 'focus', 'plugin:thing', 'mcp__x:y', 'help', ''])
+      assert.ok(!(gone in m), `${gone} is left out`);
+    const names = list.map((c) => c.name);
+    assert.deepEqual(names, [...names].sort((a, b) => a.localeCompare(b)), 'sorted by name');
+    assert.equal(new Set(names).size, names.length, 'no duplicates');
+  });
+
+  test('without initCommands only the 7 built-ins are added', () => {
+    const { root, home } = scratch();
+    assert.equal(listCommands(root, { home }).length, 7);
+    assert.equal(listCommands(root, { home, initCommands: [], terminalCommands: [] }).length, 7);
   });
 
   test('a parseYaml passed in opts is used for frontmatter; one that throws counts as no frontmatter', () => {
     const { root, home } = scratch();
     put(path.join(root, '.claude', 'commands', 'y.md'), '---\nwhatever\n---\nBody line\n');
-    assert.equal(listCommands(root, { home, parseYaml: () => ({ description: 'custom' }) })[0].description, 'custom');
+    assert.equal(byName(listCommands(root, { home, parseYaml: () => ({ description: 'custom' }) })).y.description, 'custom');
     assert.equal(
-      listCommands(root, {
-        home,
-        parseYaml: () => {
-          throw new Error('bad');
-        },
-      })[0].description,
+      byName(
+        listCommands(root, {
+          home,
+          parseYaml: () => {
+            throw new Error('bad');
+          },
+        }),
+      ).y.description,
       'Body line',
     );
   });

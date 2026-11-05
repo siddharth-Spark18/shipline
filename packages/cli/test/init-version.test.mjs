@@ -69,6 +69,29 @@ describe('init writes VERSION', () => {
     assert.ok(s.hooks.PreToolUse.some((e) => JSON.stringify(e).includes('.shipline/bin/guard.mjs')));
   });
 
+  // Chat reliability plan, G: the hooks check for node first, so a machine without it gets one warning, not an
+  // error on every tool call.
+  test('settings.json gets the 0.9.0 hook form: each Shipline command checks for node; SessionStart warns, the others || true', () => {
+    const dir = fresh();
+    assert.equal(runInit(dir).code, 0);
+    const s = JSON.parse(readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'));
+    const tpl = JSON.parse(readFileSync(path.join(CLI_ROOT, 'templates', 'settings-hooks.json'), 'utf8'));
+    assert.deepEqual(s.hooks, tpl.hooks);
+    const commands = Object.fromEntries(
+      Object.entries(s.hooks).map(([event, entries]) => [event, entries.flatMap((e) => e.hooks.map((h) => h.command))]),
+    );
+    assert.deepEqual(Object.keys(commands).sort(), ['PostToolUse', 'PreToolUse', 'SessionStart', 'UserPromptSubmit']);
+    const script = { SessionStart: 'session-start', UserPromptSubmit: 'prompt-submit', PostToolUse: 'record-answer', PreToolUse: 'guard' };
+    for (const [event, cmds] of Object.entries(commands)) {
+      assert.equal(cmds.length, 1, event);
+      const prefix = `command -v node >/dev/null 2>&1 && node "$CLAUDE_PROJECT_DIR/.shipline/bin/${script[event]}.mjs" || `;
+      assert.ok(cmds[0].startsWith(prefix), `${event}: ${cmds[0]}`);
+      const fallback = cmds[0].slice(prefix.length);
+      if (event === 'SessionStart') assert.match(fallback, /^echo '\{"systemMessage":"Shipline needs Node\.js 18 or newer/);
+      else assert.equal(fallback, 'true');
+    }
+  });
+
   test('no .shipline/.gitignore, no docs/shipline and no .shipline/.state; the store is created with repo.json', () => {
     const dir = fresh();
     assert.equal(runInit(dir).code, 0);

@@ -4,8 +4,9 @@
 # (plan item 19, question 8) when they exist.
 # Two tool calls the vendored guard (templates/shipline/bin/guard.mjs) denies. The reason text is exactly what
 # guard.mjs puts in permissionDecisionReason for a fresh Feature task (checked against the real guard in
-# chat.test.mjs); how claude wraps it in the tool_result is unknown until item 19 question 6, so the second one
-# carries a made-up prefix. Then an ordinary failing tool_result that is NOT a Shipline block.
+# chat.test.mjs). The second one reproduces the 2026-11-05 capture (claude 2.1.317, Q6): claude wraps the reason
+# as "PreToolUse:<Tool> hook error: Shipline (…): …" in an is_error tool_result. Then an ordinary failing
+# tool_result that is NOT a Shipline block.
 @wait-user
 {"type":"system","subtype":"init","session_id":"{{SESSION_ID}}","cwd":"{{CWD}}","model":"fake-model","tools":["Bash","Edit","Write","AskUserQuestion"],"mcp_servers":[{"name":"shipline_ui","status":"connected"}],"permissionMode":"default"}
 {"type":"assistant","session_id":"{{SESSION_ID}}","message":{"id":"msg_g1","role":"assistant","content":[{"type":"tool_use","id":"toolu_edit","name":"Edit","input":{"file_path":"{{CWD}}/src/a.js","old_string":"a","new_string":"b"}}]}}

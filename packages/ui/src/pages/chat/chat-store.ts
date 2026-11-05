@@ -1,6 +1,13 @@
 import { useSyncExternalStore } from 'react';
 import { subscribeChat, subscribeShell } from '@/lib/events';
-import type { ChatEvent, ImageData, ShellEvent } from '@/lib/types';
+import type {
+  ChatEvent,
+  ContextUsage,
+  ImageData,
+  ModelOption,
+  PickedControls,
+  ShellEvent,
+} from '@/lib/types';
 import {
   applyEvent,
   newCtx,
@@ -30,6 +37,14 @@ export interface ChatLive {
   orphans?: boolean;
   result: ChatResult | null;
   ctx: StreamCtx;
+  /** The chat's current model, effort and mode as the server last reported them. */
+  controls?: PickedControls;
+  /** The model list from `initialize`; absent until a chat started in this page session. */
+  models?: ModelOption[];
+  /** Changes picked during a turn, sent after it. */
+  pending?: PickedControls | null;
+  /** The latest context reading. */
+  context?: ContextUsage;
 }
 
 // SSE `chat` events are streams, not cache entries, and the Chat tab unmounts when another tab is
@@ -61,6 +76,13 @@ function ingest(e: ChatEvent) {
     if (e.kind === 'ended') return { busy: false, ended: true };
     if (e.kind === 'orphans') return { orphans: true };
     if (e.kind === 'orphans-cleared') return { orphans: false };
+    if (e.kind === 'controls')
+      return {
+        controls: e.controls ?? s.controls,
+        models: e.models && e.models.length > 0 ? e.models : s.models,
+        pending: e.pending ?? null,
+      };
+    if (e.kind === 'context') return { context: e.context ?? s.context };
     // 'task' only refreshes queries (events.ts); it carries no stream event.
     if (e.kind !== 'event') return {};
     const items = applyEvent(s.items, e.event, s.ctx);

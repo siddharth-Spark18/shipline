@@ -28,7 +28,7 @@ This creates the task folder (outside the repo, under `~/.shipline`; `stage.mjs`
 
 For the current stage: read its rules (printed by stage.mjs), delegate to the named agent if one is suggested, and write the stage's artifact into the task folder that `stage.mjs` prints. Artifacts are the source of truth for later stages; read them instead of relying on memory.
 
-- **jira:** use the Atlassian MCP if it is connected (read-only) to fetch the ticket and save the key facts to `ticket.md`. If it is not connected, say so, then either use details the developer pastes or skip the stage (`stage.mjs skip --reason "no Jira"`). Pass `--ticket` at start when you know the key.
+- **jira:** use the Atlassian MCP if it is connected (read-only) to fetch the ticket and save the key facts to `ticket.md`. If the Atlassian tools are not available (not connected, or needing authentication), skip the stage with `stage.mjs skip --reason "Jira not connected"`; it is optional, so do not ask first. If the developer pastes ticket details, use those instead. Pass `--ticket` at start when you know the key.
 - **feasibility:** write `feasibility.md`. If the verdict is *not feasible*, STOP after writing it: present blockers and alternatives and let the developer decide. If *partly feasible or uncertain*, carry the blockers into the questions stage.
 - **plan:** state whether the work is UI-affecting, then run `stage.mjs flag ui true|false`. The wireframes stage runs only for UI work.
 - **verify:** build the requirement checklist in `verification.md` (each acceptance criterion with evidence). For UI work run the app and check it in a browser. Run test, lint and build commands only if configured in `.shipline/config.yml`.

@@ -220,9 +220,9 @@ describe('no timeouts on the wait', () => {
     }
   });
 
-  test('PROMPT_TIMEOUT_MS defaults to 600 000', () => {
-    assert.equal(PROMPT_TIMEOUT_MS, 600_000);
-    assert.equal(timeoutMessage(PROMPT_TIMEOUT_MS), 'No answer within 10 minutes');
+  test('PROMPT_TIMEOUT_MS defaults to 300 000 (5 minutes)', () => {
+    assert.equal(PROMPT_TIMEOUT_MS, 300_000);
+    assert.equal(timeoutMessage(PROMPT_TIMEOUT_MS), 'No answer within 5 minutes');
   });
 });
 

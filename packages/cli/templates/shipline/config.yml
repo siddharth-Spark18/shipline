@@ -1,12 +1,13 @@
 # Shipline config. Edit by hand or run /shipline-setup in Claude Code.
 
-# {key} = Jira key (dropped when there is no ticket), {slug} = short task name, {type} = workflow id.
+# {key} = ticket key (Jira key, or issue-123 for GitHub; dropped when there is no ticket), {slug} = short task name, {type} = workflow id.
 branch_pattern: "{type}/{key}-{slug}"
 
-# Jira is read through the Atlassian MCP when it is connected. Shipline ships no Jira code.
+# Where tickets live: jira | github. Jira is read through the Atlassian MCP when it is connected; GitHub Issues
+# through the `gh` CLI. Shipline ships no tracker code and only reads tickets. Any other value skips the ticket stage.
 tracker: jira
 
-# Optional. The verify stage runs only the commands you set here.
+# Optional. The verify stage runs only the commands you set here. `init` fills them in from the repo's files.
 commands:
   test: ""
   lint: ""
@@ -21,3 +22,6 @@ ci:
   missing_block: fail-unless-label
   # The PR label that lets a PR without a summary pass (with fail-unless-label).
   skip_label: shipline:skip
+
+# Set to `done` by /shipline-setup (a top-level key `setup: done`) once the rules have been tailored to this repo.
+# Until then Shipline reminds you that it is using its default rules.

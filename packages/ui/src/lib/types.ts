@@ -102,6 +102,8 @@ export interface ConfigModel {
   skills?: string[] | null;
   /** The pull-request check settings; edited in the CI check section. */
   ci?: { missing_block?: string | null; skip_label?: string | null; [key: string]: unknown } | null;
+  /** `done` once /shipline-setup has run; not an editable field. */
+  setup?: string | null;
   [key: string]: unknown;
 }
 
@@ -432,7 +434,10 @@ export interface ChatSummary {
   title: string;
   created: number | string;
   last_active: number | string;
+  /** The chat's current task (the last one it bound to). */
   task_dir: string | null;
+  /** Every task folder the chat has worked on, oldest first. */
+  task_dirs?: string[];
   status: 'active' | 'ended';
   /** Assumed optional extra: true while a turn is running (lets a reload keep the composer disabled). */
   busy?: boolean;
@@ -450,11 +455,18 @@ export interface ChatDetail {
   chat: ChatSummary;
   history: unknown[] | null;
   unavailable?: boolean;
-  /** The Atlassian connector in this chat; null until the chat has started. */
-  jira?: JiraStatus | null;
+  /** Whether the repo's tracker can be used in this chat; null when there is nothing to report. */
+  ticket?: TicketStatus | null;
+  /** The chat's tasks, oldest first, finished ones included. */
+  tasks?: Task[];
 }
 
-export type JiraStatus = 'connected' | 'needs-auth' | 'failed' | 'missing';
+export type TrackerConnection = 'connected' | 'needs-auth' | 'failed' | 'missing';
+
+export interface TicketStatus {
+  tracker: 'jira' | 'github';
+  status: TrackerConnection;
+}
 
 export interface PromptAnswer {
   decision: 'allow' | 'deny';

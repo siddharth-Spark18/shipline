@@ -1,13 +1,24 @@
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { OtherFields } from '@/pages/setup/other-fields';
 import { setOptional } from '@/pages/setup/draft';
 import type { ConfigModel, SetupFile } from '@/lib/types';
 
 // `skills` is edited in the Agents & skills section and `ci` in the CI check section, so neither is listed
-// as an "other field" here.
-const TOP_KEYS = ['branch_pattern', 'tracker', 'commands', 'skills', 'ci'];
+// as an "other field" here. `setup` is written by /shipline-setup and not editable.
+const TOP_KEYS = ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup'];
+const TRACKERS = [
+  { value: 'jira', label: 'Jira' },
+  { value: 'github', label: 'GitHub Issues' },
+];
 const COMMAND_KEYS = ['test', 'lint', 'build'];
 
 function patternError(v: string | null | undefined): string | null {
@@ -90,20 +101,31 @@ export function ConfigForm({
   const setCommand = (key: string, value: string) =>
     onChange({ ...model, commands: { ...(model.commands ?? {}), [key]: value } });
 
+  const tracker = model.tracker || 'jira';
+  const supported = TRACKERS.some((t) => t.value === tracker);
+
   return (
     <div className="flex flex-col gap-4">
       <h2 className="font-mono text-sm">config.yml</h2>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="cfg-tracker">Tracker</Label>
-          <Input
-            id="cfg-tracker"
-            className="font-mono"
-            value={model.tracker ?? ''}
-            readOnly
-            disabled
-          />
-          <p className="text-xs text-muted-foreground">Read-only.</p>
+          <Select value={tracker} onValueChange={(v) => setTop('tracker', v)}>
+            <SelectTrigger id="cfg-tracker" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {TRACKERS.map((t) => (
+                <SelectItem key={t.value} value={t.value}>
+                  {t.label}
+                </SelectItem>
+              ))}
+              {!supported && <SelectItem value={tracker}>{tracker} (unsupported)</SelectItem>}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Where tickets live. Claude reads them; it never creates or edits issues.
+          </p>
         </div>
         <TextField
           id="cfg-branch-pattern"

@@ -4,7 +4,7 @@
 // Exit 0 = pass, 1 = fail. Writes GitHub annotations and, when it has a summary, a table to $GITHUB_STEP_SUMMARY.
 // Node 18+, no dependencies. It needs no secrets, so it also works on PRs from forks.
 import { appendFileSync, readFileSync } from 'node:fs';
-import { findRoot, loadConfig, loadWorkflow, stageEnforcement } from './lib.mjs';
+import { findRoot, findStage, loadConfig, loadWorkflow, stageEnforcement } from './lib.mjs';
 
 // Annotation text may not contain raw line breaks or percent signs.
 const esc = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
@@ -82,10 +82,11 @@ try {
   fail(`The Shipline summary names a workflow this repo doesn't have (${e.message}).`);
 }
 
-const ran = new Map(data.stages.filter((s) => s && typeof s === 'object').map((s) => [s.id, s]));
+// The summary and the workflow may name the ticket stage differently (`jira` before 0.10.0, `ticket` after).
+const ranStages = data.stages.filter((s) => s && typeof s === 'object');
 const problems = [];
 for (const sc of wf.stages) {
-  const s = ran.get(sc.id);
+  const s = findStage(ranStages, sc.id);
   const finished = s && (s.status === 'done' || (s.status === 'skipped' && (s.confirmed === 'answer' || s.confirmed === 'auto')));
   if (stageEnforcement(sc) === 'block' && !finished) {
     problems.push(`Stage "${sc.id}" is a block stage and is not done${s ? ` (it is ${s.status})` : ' (it is missing from the summary)'}.`);

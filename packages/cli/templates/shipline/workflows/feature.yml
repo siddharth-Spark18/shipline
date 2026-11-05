@@ -9,8 +9,8 @@ id: feature
 name: Feature
 description: new functionality or a change in behavior
 stages:
-  - id: jira
-    name: Jira ticket
+  - id: ticket
+    name: Ticket
     artifact: ticket.md
     optional: true
     enforcement: guide

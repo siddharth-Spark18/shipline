@@ -453,6 +453,117 @@ describe('task binding', () => {
   });
 });
 
+// Teams Phase 1, G: chat-first tasks. A chat remembers every task it bound to (task_dirs, oldest first, no
+// duplicates; task_dir is the current one), and GET /api/chats/<id> returns them as `tasks`, finished ones included.
+describe('chat-first tasks', () => {
+  const A = () => path.join(tasksDirOf(dir), 'first-task');
+  const B = () => path.join(tasksDirOf(dir), 'second-task');
+  let chatId;
+
+  test('a chat that starts task A, then B, then resumes A has task_dirs [A, B] and task_dir A', async () => {
+    fake.script('normal-turn');
+    const since = ev.mark();
+    chatId = await startChat(ui, ev);
+    await ev.waitFor(isEventType(chatId, 'result'), 10_000, since);
+    // What Claude would run through Bash in this chat (stage.mjs writes <store>/state/<chat id>.json).
+    const bound = async (args, taskDir) => {
+      const m = ev.mark();
+      const r = stage(dir, args, chatId);
+      assert.equal(r.code, 0, r.stderr);
+      await ev.waitFor((e) => isChat(chatId, 'task')(e) && e.data.taskDir === taskDir, 5000, m);
+    };
+    await bound(['start', '--workflow', 'small', '--title', 'First task'], A());
+    assert.deepEqual(sessionOf(chatId).task_dirs, [A()]);
+    await bound(['start', '--workflow', 'small', '--title', 'Second task'], B());
+    assert.deepEqual(sessionOf(chatId).task_dirs, [A(), B()]);
+    assert.equal(sessionOf(chatId).task_dir, B());
+    // B is finished before the chat goes back to A.
+    const mf = path.join(B(), 'manifest.json');
+    const m = JSON.parse(readFileSync(mf, 'utf8'));
+    for (const st of m.stages) st.status = 'done';
+    m.complete = true;
+    writeFileSync(mf, JSON.stringify(m, null, 2));
+    await bound(['resume', 'first-task'], A());
+    assert.deepEqual(sessionOf(chatId).task_dirs, [A(), B()], 're-binding A moves nothing');
+    assert.equal(sessionOf(chatId).task_dir, A());
+  });
+
+  test('GET /api/chats/<id> returns both tasks in order, the finished one included; GET /api/chats has task_dirs', async () => {
+    const r = await api(ui, 'GET', `/api/chats/${chatId}`);
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.chat.task_dir, A());
+    assert.deepEqual(r.json.chat.task_dirs, [A(), B()]);
+    assert.deepEqual(r.json.tasks.map((t) => t.dir), [A(), B()]);
+    const [a, b] = r.json.tasks;
+    assert.equal(a.slug, 'first-task');
+    assert.equal(a.title, 'First task');
+    assert.equal(a.workflow, 'small');
+    assert.equal(a.branch, 'small/first-task');
+    assert.deepEqual(a.stages[0], { id: 'ticket', name: 'Ticket', status: 'in_progress', artifact: 'ticket.md' });
+    assert.deepEqual(a.files.map((f) => f.name), ['manifest.json']);
+    assert.ok(b.stages.every((st) => st.status === 'done'), 'the finished task is listed');
+    // The same Task shape as GET /api/tasks, which lists only unfinished tasks.
+    const open = (await api(ui, 'GET', '/api/tasks')).json.tasks;
+    assert.deepEqual(open.find((t) => t.dir === A()), a);
+    assert.ok(!open.some((t) => t.dir === B()));
+    const list = await api(ui, 'GET', '/api/chats');
+    assert.deepEqual(list.json.chats.find((c) => c.id === chatId).task_dirs, [A(), B()]);
+    await stopChat(ui, ev, chatId);
+  });
+
+  test('an old entry without task_dirs reads as [task_dir] (or []); nothing is rewritten', async () => {
+    const OLD = '22222222-2222-4222-8222-000000000001';
+    const NONE = '22222222-2222-4222-8222-000000000002';
+    const file = path.join(uiDir(dir), 'sessions.json');
+    const now = new Date().toISOString();
+    const list = JSON.parse(readFileSync(file, 'utf8'));
+    list.push({ id: OLD, title: 'old', created: now, last_active: now, task_dir: A(), status: 'ended' });
+    list.push({ id: NONE, title: 'none', created: now, last_active: now, task_dir: null, status: 'ended' });
+    writeFileSync(file, JSON.stringify(list));
+    const old = await api(ui, 'GET', `/api/chats/${OLD}`);
+    assert.deepEqual(old.json.chat.task_dirs, [A()]);
+    assert.deepEqual(old.json.tasks.map((t) => t.dir), [A()]);
+    const none = await api(ui, 'GET', `/api/chats/${NONE}`);
+    assert.deepEqual(none.json.chat.task_dirs, []);
+    assert.deepEqual(none.json.tasks, []);
+    const chats = (await api(ui, 'GET', '/api/chats')).json.chats;
+    assert.deepEqual(chats.find((c) => c.id === OLD).task_dirs, [A()]);
+    assert.deepEqual(chats.find((c) => c.id === NONE).task_dirs, []);
+    const raw = JSON.parse(readFileSync(file, 'utf8'));
+    assert.ok(!('task_dirs' in raw.find((c) => c.id === OLD)), 'normalised on read, not migrated');
+  });
+
+  test('a task_dirs entry outside the store, or whose folder is missing or has no manifest, is left out of tasks (with a log line)', async () => {
+    const MIXED = '22222222-2222-4222-8222-000000000003';
+    // A real task folder copied outside the store, a traversal out of it, a folder that is gone, one with no manifest.
+    const outside = path.join(fake.scratch, 'elsewhere', 'first-task');
+    mkdirSync(outside, { recursive: true });
+    copyFileSync(path.join(A(), 'manifest.json'), path.join(outside, 'manifest.json'));
+    const traversal = path.join(tasksDirOf(dir), '..', '..', 'first-task');
+    const missing = path.join(tasksDirOf(dir), 'gone-task');
+    const empty = path.join(tasksDirOf(dir), 'no-manifest');
+    mkdirSync(empty, { recursive: true });
+    const file = path.join(uiDir(dir), 'sessions.json');
+    const now = new Date().toISOString();
+    const list = JSON.parse(readFileSync(file, 'utf8'));
+    const dirs = [outside, traversal, missing, empty, A()];
+    list.push({ id: MIXED, title: 'mixed', created: now, last_active: now, task_dir: A(), task_dirs: dirs, status: 'ended' });
+    writeFileSync(file, JSON.stringify(list));
+    try {
+      const r = await api(ui, 'GET', `/api/chats/${MIXED}`);
+      assert.equal(r.status, 200, r.text);
+      assert.deepEqual(r.json.chat.task_dirs, dirs);
+      assert.deepEqual(r.json.tasks.map((t) => t.dir), [A()]);
+      const logged = readUiLog(dir);
+      for (const [event, d] of [['task-outside-store', outside], ['task-outside-store', traversal], ['task-missing', missing], ['task-unreadable', empty]]) {
+        assert.ok(logged.some((l) => l.event === event && l.dir === d), `${event} ${d}`);
+      }
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+});
+
 // Plan "Interface change": chat is disabled for an interface-2 repo (its old hooks write state to
 // .shipline/.state/, which the chat code no longer reads). Start, message and continue give 423 needs-upgrade.
 describe('needs-upgrade (interface-2 repo)', () => {
@@ -710,6 +821,8 @@ const samePath = (a, b) =>
   process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b);
 
 describe('chat reliability: reminders, trust, Jira, commands (2026-11-05 captures)', () => {
+  // Teams Phase 1, D: the 0.9.0 `jira` field is now `ticket: { tracker, status } | null` (this repo's tracker is jira).
+  const jira = (status) => ({ tracker: 'jira', status });
   let id;
   let since;
 
@@ -762,15 +875,16 @@ describe('chat reliability: reminders, trust, Jira, commands (2026-11-05 capture
     assert.deepEqual(names(unknown), names(plain), 'an unknown chat adds nothing');
   });
 
-  test('GET /api/chats/<id> reports jira from system/init.mcp_servers (the captured needs-auth), and keeps it after the chat ends', async () => {
+  test('GET /api/chats/<id> reports the Jira ticket status from system/init.mcp_servers (the captured needs-auth), and keeps it after the chat ends', async () => {
     const r = await api(ui, 'GET', `/api/chats/${id}`);
     assert.equal(r.status, 200, r.text);
-    assert.equal(r.json.jira, 'needs-auth');
+    assert.ok(!('jira' in r.json), 'the 0.9.0 field is gone');
+    assert.deepEqual(r.json.ticket, jira('needs-auth'));
     await stopChat(ui, ev, id);
-    assert.equal((await api(ui, 'GET', `/api/chats/${id}`)).json.jira, 'needs-auth');
+    assert.deepEqual((await api(ui, 'GET', `/api/chats/${id}`)).json.ticket, jira('needs-auth'));
   });
 
-  test('jira is null before system/init, then each of connected / failed / missing', async () => {
+  test('ticket is null before system/init, then Jira is each of connected / failed / missing', async () => {
     fake.unrelease();
     fake.script('reliability');
     const mark = ev.mark();
@@ -778,10 +892,10 @@ describe('chat reliability: reminders, trust, Jira, commands (2026-11-05 capture
     try {
       const before = await api(ui, 'GET', `/api/chats/${pending}`);
       assert.equal(before.status, 200, before.text);
-      assert.equal(before.json.jira, null);
+      assert.equal(before.json.ticket, null);
       fake.release();
       await ev.waitFor(isEventType(pending, 'result'), 10_000, mark);
-      assert.equal((await api(ui, 'GET', `/api/chats/${pending}`)).json.jira, 'needs-auth');
+      assert.deepEqual((await api(ui, 'GET', `/api/chats/${pending}`)).json.ticket, jira('needs-auth'));
     } finally {
       await stopChat(ui, ev, pending);
     }
@@ -796,7 +910,7 @@ describe('chat reliability: reminders, trust, Jira, commands (2026-11-05 capture
       const cid = await startChat(ui, ev);
       try {
         await ev.waitFor(isEventType(cid, 'result'), 10_000, m);
-        assert.equal((await api(ui, 'GET', `/api/chats/${cid}`)).json.jira, want);
+        assert.deepEqual((await api(ui, 'GET', `/api/chats/${cid}`)).json.ticket, jira(want));
       } finally {
         await stopChat(ui, ev, cid);
       }

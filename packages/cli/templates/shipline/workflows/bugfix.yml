@@ -3,8 +3,8 @@ id: bugfix
 name: Bugfix
 description: something is broken and needs fixing
 stages:
-  - id: jira
-    name: Jira ticket
+  - id: ticket
+    name: Ticket
     artifact: ticket.md
     optional: true
     enforcement: guide

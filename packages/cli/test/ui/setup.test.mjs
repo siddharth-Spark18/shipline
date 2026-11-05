@@ -132,7 +132,7 @@ describe('saving', () => {
     const s = await getSetup();
     const f = wfEntry(s, 'feature');
     const model = clone(f.model);
-    model.stages.find((x) => x.id === 'jira').enforcement = 'warn';
+    model.stages.find((x) => x.id === 'ticket').enforcement = 'warn'; // `jira` before 0.10.0
     const before = read('.shipline/workflows/feature.yml');
     const r = await save([{ kind: 'workflow', id: 'feature', model, baseHash: f.hash }]);
     assert.equal(r.status, 200, r.text);
@@ -178,7 +178,8 @@ describe('saving', () => {
     assert.equal(wfEntry(s3, 'hotfix').model.stages[0].sla_hours, 4);
     assert.equal(s3.config.model.team_owner, 'platform');
     assert.equal(s3.config.model.commands.typecheck, 'pnpm tsc');
-    assert.match(read('.shipline/config.yml'), /\n {2}typecheck: pnpm tsc\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n\nteam_owner: platform\n$/);
+    // The template ends with the comment documenting `setup` (Teams Phase 1, E); unknown keys follow it.
+    assert.match(read('.shipline/config.yml'), /\n {2}typecheck: pnpm tsc\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n\n# Set to `done`[^\n]*\n# Until then[^\n]*\n\nteam_owner: platform\n$/);
   });
 
   test('a file changed on disk gives 409, and in a two-file save nothing is written', async () => {
@@ -757,7 +758,7 @@ describe('interchangeability', () => {
     assert.equal(m.owner, 'qa-team');
     assert.deepEqual(m.labels, ['bug', 'triage']);
     assert.equal(m.stages.find((x) => x.id === 'reproduce').timeout_min, 30);
-    assert.deepEqual(m.stages.map((x) => x.id), ['jira', 'reproduce', 'root_cause', 'fix', 'verify', 'pr']);
+    assert.deepEqual(m.stages.map((x) => x.id), ['ticket', 'reproduce', 'root_cause', 'fix', 'verify', 'pr']);
     assert.equal(m.stages.find((x) => x.id === 'verify').blocks[0].bash, '\\bgit\\s+commit\\b|\\bgh\\s+pr\\s+create\\b');
     // The hooks still read it.
     assert.match(stage(dir, ['workflows']).stdout, /^bugfix: Bugfix \(team\)/m);
@@ -1003,5 +1004,51 @@ describe('CI check (Trust plan)', () => {
     assert.equal((await ciPost(x, { install: true })).status, 400);
     assert.equal((await ciPost(x, { install: true, baseHashes: { [CONFIG]: (await getSetup(x.ui)).config.hash } })).status, 400);
     assert.deepEqual(tree(x), before);
+  });
+});
+
+// Teams Phase 1, D and E: the tracker (jira | github; anything else is a warning, not an error) and `setup: done`.
+describe('tracker and setup (Teams Phase 1)', () => {
+  const xread = (x, rel) => readFileSync(path.join(x.dir, rel), 'utf8');
+
+  test('preview: an unknown tracker is a warning ("not supported; the ticket stage will be skipped") and saving still works', async () => {
+    const x = await scratchRepo();
+    const s = await getSetup(x.ui);
+    const model = clone(s.config.model);
+    model.tracker = 'linear';
+    const p = await preview([{ kind: 'config', model, baseHash: s.config.hash }], x.ui);
+    assert.equal(p.status, 200, p.text);
+    assert.deepEqual(p.json.files[0].errors, []);
+    assert.deepEqual(p.json.files[0].warnings, [{ path: 'tracker', message: 'not supported; the ticket stage will be skipped', severity: 'warning' }]);
+    const r = await save([{ kind: 'config', model, baseHash: s.config.hash }], x.ui);
+    assert.equal(r.status, 200, r.text);
+    assert.match(xread(x, '.shipline/config.yml'), /^tracker: linear$/m);
+  });
+
+  test('github is accepted with no warning', async () => {
+    const x = await scratchRepo();
+    const s = await getSetup(x.ui);
+    const model = clone(s.config.model);
+    model.tracker = 'github';
+    const p = await preview([{ kind: 'config', model, baseHash: s.config.hash }], x.ui);
+    assert.deepEqual(p.json.files[0].errors, []);
+    assert.equal(p.json.files[0].warnings, undefined);
+    assert.equal((await save([{ kind: 'config', model, baseHash: s.config.hash }], x.ui)).status, 200);
+    assert.match(xread(x, '.shipline/config.yml'), /^tracker: github$/m);
+  });
+
+  test('setup: done (written by /shipline-setup) is in the config model and survives a form save', async () => {
+    const x = await scratchRepo((d) => writeFileSync(path.join(d, '.shipline', 'config.yml'), readFileSync(path.join(d, '.shipline', 'config.yml'), 'utf8') + '\nsetup: done\n'));
+    const s = await getSetup(x.ui);
+    assert.equal(s.config.model.setup, 'done');
+    const model = clone(s.config.model);
+    model.ci = { ...model.ci, missing_block: 'warn' };
+    const p = await preview([{ kind: 'config', model, baseHash: s.config.hash }], x.ui);
+    assert.deepEqual(p.json.files[0].errors, []);
+    assert.equal(p.json.files[0].warnings, undefined);
+    assert.equal((await save([{ kind: 'config', model, baseHash: s.config.hash }], x.ui)).status, 200);
+    const text = xread(x, '.shipline/config.yml');
+    assert.match(text, /^setup: done$/m);
+    assert.match(text, /^ {2}missing_block: warn$/m);
   });
 });

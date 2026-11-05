@@ -24,6 +24,7 @@ import {
   type Drafts,
   type WorkflowDraft,
 } from '@/pages/setup/draft';
+import { chatStore } from '@/pages/chat/chat-store';
 import { ApiError, api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
 import type { ConfigModel, ValidationIssue, VersionState } from '@/lib/types';
@@ -42,7 +43,16 @@ function useDebounced<T>(value: T, ms: number): T {
   return v;
 }
 
-export default function SetupPage({ versionState }: { versionState: VersionState | undefined }) {
+const SETUP_MESSAGE = '/shipline-setup';
+
+export default function SetupPage({
+  versionState,
+  onChatStarted,
+}: {
+  versionState: VersionState | undefined;
+  /** Called with the id of the chat started by "Set up with Claude", so the app can show it. */
+  onChatStarted: (id: string) => void;
+}) {
   const queryClient = useQueryClient();
   const readOnly = versionState === 'repo-newer';
 
@@ -56,6 +66,7 @@ export default function SetupPage({ versionState }: { versionState: VersionState
   const [selected, setSelected] = useState('config');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newWorkflowOpen, setNewWorkflowOpen] = useState(false);
+  const [startingChat, setStartingChat] = useState(false);
 
   // Whenever the files are (re)loaded from disk, the edit copies start over from them.
   useEffect(() => {
@@ -115,6 +126,24 @@ export default function SetupPage({ versionState }: { versionState: VersionState
   const updateRules = (stageId: string, text: string) =>
     setDrafts((d) => (d ? { ...d, rules: { ...d.rules, [stageId]: text } } : d));
 
+  // Shown until /shipline-setup writes `setup: done` into config.yml.
+  const usesDefaultRules = (data.config.model as ConfigModel | undefined)?.setup !== 'done';
+  const startSetupChat = async () => {
+    setStartingChat(true);
+    try {
+      const { id } = await api.createChat(SETUP_MESSAGE);
+      chatStore.addUser(id, SETUP_MESSAGE, true, []);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.chats });
+      onChatStarted(id);
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'chat-active') {
+        toast.info('Finish or stop the current chat first.');
+      } else toast.error(e instanceof ApiError ? e.message : 'Something went wrong.');
+    } finally {
+      setStartingChat(false);
+    }
+  };
+
   const saveError = save.error;
   const conflict = saveError instanceof ApiError && saveError.status === 409;
   const saveIssues: ValidationIssue[] =
@@ -132,6 +161,23 @@ export default function SetupPage({ versionState }: { versionState: VersionState
 
   return (
     <div className="flex flex-col gap-4">
+      {usesDefaultRules && (
+        <Alert>
+          <AlertTitle>This repo uses Shipline&apos;s default rules</AlertTitle>
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              Claude can interview you and tailor the workflows, rules and commands to this repo.
+            </span>
+            <Button
+              size="sm"
+              disabled={readOnly || startingChat}
+              onClick={() => void startSetupChat()}
+            >
+              Set up with Claude
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
       <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card/95 px-3 py-2 shadow-xs backdrop-blur">
         <span className="flex items-center gap-2 text-sm text-muted-foreground">
           <span

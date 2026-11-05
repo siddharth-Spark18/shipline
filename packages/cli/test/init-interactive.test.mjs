@@ -8,7 +8,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileS
 import path from 'node:path';
 import { runInit as runInitInProcess } from '../src/init.mjs';
 import { parseYaml } from '../templates/shipline/bin/lib.mjs';
-import { CLI_ROOT, TEMPLATES, homeFor, removeDir, runInit, stage, tmpDir } from './helpers.mjs';
+import { CLI_ROOT, TEMPLATES, git, homeFor, removeDir, runInit, stage, tmpDir } from './helpers.mjs';
 
 const sha = (data) => createHash('sha256').update(data).digest('hex');
 const ALL_AGENTS = ['planner', 'builder', 'reviewer', 'qa-bug-hunter', 'wireframe-proposer', 'researcher'];
@@ -140,7 +140,7 @@ describe('--yes', () => {
     const dir = repo({ [AGENT('planner')]: '# our planner\n', [AGENT('reviewer')]: '# our reviewer\n' });
     const r = runInit(dir);
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /Kept your own agents \(used where Shipline's would be\): planner, reviewer\. To use Shipline's instead: `shipline ui` -> Setup -> Agents & skills, or uninstall and re-run `init` interactively\./);
+    assert.match(r.stdout, /Kept your own agents \(used where Shipline's would be\): planner, reviewer\. To use Shipline's instead: `npx @forgeyard\/shipline ui` -> Setup -> Agents & skills, or uninstall and re-run `init` interactively\./);
     assert.equal(read(dir, AGENT('planner')), '# our planner\n');
     assert.equal(read(dir, AGENT('reviewer')), '# our reviewer\n');
     const v = versionOf(dir);
@@ -217,7 +217,7 @@ describe('selection logic (prompts stubbed)', () => {
     const r = await initWith(dir, selection({ workflows: ['bugfix'], agents: ['builder', 'qa-bug-hunter', 'researcher'] }));
     assert.equal(r.code, 0, r.stderr);
     assert.deepEqual(list(dir, '.shipline/workflows'), ['bugfix.yml']);
-    assert.deepEqual(list(dir, '.shipline/rules'), ['fix.md', 'jira.md', 'pr.md', 'reproduce.md', 'root_cause.md', 'verify.md']);
+    assert.deepEqual(list(dir, '.shipline/rules'), ['fix.md', 'pr.md', 'reproduce.md', 'root_cause.md', 'ticket.md', 'verify.md']);
     assert.deepEqual(list(dir, '.claude/agents'), ['builder.md', 'qa-bug-hunter.md', 'researcher.md']);
     assert.deepEqual(list(dir, '.claude/skills'), ['shipline-setup', 'shipline-workflow']);
     const v = versionOf(dir);
@@ -390,5 +390,114 @@ describe('the interactive path on old Node', () => {
   test('src/init-prompts.mjs explains to use --yes when @inquirer/prompts cannot load', { skip: old ? false : 'needs Node < 20 (the CI test:hooks job)' }, async () => {
     const { askSelection } = await import('../src/init-prompts.mjs');
     await assert.rejects(() => askSelection({ workflows: [], agents: [], repoAgents: [], repoSkills: [], missingStageAgents: () => [] }), /Node 20\.17 or newer; on older Node, run `init --yes`/);
+  });
+});
+
+// Teams Phase 1, B and D: init fills the test, lint and build commands from the repo's files, and asks for the
+// tracker (GitHub Issues pre-selected when `origin` is on github.com). The questions themselves are stubbed here
+// (as above), so these check what they are given (the pre-filled values) and that whatever they answer is written.
+describe('commands and tracker (Teams Phase 1)', () => {
+  const NODE_REPO = {
+    'package.json': JSON.stringify({ scripts: { test: 'vitest run', lint: 'eslint .', typecheck: 'tsc --noEmit' } }),
+    'pnpm-lock.yaml': '',
+  };
+  const config = (dir) => parseYaml(read(dir, '.shipline/config.yml'));
+  const withOrigin = (dir, url) => {
+    git(dir, 'init', '-q');
+    git(dir, 'remote', 'add', 'origin', url);
+    return dir;
+  };
+
+  test('--yes writes the detected commands and tracker: jira, keeping the template\'s comments', () => {
+    const dir = repo(NODE_REPO);
+    const r = runInit(dir);
+    assert.equal(r.code, 0, r.stderr);
+    const cfg = config(dir);
+    assert.deepEqual(cfg.commands, { test: 'pnpm test', lint: 'pnpm run lint', build: 'pnpm run typecheck' });
+    assert.equal(cfg.tracker, 'jira');
+    const text = read(dir, '.shipline/config.yml');
+    assert.match(text, /^# Optional\. The verify stage runs only the commands you set here\./m);
+    assert.match(text, /^commands:\n {2}test: pnpm test\n {2}lint: pnpm run lint\n {2}build: pnpm run typecheck\n/m);
+    assert.match(r.stdout, /Commands for the verify stage:\n {2}test: pnpm test \(from package\.json\)\n {2}lint: pnpm run lint \(from package\.json\)\n {2}build: pnpm run typecheck \(from package\.json\)/);
+    assert.match(r.stdout, /Tracker: Jira/);
+  });
+
+  test('--yes keeps jira even when origin is on github.com', () => {
+    const dir = withOrigin(repo(), 'git@github.com:acme/app.git');
+    assert.equal(runInit(dir).code, 0);
+    assert.equal(config(dir).tracker, 'jira');
+  });
+
+  test('--yes with nothing detected writes the template unchanged', () => {
+    const dir = repo();
+    const r = runInit(dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(read(dir, '.shipline/config.yml'), readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8'));
+    assert.match(r.stdout, /No test, lint or build commands set; add them under commands: in \.shipline\/config\.yml\./);
+  });
+
+  test('the questions get the detected commands (with their sources) to pre-fill', async () => {
+    const r = await initWith(repo(NODE_REPO), selection());
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.calls[0].detected, {
+      test: 'pnpm test',
+      lint: 'pnpm run lint',
+      build: 'pnpm run typecheck',
+      sources: { test: 'package.json', lint: 'package.json', build: 'package.json' },
+    });
+    const empty = await initWith(repo(), selection());
+    assert.deepEqual(empty.calls[0].detected, { test: '', lint: '', build: '', sources: {} }, 'nothing detected: the prompts start empty');
+  });
+
+  test('edited and cleared answers are written as given; an answer that is not one of the commands is refused', async () => {
+    const dir = repo(NODE_REPO);
+    const r = await initWith(dir, selection({ commands: { test: 'pnpm test -- --run', lint: '', build: 'pnpm run typecheck' }, tracker: 'github' }));
+    assert.equal(r.code, 0, r.stderr);
+    const cfg = config(dir);
+    assert.deepEqual(cfg.commands, { test: 'pnpm test -- --run', lint: '', build: 'pnpm run typecheck' });
+    assert.equal(cfg.tracker, 'github');
+    assert.match(r.stdout, /^ {2}test: pnpm test -- --run$/m, 'an edited command has no "(from …)"');
+    assert.match(r.stdout, /^ {2}build: pnpm run typecheck \(from package\.json\)$/m);
+    assert.ok(!/^ {2}lint:/m.test(r.stdout), 'a cleared command is not listed');
+    assert.match(r.stdout, /Tracker: GitHub Issues/);
+
+    for (const bad of [{ commands: { deploy: 'x' } }, { commands: { test: 1 } }, { commands: ['pnpm test'] }, { tracker: 'linear' }]) {
+      const d = repo();
+      const b = await initWith(d, selection(bad));
+      assert.equal(b.code, 1, JSON.stringify(bad));
+      assert.match(b.stderr, /invalid selection/);
+      assert.deepEqual(readdirSync(d), [], JSON.stringify(bad));
+    }
+  });
+
+  test('every command cleared in a repo with detected ones: the commands stay empty', async () => {
+    const dir = repo(NODE_REPO);
+    const r = await initWith(dir, selection({ commands: { test: '', lint: '', build: '' } }));
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(config(dir).commands, { test: '', lint: '', build: '' });
+  });
+
+  test('the tracker default: github when origin is on github.com, otherwise jira (also with no git at all)', async () => {
+    const cases = [
+      [withOrigin(repo(), 'https://github.com/acme/app.git'), 'github'],
+      [withOrigin(repo(), 'git@github.com:acme/app.git'), 'github'],
+      [withOrigin(repo(), 'https://gitlab.com/acme/app.git'), 'jira'],
+      [(() => {
+        const d = repo();
+        git(d, 'init', '-q');
+        return d;
+      })(), 'jira'],
+      [repo(), 'jira'],
+    ];
+    for (const [dir, want] of cases) {
+      const r = await initWith(dir, selection());
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(r.calls[0].trackerDefault, want, dir);
+    }
+  });
+
+  test('the final message nudges to tailor the rules', async () => {
+    const r = await initWith(repo(), selection());
+    assert.match(r.stdout, /Next: tailor the rules to this repo\. Run `\/shipline-setup` in Claude Code, or open `npx @forgeyard\/shipline ui` and use Setup -> Set up with Claude\./);
   });
 });

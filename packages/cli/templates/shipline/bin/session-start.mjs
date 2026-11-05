@@ -1,9 +1,25 @@
 // SessionStart hook: injects a resume summary of unfinished tasks and exposes the session id to
 // Bash (so stage.mjs knows which session it belongs to). Fails open with a visible warning.
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import {
-  findRoot, loadConfig, listOpenTasks, currentBranch, readSession, readStdinJson, safeId, out, failOpen,
+  findRoot, loadConfig, listOpenTasks, currentBranch, readSession, readStdinJson, safeId, stateDir, out, failOpen,
 } from './lib.mjs';
+
+// Until /shipline-setup has written `setup: done`, tell each developer once (a marker in the store) that the
+// default rules are in use. Any error here means no message.
+function setupNudge(root, cfg) {
+  try {
+    if (cfg.setup === 'done') return null;
+    const marker = path.join(stateDir(root), 'setup-nudged');
+    if (existsSync(marker)) return null;
+    mkdirSync(path.dirname(marker), { recursive: true });
+    writeFileSync(marker, new Date().toISOString() + '\n');
+    return 'Shipline is using its default rules here. Run /shipline-setup to tailor them to this repo.';
+  } catch {
+    return null;
+  }
+}
 
 try {
   const input = await readStdinJson();
@@ -19,7 +35,7 @@ try {
     }
   }
 
-  loadConfig(root); // a broken config surfaces as the visible fail-open warning
+  const cfg = loadConfig(root); // a broken config surfaces as the visible fail-open warning
   const branch = currentBranch(root);
   const open = listOpenTasks(root).map((t) => ({ ...t, onBranch: !!branch && t.branch === branch }));
 
@@ -37,7 +53,10 @@ try {
     }
     lines.push('To resume: node .shipline/bin/stage.mjs resume <task folder>');
   }
-  out({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: lines.join('\n') } });
+  const result = { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: lines.join('\n') } };
+  const nudge = setupNudge(root, cfg);
+  if (nudge) result.systemMessage = nudge;
+  out(result);
   process.exit(0);
 } catch (e) {
   failOpen(e);

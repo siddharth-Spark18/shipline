@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Stage CLI that Claude calls through Bash to record workflow progress.
 //   node .shipline/bin/stage.mjs workflows
-//   node .shipline/bin/stage.mjs start --workflow feature --title "Add export" [--ticket PROJ-12] [--ui true|false]
+//   node .shipline/bin/stage.mjs start --workflow feature --title "Add export" [--ticket PROJ-12 | 123] [--ui true|false]
 //   node .shipline/bin/stage.mjs resume <task folder name or absolute path>
 //   node .shipline/bin/stage.mjs status [--json]
 //   node .shipline/bin/stage.mjs advance
@@ -17,7 +17,7 @@ import path from 'node:path';
 import {
   findRoot, loadConfig, loadWorkflow, listWorkflows, readManifest, manifestPath, readSession, statePath,
   tasksDir, writeJson, isDone, currentStage, slugify, stageEnforcement, confirmQuestion, readApprovals,
-  consumeApproval, CONFIRM_OPTIONS,
+  consumeApproval, CONFIRM_OPTIONS, sameStage, findStage,
 } from './lib.mjs';
 
 function die(msg) {
@@ -106,12 +106,32 @@ function bind(taskDir, workflow) {
 }
 
 function stageCfg(wf, id) {
-  return wf.stages.find((s) => s.id === id) || { id };
+  return findStage(wf.stages, id) || { id };
 }
 
+// A stage's rules: rules/<id>.md. The ticket stage (`ticket`, or `jira` before 0.10.0) tries ticket.md, then jira.md.
 function rulesFor(id) {
-  const f = path.join(root, '.shipline', 'rules', `${id}.md`);
-  return existsSync(f) ? readFileSync(f, 'utf8').trim() : '';
+  const names = sameStage(id, 'ticket') ? ['ticket', 'jira'] : [id];
+  for (const n of names) {
+    const f = path.join(root, '.shipline', 'rules', `${n}.md`);
+    if (existsSync(f)) return { file: `${n}.md`, text: readFileSync(f, 'utf8').trim() };
+  }
+  return null;
+}
+
+// What to do at the ticket stage, for the configured tracker.
+function trackerLine(manifest) {
+  const tracker = cfg.tracker;
+  if (tracker === 'github') {
+    const n = manifest.task.issue;
+    return n
+      ? `Tracker: github. Read the issue with \`gh issue view ${n} --json number,title,body,labels,url,state\` (read-only) and save it to the artifact. Skip with \`stage.mjs skip --reason "GitHub not connected"\` when gh is missing, not signed in, or the call fails.`
+      : 'Tracker: github. This task has no issue number; use ticket details the developer pasted, or skip with `stage.mjs skip --reason "No issue"`.';
+  }
+  if (tracker === 'jira') {
+    return 'Tracker: jira. Read the ticket through the Atlassian tools (read-only) and save it to the artifact. Skip with `stage.mjs skip --reason "Jira not connected"` when they are unavailable.';
+  }
+  return `Tracker: "${tracker}" is not supported; skip this stage with \`stage.mjs skip --reason "Tracker not supported"\`.`;
 }
 
 function describeCurrent(taskDir, manifest, wf) {
@@ -125,8 +145,9 @@ function describeCurrent(taskDir, manifest, wf) {
     `Enforcement: ${stageEnforcement(sc)}. Confirm with the developer before advancing: ${sc.confirm_to_advance ? 'YES (`advance` prints the question to ask them; it only goes through after they answer it)' : 'no (auto-advance)'}`,
   ].filter(Boolean);
   if (Array.isArray(cfg.skills) && cfg.skills.length) lines.push(`Repo skills you can use: ${cfg.skills.join(', ')}`);
+  if (sameStage(cur.id, 'ticket')) lines.push(trackerLine(manifest));
   const rules = rulesFor(cur.id);
-  if (rules) lines.push('', `Repo rules for this stage (.shipline/rules/${cur.id}.md):`, rules);
+  if (rules && rules.text) lines.push('', `Repo rules for this stage (.shipline/rules/${rules.file}):`, rules.text);
   return lines.join('\n');
 }
 
@@ -229,7 +250,16 @@ switch (cmd) {
     } catch (e) {
       die(e.message);
     }
-    const key = typeof flags.ticket === 'string' ? flags.ticket.toUpperCase() : '';
+    let key = '';
+    let issue = null;
+    if (typeof flags.ticket === 'string') {
+      if (cfg.tracker === 'github') {
+        const m = /^(?:#|issue-)?(\d+)$/i.exec(flags.ticket.trim());
+        if (!m) die('GitHub issue numbers look like 123 or #123.');
+        issue = Number(m[1]);
+        key = `issue-${issue}`;
+      } else key = flags.ticket.toUpperCase();
+    }
     const slug = slugify(flags.slug || flags.title);
     if (!flags.slug && !flags.title) die('--title (or --slug) is required.');
     const vars = { key, slug, type: typeof flags.type === 'string' ? flags.type : wf.branch_type || wf.id };
@@ -242,6 +272,7 @@ switch (cmd) {
         slug: path.basename(taskDir),
         title: typeof flags.title === 'string' ? flags.title : slug,
         key: key || null,
+        ...(issue !== null ? { issue } : {}),
         workflow: wf.id,
         branch: fill(cfg.branch_pattern, vars),
         created: now(),
@@ -323,7 +354,8 @@ switch (cmd) {
   case 'reopen': {
     const taskDir = activeTaskDir();
     const { manifest, wf } = load(taskDir);
-    const idx = manifest.stages.findIndex((s) => s.id === pos[1]);
+    let idx = manifest.stages.findIndex((s) => s.id === pos[1]);
+    if (idx < 0) idx = manifest.stages.findIndex((s) => sameStage(s.id, pos[1]));
     if (idx < 0) die(`unknown stage "${pos[1]}".`);
     manifest.stages.forEach((s, i) => {
       if (i > idx) {
@@ -357,7 +389,8 @@ switch (cmd) {
   case 'pr-summary': {
     const taskDir = activeTaskDir();
     const { manifest, wf } = load(taskDir);
-    console.log(prSummary(manifest, wf));
+    const closes = cfg.tracker === 'github' && Number.isInteger(manifest.task.issue) ? `Closes #${manifest.task.issue}\n` : '';
+    console.log(closes + prSummary(manifest, wf));
     break;
   }
 

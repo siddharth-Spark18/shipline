@@ -8,13 +8,12 @@ import { api } from '@/lib/api';
 import { connectEvents, queryKeys } from '@/lib/events';
 import { useChatSelection } from '@/lib/use-chat-selection';
 import SetupPage from '@/pages/setup/setup-page';
-import TasksPage from '@/pages/tasks/tasks-page';
 import ChatPage from '@/pages/chat/chat-page';
 import { DiagnosticsSheet } from '@/pages/diagnostics';
 
-const VIEWS = ['setup', 'tasks', 'chat'] as const;
+const VIEWS = ['setup', 'chat'] as const;
 
-const TITLES: Record<View, string> = { chat: 'Chat', setup: 'Setup', tasks: 'Tasks' };
+const TITLES: Record<View, string> = { chat: 'Chat', setup: 'Setup' };
 
 function viewFromHash(): View {
   const h = window.location.hash.replace('#', '');
@@ -87,11 +86,13 @@ export default function App() {
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="mx-auto max-w-5xl p-4">
-              {view === 'setup' ? (
-                <SetupPage versionState={status.data?.versionState} />
-              ) : (
-                <TasksPage />
-              )}
+              <SetupPage
+                versionState={status.data?.versionState}
+                onChatStarted={(id) => {
+                  select(id);
+                  navigate('chat');
+                }}
+              />
             </div>
           </div>
         )}

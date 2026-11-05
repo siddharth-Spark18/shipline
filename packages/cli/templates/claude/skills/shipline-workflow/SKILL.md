@@ -19,20 +19,23 @@ No workflow is skipped: even a one-line change goes through Small change.
 ## 2. Start
 
 ```
-node .shipline/bin/stage.mjs start --workflow <id> --title "<short title>" [--ticket PROJ-12] [--ui true|false]
+node .shipline/bin/stage.mjs start --workflow <id> --title "<short title>" [--ticket PROJ-12 | 123] [--ui true|false]
 ```
 
-This creates the task folder (outside the repo, under `~/.shipline`; `stage.mjs` prints its absolute path, named `<KEY>-<slug>` or `<slug>`), writes `manifest.json`, binds it to this session (needs `$SHIPLINE_SESSION`, otherwise pass `--session <id>` from the SessionStart context) and prints the first stage, its artifact and its repo rules, and, when `.shipline/config.yml` lists `skills:`, a "Repo skills you can use" line at every stage. Use those skills when they fit the stage; if one cannot be found under `.claude/skills/`, tell the developer. It also prints a suggested branch name; create that branch yourself before editing source, unless the developer says otherwise.
+This creates the task folder (outside the repo, under `~/.shipline`; `stage.mjs` prints its absolute path, named `<KEY>-<slug>` or `<slug>`; for a GitHub issue the key is `issue-123`), writes `manifest.json`, binds it to this session (needs `$SHIPLINE_SESSION`, otherwise pass `--session <id>` from the SessionStart context) and prints the first stage, its artifact and its repo rules, and, when `.shipline/config.yml` lists `skills:`, a "Repo skills you can use" line at every stage. Use those skills when they fit the stage; if one cannot be found under `.claude/skills/`, tell the developer. It also prints a suggested branch name; create that branch yourself before editing source, unless the developer says otherwise.
 
 ## 3. Work each stage
 
 For the current stage: read its rules (printed by stage.mjs), delegate to the named agent if one is suggested, and write the stage's artifact into the task folder that `stage.mjs` prints. Artifacts are the source of truth for later stages; read them instead of relying on memory.
 
-- **jira:** use the Atlassian MCP if it is connected (read-only) to fetch the ticket and save the key facts to `ticket.md`. If the Atlassian tools are not available (not connected, or needing authentication), skip the stage with `stage.mjs skip --reason "Jira not connected"`; it is optional, so do not ask first. If the developer pastes ticket details, use those instead. Pass `--ticket` at start when you know the key.
+- **ticket:** `.shipline/config.yml` says which tracker the repo uses (`tracker: jira`, the default, or `github`); `stage.mjs` names it when the stage starts. Read the ticket (read-only, never create or edit issues) and save the key facts to `ticket.md`. If the developer pastes ticket details, use those instead. Pass `--ticket` at start when you know the key or issue number.
+  - **jira:** use the Atlassian MCP if it is connected. If the Atlassian tools are not available (not connected, or needing authentication), skip the stage with `stage.mjs skip --reason "Jira not connected"`.
+  - **github:** run `gh issue view <n> --json number,title,body,labels,url,state` and save the result to `ticket.md`. If `gh` is missing, not signed in, or the call fails, skip the stage with `stage.mjs skip --reason "GitHub not connected"`. Start the task with `--ticket 123` (or `#123`), so the branch is `feature/issue-123-...` and `pr-summary` adds `Closes #123`.
+  - The stage is optional, so skipping needs no question to the developer. Workflows from before 0.10.0 may call this stage `jira`; it is the same stage.
 - **feasibility:** write `feasibility.md`. If the verdict is *not feasible*, STOP after writing it: present blockers and alternatives and let the developer decide. If *partly feasible or uncertain*, carry the blockers into the questions stage.
 - **plan:** state whether the work is UI-affecting, then run `stage.mjs flag ui true|false`. The wireframes stage runs only for UI work.
-- **verify:** build the requirement checklist in `verification.md` (each acceptance criterion with evidence). For UI work run the app and check it in a browser. Run test, lint and build commands only if configured in `.shipline/config.yml`.
-- **pr:** use `git` and `gh` with the developer's own credentials; summarize the plan and the verification result in the PR body. Don't link task files; they're local. Run `node .shipline/bin/stage.mjs pr-summary` and paste its output unchanged at the end of the PR description.
+- **verify:** build the requirement checklist in `verification.md` (each acceptance criterion with evidence). For UI work run the app and check it in a browser. Run the test, lint and build commands configured in `.shipline/config.yml` and record each result; skip any that are not set.
+- **pr:** use `git` and `gh` with the developer's own credentials; summarize the plan and the verification result in the PR body. Don't link task files; they're local. Run `node .shipline/bin/stage.mjs pr-summary` and paste its output unchanged at the end of the PR description (for a GitHub issue its first line is `Closes #<n>`; keep it, so merging closes the issue).
 
 ## 4. Advance
 

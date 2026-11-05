@@ -14,7 +14,7 @@ import { cn } from 'cn';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import type { JiraStatus } from '@/lib/types';
+import type { TicketStatus } from '@/lib/types';
 import type { FatalInfo } from '@/pages/chat/chat-store';
 import type { ChatResult, NoticeLevel } from '@/pages/chat/timeline';
 
@@ -198,31 +198,55 @@ export function ResultLine({ result }: { result: ChatResult }) {
   return <p className="text-xs text-muted-foreground">Last turn: {parts.join(' · ')}</p>;
 }
 
-const JIRA_TEXT: Record<Exclude<JiraStatus, 'connected'>, ReactNode> = {
+const JIRA_TEXT: Record<Exclude<TicketStatus['status'], 'connected'>, ReactNode> = {
   missing:
-    "Jira isn't connected. Add the Atlassian connector in claude.ai → Settings → Connectors. Claude will skip the Jira stage for now.",
+    "Jira isn't connected. Add the Atlassian connector in claude.ai → Settings → Connectors. Claude will skip the ticket stage for now.",
   'needs-auth': (
     <>
       Jira needs authenticating. Run <code className="font-mono">claude</code> in a terminal, then{' '}
       <code className="font-mono">/mcp</code> → claude.ai Atlassian → Authenticate. Claude will skip
-      the Jira stage for now.
+      the ticket stage for now.
     </>
   ),
   failed: (
     <>
       The Jira connector failed to start. Check <code className="font-mono">/mcp</code> in a
-      terminal <code className="font-mono">claude</code>. Claude will skip the Jira stage for now.
+      terminal <code className="font-mono">claude</code>. Claude will skip the ticket stage for now.
     </>
   ),
 };
 
-/** The task is at the `jira` stage but the Atlassian connector can't be used. */
-export function JiraNotice({ status }: { status: Exclude<JiraStatus, 'connected'> }) {
+const GITHUB_TEXT: Record<Exclude<TicketStatus['status'], 'connected'>, ReactNode> = {
+  missing: (
+    <>
+      GitHub CLI not found. Install <code className="font-mono">gh</code> (cli.github.com). Claude
+      will skip the ticket stage for now.
+    </>
+  ),
+  'needs-auth': (
+    <>
+      GitHub CLI isn&apos;t signed in. Run <code className="font-mono">gh auth login</code> in a
+      terminal. Claude will skip the ticket stage for now.
+    </>
+  ),
+  failed: "Couldn't check the GitHub CLI. Claude will skip the ticket stage for now.",
+};
+
+/** The task is at the ticket stage but the repo's tracker (Jira connector or GitHub CLI) can't be used. */
+export function TicketNotice({
+  tracker,
+  status,
+}: {
+  tracker: TicketStatus['tracker'];
+  status: Exclude<TicketStatus['status'], 'connected'>;
+}) {
   return (
     <Alert className="border-l-4 border-l-notice-reminder">
       <PlugZapIcon />
-      <AlertTitle>Jira</AlertTitle>
-      <AlertDescription>{JIRA_TEXT[status]}</AlertDescription>
+      <AlertTitle>{tracker === 'github' ? 'GitHub Issues' : 'Jira'}</AlertTitle>
+      <AlertDescription>
+        {tracker === 'github' ? GITHUB_TEXT[status] : JIRA_TEXT[status]}
+      </AlertDescription>
     </Alert>
   );
 }

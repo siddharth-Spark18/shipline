@@ -20,7 +20,7 @@ import { HttpError } from './http.mjs';
 import { stateDir } from '../store.mjs';
 import { log } from './log.mjs';
 import { stopAll as stopShells } from './shell.mjs';
-import { acquireLock, addChat, getChat, releaseLock, updateChat } from './sessions.mjs';
+import { acquireLock, addChat, addTaskDir, getChat, releaseLock, updateChat } from './sessions.mjs';
 import {
   KNOWN_TYPES,
   classifyHookMessage,
@@ -134,7 +134,8 @@ export function createChats(app) {
 
   const state = (id) => (active && active.id === id ? active : null);
 
-  // Reads <store>/state/<id>.json (written by stage.mjs start or resume) and stores its task_dir.
+  // Reads <store>/state/<id>.json (written by stage.mjs start or resume) and stores its task_dir as the chat's current
+  // task, adding it to task_dirs when the chat hasn't worked on it yet.
   function bindTask(chat) {
     let taskDir = null;
     try {
@@ -145,6 +146,7 @@ export function createChats(app) {
     }
     if (!taskDir || taskDir === chat.taskDir) return;
     chat.taskDir = taskDir;
+    addTaskDir(root, chat.id, taskDir);
     updateChat(root, chat.id, { task_dir: taskDir });
     emit({ chatId: chat.id, kind: 'task', taskDir });
   }
@@ -600,6 +602,7 @@ export function createChats(app) {
         created: now,
         last_active: now,
         task_dir: null,
+        task_dirs: [],
         status: 'active',
         ...(Object.keys(chat.picked).length ? { controls: { ...chat.picked } } : {}),
       });

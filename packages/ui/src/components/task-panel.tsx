@@ -1,16 +1,16 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { FileTextIcon } from 'lucide-react';
+import { ChevronDownIcon, ChevronRightIcon, FileTextIcon } from 'lucide-react';
 import { cn } from 'cn';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ChangesCard, ChangesView } from '@/components/changes-view';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { ChangesView } from '@/components/changes-view';
 import { FileViewer, type FileTarget } from '@/components/file-viewer';
-import { EnforcementBadge, STATUS_LABEL, StageDot, StageTrail } from '@/components/stage-dots';
+import { EnforcementBadge, STATUS_LABEL, StageDot } from '@/components/stage-dots';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
+import { findStage } from '@/lib/stages';
 import type { Block, Change, StageModel, Task } from '@/lib/types';
 
 /** The files in the task folder; clicking one opens it read-only. */
@@ -57,7 +57,7 @@ function describeBlock(b: Block): string {
 function StageFacts({ task, stage }: { task: Task; stage: Task['stages'][number] }) {
   const { data: setup } = useQuery({ queryKey: queryKeys.setup, queryFn: api.setup });
   const wf = setup?.workflows.find((w) => w.id === task.workflow)?.model;
-  const cfg = (id: string): StageModel | undefined => wf?.stages?.find((s) => s.id === id);
+  const cfg = (id: string): StageModel | undefined => findStage(wf?.stages, id);
 
   const curIdx = task.stages.findIndex((s) => s.id === stage.id);
   const next = task.stages.slice(curIdx + 1).find((s) => s.status === 'pending');
@@ -139,7 +139,7 @@ export function StageTimeline({ task }: { task: Task }) {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-semibold">{s.name}</span>
                       <EnforcementBadge
-                        enforcement={wf?.stages?.find((x) => x.id === s.id)?.enforcement ?? 'guide'}
+                        enforcement={findStage(wf?.stages, s.id)?.enforcement ?? 'guide'}
                       />
                     </div>
                     <StageFacts task={task} stage={s} />
@@ -170,6 +170,10 @@ export function StageTimeline({ task }: { task: Task }) {
   );
 }
 
+const normDir = (p: string) => p.replace(/\/+$/, '');
+
+const finished = (t: Task) => t.stages.filter((s) => s.status === 'done' || s.status === 'skipped');
+
 function TaskHeading({ task }: { task: Task }) {
   return (
     <div className="flex flex-col gap-1">
@@ -182,73 +186,124 @@ function TaskHeading({ task }: { task: Task }) {
   );
 }
 
-/** The chat's "Task canvas": Progress, Artifacts and Changes tabs. `task` is absent before a task starts. */
-export function TaskCanvas({ task, changes }: { task?: Task; changes: Change[] }) {
+/** One task in the chat's list: a one-line summary, and when expanded its stage timeline and files. */
+function ChatTaskRow({
+  task,
+  current,
+  expanded,
+  onToggle,
+}: {
+  task: Task;
+  current: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const done = finished(task).length;
+  const complete = done === task.stages.length;
+  const Chevron = expanded ? ChevronDownIcon : ChevronRightIcon;
   return (
-    <Tabs defaultValue="progress" className="h-full min-h-0 gap-0">
-      <TabsList variant="line" className="h-10 w-full shrink-0 justify-start border-b px-2">
-        <TabsTrigger value="progress" className="flex-none px-3">
-          Progress
-        </TabsTrigger>
-        <TabsTrigger value="artifacts" className="flex-none px-3">
-          Artifacts
-          {task && task.files.length > 0 && <Badge variant="secondary">{task.files.length}</Badge>}
-        </TabsTrigger>
-        <TabsTrigger value="changes" className="flex-none px-3">
-          Changes
-          {changes.length > 0 && <Badge variant="secondary">{changes.length}</Badge>}
-        </TabsTrigger>
-      </TabsList>
-      <TabsContent value="progress" className="min-h-0 overflow-y-auto p-4">
-        {task ? (
-          <div className="flex flex-col gap-4">
-            <TaskHeading task={task} />
-            <StageTimeline task={task} />
+    <li className="rounded-lg border bg-card">
+      <button
+        type="button"
+        className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-sm"
+        aria-expanded={expanded}
+        onClick={onToggle}
+      >
+        <Chevron className="size-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">
+          <span className={cn(expanded && 'font-semibold')}>{task.title || task.slug}</span>
+          <span className="text-muted-foreground">
+            {' · '}
+            {task.workflow}
+            {' · '}
+            {done}/{task.stages.length} stages
+          </span>
+        </span>
+        {complete && (
+          <span className="shrink-0 text-stage-done" role="img" aria-label="Complete">
+            ✓
+          </span>
+        )}
+        {current && !expanded && (
+          <Badge variant="secondary" className="shrink-0">
+            Current
+          </Badge>
+        )}
+      </button>
+      {expanded && (
+        <div className="flex flex-col gap-4 border-t p-3">
+          <TaskHeading task={task} />
+          <StageTimeline task={task} />
+          <div>
+            <h4 className="mb-1 text-sm font-medium">Files</h4>
+            <ArtifactList task={task} />
           </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            No task yet. Its stages appear here when Claude starts one in this chat.
-          </p>
-        )}
-      </TabsContent>
-      <TabsContent value="artifacts" className="min-h-0 overflow-y-auto p-4">
-        {task ? (
-          <ArtifactList task={task} />
-        ) : (
-          <p className="text-sm text-muted-foreground">No task yet, so no files.</p>
-        )}
-      </TabsContent>
-      <TabsContent value="changes" className="min-h-0 overflow-y-auto p-4">
-        <ChangesView changes={changes} />
-      </TabsContent>
-    </Tabs>
+        </div>
+      )}
+    </li>
   );
 }
 
-/** One task as a card (Tasks page): heading, the same stage timeline, then artifacts. */
-export function TaskPanel({ task, changes }: { task: Task; changes?: Change[] }) {
+/**
+ * The chat's right panel: every task the chat has worked on, oldest first. The current task is expanded
+ * (stage timeline and files); earlier ones are one line each, finished ones included. Below the tasks, a
+ * collapsed "Changes" section shows the whole working tree.
+ */
+export function ChatTasksPanel({
+  tasks,
+  currentDir,
+  changes,
+}: {
+  tasks: Task[];
+  /** The chat's current task folder (`task_dir`). */
+  currentDir: string | null | undefined;
+  changes: Change[];
+}) {
+  const current = currentDir ? normDir(currentDir) : null;
+  // A task the user opened by hand holds only while the chat's current task stays the same.
+  const [picked, setPicked] = useState<{ dir: string | null; forCurrent: string | null } | null>(
+    null,
+  );
+  const currentTask = tasks.find((t) => normDir(t.dir) === current) ?? tasks[tasks.length - 1];
+  const defaultDir = currentTask ? normDir(currentTask.dir) : null;
+  const expandedDir = picked && picked.forCurrent === defaultDir ? picked.dir : defaultDir;
+
   return (
-    <div className="flex flex-col gap-4">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
-            <span className="flex flex-wrap items-center gap-2">
-              {task.title || task.slug}
-              <Badge variant="secondary">{task.workflow}</Badge>
-            </span>
-            <StageTrail stages={task.stages} />
-          </CardTitle>
-          <p className="font-mono text-xs text-muted-foreground">{task.branch}</p>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <StageTimeline task={task} />
-          <div>
-            <h3 className="mb-1 text-sm font-medium">Artifacts</h3>
-            <ArtifactList task={task} />
-          </div>
-        </CardContent>
-      </Card>
-      {changes && <ChangesCard changes={changes} />}
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto">
+      <div className="flex flex-col gap-3 p-4">
+        <h2 className="text-sm font-semibold">Tasks in this chat</h2>
+        {tasks.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No task yet. Claude starts one when you ask for a change.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {tasks.map((t) => {
+              const dir = normDir(t.dir);
+              return (
+                <ChatTaskRow
+                  key={t.dir}
+                  task={t}
+                  current={dir === defaultDir}
+                  expanded={dir === expandedDir}
+                  onToggle={() =>
+                    setPicked({ dir: dir === expandedDir ? null : dir, forCurrent: defaultDir })
+                  }
+                />
+              );
+            })}
+          </ul>
+        )}
+      </div>
+      <Collapsible className="border-t p-4">
+        <CollapsibleTrigger className="group flex w-full items-center gap-2 text-sm font-semibold">
+          <ChevronRightIcon className="size-4 transition-transform group-data-[state=open]:rotate-90" />
+          Changes · {changes.length} {changes.length === 1 ? 'file' : 'files'}
+        </CollapsibleTrigger>
+        <CollapsibleContent className="pt-3">
+          <ChangesView changes={changes} />
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }

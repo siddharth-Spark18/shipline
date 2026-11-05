@@ -169,6 +169,10 @@ export function readYamlFile(file) {
 export function loadConfig(root) {
   const cfg = { ...DEFAULT_CONFIG, ...(readYamlFile(path.join(root, '.shipline', 'config.yml')) || {}) };
   // skills: names of the repo's own .claude/skills/<name>; anything that is not a list of names is ignored.
+  // tracker: 'jira' (the default) or 'github'; any other value is kept as written (the ticket stage is then skipped).
+  if (cfg.tracker === null || cfg.tracker === undefined || cfg.tracker === '') cfg.tracker = 'jira';
+  // setup: 'done' once /shipline-setup has run; absent otherwise.
+  if (cfg.setup === null) cfg.setup = undefined;
   cfg.skills = Array.isArray(cfg.skills) ? cfg.skills.filter((n) => typeof n === 'string' && n) : [];
   // ci: unknown or malformed values fall back to the defaults.
   const ci = cfg.ci && typeof cfg.ci === 'object' && !Array.isArray(cfg.ci) ? cfg.ci : {};
@@ -202,6 +206,18 @@ export function listWorkflows(root) {
       }
     })
     .filter(Boolean);
+}
+
+// True when two stage ids name the same stage: equal, or the old `jira` id and the new `ticket` id (0.10.0 renamed
+// the stage; open tasks and hand-edited workflows keep the old id, so every manifest/workflow comparison uses this).
+export function sameStage(a, b) {
+  return a === b || (a === 'jira' && b === 'ticket') || (a === 'ticket' && b === 'jira');
+}
+
+// The entry of `stages` for stage id `id`: an exact match first, then the jira/ticket alias (so a file that has
+// both ids never mixes them up).
+export function findStage(stages, id) {
+  return stages.find((s) => s && s.id === id) || stages.find((s) => s && sameStage(s.id, id)) || null;
 }
 
 export function stageEnforcement(stage) {
@@ -515,6 +531,6 @@ export function failOpen(err) {
 }
 
 export function describeStage(stage, manifest) {
-  const st = manifest ? manifest.stages.find((s) => s.id === stage.id) : null;
+  const st = manifest ? findStage(manifest.stages, stage.id) : null;
   return `${stage.id}${st ? ` (${st.status})` : ''}`;
 }

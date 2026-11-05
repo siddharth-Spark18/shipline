@@ -42,6 +42,12 @@ or skip). `--yes` installs everything and keeps your own agent files on a clash.
 without `--yes` it refuses. If any other file name collides, it aborts with nothing written. Running it again
 reports "already initialized".
 
+`init` also detects your test, lint and build commands from the repo root (Node with npm, pnpm, yarn or bun;
+Python with pytest and ruff or flake8; Go; Rust; Make targets) and asks you to confirm them, and asks which
+tracker you use (GitHub Issues or Jira). Every stage ships with default rules; run `/shipline-setup` in Claude
+Code (or **Setup → Set up with Claude** in the UI) to tailor them to the repo. Until you do, Shipline reminds
+you once per developer.
+
 **What gets added to the repo (commit all of it):**
 
 - `.shipline/`: `config.yml`, `workflows/*.yml`, `rules/<stage>.md`, `bin/*.mjs` (the hook and stage scripts,
@@ -67,10 +73,10 @@ Open Claude Code in the repo and describe the work. Claude follows the `shipline
 
    | Workflow | Stages |
    | --- | --- |
-   | Feature | Jira ticket (optional), Feasibility, Open questions, Plan, Wireframes (UI work only), Implement, Verify, Commit and PR |
-   | Bugfix | Jira ticket (optional), Reproduce, Root cause, Fix, Verify, Commit and PR |
-   | Hotfix | Jira ticket (optional), Fix, Verify, Commit and PR |
-   | Small change | Jira ticket (optional), Implement, Verify, Commit and PR |
+   | Feature | Ticket (optional), Feasibility, Open questions, Plan, Wireframes (UI work only), Implement, Verify, Commit and PR |
+   | Bugfix | Ticket (optional), Reproduce, Root cause, Fix, Verify, Commit and PR |
+   | Hotfix | Ticket (optional), Fix, Verify, Commit and PR |
+   | Small change | Ticket (optional), Implement, Verify, Commit and PR |
 
 3. **Asks you at the gates.** Stages with `confirm_to_advance: true` need your OK before Claude moves on.
 
@@ -88,10 +94,11 @@ are not a server-side gate.
 
 ```bash
 node .shipline/bin/stage.mjs workflows                 # list workflows
-node .shipline/bin/stage.mjs start --workflow feature --title "Add export" [--ticket PROJ-12]
+node .shipline/bin/stage.mjs start --workflow feature --title "Add export" [--ticket PROJ-12 | --ticket 123]
 node .shipline/bin/stage.mjs status                    # where am I
-node .shipline/bin/stage.mjs advance [--confirmed]     # finish the stage (--confirmed only after you agreed)
-node .shipline/bin/stage.mjs skip --reason "no Jira"   # optional stages
+node .shipline/bin/stage.mjs advance                   # finish the stage (asks you first where the stage needs your OK)
+node .shipline/bin/stage.mjs skip --reason "no ticket" # optional stages
+node .shipline/bin/stage.mjs pr-summary                # the summary to paste into the PR description
 node .shipline/bin/stage.mjs reopen <stage>            # go back
 node .shipline/bin/stage.mjs resume <task folder>      # pick up an unfinished task
 ```
@@ -108,7 +115,9 @@ requests with a foreign `Host` or `Origin` are refused. The UI is optional: the 
 with or without it. It runs your own installed `claude` and never sees your Claude credentials.
 
 - **Chat:** talk to Claude in the repo. Permission and question prompts appear in the page. A chat can always
-  be continued in a terminal with `claude --resume <id>`.
+  be continued in a terminal with `claude --resume <id>`. One chat can work through several tasks: its side
+  panel lists every task it touched (the current one with its stages and files), plus a collapsible list of the
+  working-tree changes. Unfinished tasks no chat is working on appear on the new-chat screen with **Resume**.
 - **Setup:** forms for `config.yml`, each workflow and each rules file. Saving shows a diff first, keeps the
   fields it doesn't know, and lists open tasks that still use an old stage list. Commit the files after saving.
 
@@ -118,8 +127,6 @@ with or without it. It runs your own installed `claude` and never sees your Clau
 
   ![Setup: Agents & skills](docs/images/agents-skills.png)
 
-- **Tasks:** each unfinished task with its stages, its files and the working-tree changes, updated live. A
-  Diagnostics view shows versions and the tail of the UI log.
 
 A repo installed by an older Shipline shows a banner with what its hook scripts lack. A repo set up by a newer
 Shipline is read-only in the UI and shows the `npx @forgeyard/shipline@<version> ui` command to run.
@@ -129,13 +136,14 @@ Shipline is read-only in the UI and shows the `npx @forgeyard/shipline@<version>
 **`.shipline/config.yml`**
 
 ```yaml
-branch_pattern: "{type}/{key}-{slug}"   # {key} = Jira key (dropped with no ticket), {slug} = task name, {type} = workflow id
-tracker: jira                           # Jira is read through the Atlassian MCP when connected
-commands:                               # the Verify stage runs only the commands you set
-  test: ""
-  lint: ""
-  build: ""
+branch_pattern: "{type}/{key}-{slug}"   # {key} = PROJ-12 (Jira) or issue-123 (GitHub), dropped with no ticket
+tracker: jira                           # jira (Atlassian MCP) or github (the gh CLI); read-only either way
+commands:                               # filled by init from the repo; the Verify stage runs only these
+  test: "pnpm test"
+  lint: "pnpm run lint"
+  build: "pnpm run build"
 skills: []                              # your own .claude/skills/<name> that Claude may use at any stage
+setup: done                             # written by /shipline-setup; stops the setup reminder
 ```
 
 **Workflow files** (`.shipline/workflows/<id>.yml`): `id`, `name`, `description` and a list of `stages`. Stage fields:
@@ -151,7 +159,11 @@ skills: []                              # your own .claude/skills/<name> that Cl
 | `enforcement` | `guide`, `warn` or `block` |
 | `blocks` | What is held back until this stage is done: `{ tools: 'Edit\|Write', allow_paths: [globs] }` or `{ bash: 'regex' }` |
 
-**Rules files** (`.shipline/rules/<stage>.md`): plain Markdown that Claude reads before each stage.
+**Rules files** (`.shipline/rules/<stage>.md`): plain Markdown that Claude reads before each stage. They ship
+with default guidance; `upgrade` replaces a rules file only while it is still an untouched shipped version.
+
+With `tracker: github`, a task started from issue #123 gets the branch `feature/issue-123-…`, the ticket stage
+reads the issue with `gh issue view`, and `pr-summary` starts with `Closes #123`.
 
 **`.shipline/bin/VERSION`**: JSON recording the package version, the interface version, a hash of each
 Shipline-owned file (so `upgrade` knows what you edited) and `excluded` (agents you kept as your own).

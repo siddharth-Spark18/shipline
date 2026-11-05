@@ -3,9 +3,9 @@
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { CLI_ROOT, makeRepo, removeDir, runInit, stage, storeOf } from '../helpers.mjs';
+import { CLI_ROOT, makeRepo, removeDir, runInitAll, stage, storeOf } from '../helpers.mjs';
 import { api, openEvents, startUi } from './helpers.mjs';
 import { headerFor } from '../../src/setup-schema.mjs';
 import { INTERFACE } from '../../src/interface.mjs';
@@ -512,7 +512,7 @@ describe('agents and skills (prepublish plan, Setup -> Agents & skills)', () => 
     writeFileSync(path.join(d, AGENT('mine')), '# Our own agent\n');
     mkdirSync(path.join(d, '.claude/skills/deploy'), { recursive: true });
     writeFileSync(path.join(d, '.claude/skills/deploy/SKILL.md'), '# Deploy\n');
-    const r = runInit(d);
+    const r = runInitAll(d);
     assert.equal(r.code, 0, r.stderr);
     const u = await startUi(d);
     extra.push({ dir: d, ui: u });
@@ -1140,5 +1140,256 @@ describe('checks, sections and ci.stale_checks (Teams Phase 2)', () => {
     s = await getSetup(x.ui);
     assert.deepEqual(s.config.model.ci, { missing_block: 'warn', skip_label: 'no-ci', stale_checks: 'fail' });
     assert.match(xread(x, CONFIG), /^ {2}stale_checks: fail$/m);
+  });
+});
+
+// Setup wizard plan, G: Setup -> "Add shipped workflow" on an installed repo. POST /api/setup/add-workflow writes
+// the workflow, the rules its stages need that don't exist yet, and the stage agents not installed yet (taken out
+// of VERSION.excluded, hashes recorded in VERSION.files).
+describe('add a shipped workflow (setup wizard plan, G)', () => {
+  const AGENT = (n) => `.claude/agents/${n}.md`;
+  const RULES = (id) => `.shipline/rules/${id}.md`;
+  const agentTemplate = (n) => readFileSync(path.join(CLI_ROOT, 'templates', 'claude', 'agents', `${n}.md`), 'utf8');
+  const tpl = (rel) => readFileSync(path.join(CLI_ROOT, 'templates', 'shipline', rel), 'utf8');
+  const versionOf = (x) => JSON.parse(readFileSync(path.join(x.dir, '.shipline/bin/VERSION'), 'utf8'));
+  const xread = (x, rel) => readFileSync(path.join(x.dir, rel), 'utf8');
+  const xexists = (x, rel) => existsSync(path.join(x.dir, rel));
+  const addPost = (x, body, { preview = false } = {}) => api(x.ui, 'POST', `/api/setup/add-workflow${preview ? '?preview=1' : ''}`, { body });
+  // The base a save sends: VERSION's hash, plus (with an id) the paths the preview listed, each null = must not exist.
+  const bases = async (x, id, ui) => {
+    const baseVersionHash = (await getSetup(x.ui)).versionHash;
+    if (!id) return { baseVersionHash, baseHashes: {} };
+    const p = await addPost(x, { id, ui }, { preview: true });
+    assert.equal(p.status, 200, p.text);
+    return { baseVersionHash, baseHashes: Object.fromEntries(p.json.paths.map((q) => [q, null])) };
+  };
+
+  // A Bugfix-only install in a repo without a UI (what the wizard's "Bugfix only" gives), plus team files.
+  async function bugfixRepo(files = {}) {
+    const d = makeRepo({ init: false });
+    for (const [rel, text] of Object.entries(files)) {
+      mkdirSync(path.dirname(path.join(d, rel)), { recursive: true });
+      writeFileSync(path.join(d, rel), text);
+    }
+    const r = runInitAll(d, { workflows: ['bugfix'], ui: false, agents: ['builder', 'qa-bug-hunter', 'researcher'] });
+    assert.equal(r.code, 0, r.stderr);
+    const u = await startUi(d);
+    extra.push({ dir: d, ui: u });
+    return { dir: d, ui: u };
+  }
+
+  test('GET /api/setup lists the shipped workflows the repo lacks, and whether a UI is detected', async () => {
+    const x = await bugfixRepo();
+    const s = await getSetup(x.ui);
+    assert.deepEqual(s.addableWorkflows.map((w) => w.id), ['feature', 'hotfix', 'small']);
+    assert.deepEqual(s.addableWorkflows[0], { id: 'feature', name: 'Feature', description: 'new functionality or a change in behavior' });
+    assert.equal(s.uiDetected, false);
+    assert.deepEqual((await getSetup()).addableWorkflows, [], 'a full install has every workflow');
+    const withUi = await bugfixRepo({ 'web/index.html': '<p>\n' });
+    assert.equal((await getSetup(withUi.ui)).uiDetected, true);
+  });
+
+  test('preview (?preview=1 or body.preview): the workflow, the missing rules and agents, VERSION after; nothing written', async () => {
+    const x = await bugfixRepo();
+    const before = snapshot(x.dir);
+    const agentsBefore = readdirSync(path.join(x.dir, '.claude/agents')).sort();
+    for (const viaBody of [false, true]) {
+      const p = viaBody
+        ? await addPost(x, { id: 'feature', ui: true, preview: true, ...(await bases(x)) })
+        : await addPost(x, { id: 'feature', ui: true }, { preview: true });
+      assert.equal(p.status, 200, p.text);
+      const files = p.json.files.map((f) => `${f.kind}:${f.id}`);
+      assert.deepEqual(p.json.paths.length, p.json.files.length, 'paths lists every file the preview shows');
+      assert.ok(p.json.paths.includes('.shipline/workflows/feature.yml'));
+      assert.deepEqual(files.sort(), [
+        'agent:planner',
+        'agent:wireframe-proposer',
+        'rules:feasibility',
+        'rules:implement',
+        'rules:plan',
+        'rules:questions',
+        'rules:wireframes',
+        'workflow:feature',
+      ]);
+      const wf = p.json.files.find((f) => f.kind === 'workflow');
+      assert.equal(wf.text, tpl('workflows/feature.yml'), 'every stage agent is present once added');
+      assert.ok(wf.diff.flatMap((h) => h.lines).every((l) => l.type !== 'del'));
+      assert.deepEqual(wf.errors, []);
+      const v = p.json.version;
+      assert.deepEqual(v.before.excluded, ['planner', 'reviewer', 'wireframe-proposer'].map(AGENT));
+      assert.deepEqual(v.after.excluded, [AGENT('reviewer')]);
+      assert.equal(v.after.files[AGENT('planner')], sha256(agentTemplate('planner')));
+      assert.equal(v.after.files[AGENT('wireframe-proposer')], sha256(agentTemplate('wireframe-proposer')));
+    }
+    assert.deepEqual(snapshot(x.dir), before);
+    assert.deepEqual(readdirSync(path.join(x.dir, '.claude/agents')).sort(), agentsBefore);
+  });
+
+  test('save with ui: true writes the workflow, the missing rules and agents, and VERSION (last); existing rules are kept', async () => {
+    const x = await bugfixRepo();
+    const verify = xread(x, RULES('verify')) + '\nOur own note.\n';
+    writeFileSync(path.join(x.dir, RULES('verify')), verify);
+    const r = await addPost(x, { id: 'feature', ui: true, ...(await bases(x, 'feature', true)) });
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.json.written.map((w) => `${w.kind}:${w.id}:${w.action}`).sort(), [
+      'agent:planner:write',
+      'agent:wireframe-proposer:write',
+      'rules:feasibility:write',
+      'rules:implement:write',
+      'rules:plan:write',
+      'rules:questions:write',
+      'rules:wireframes:write',
+      'workflow:feature:write',
+    ]);
+    assert.equal(xread(x, '.shipline/workflows/feature.yml'), tpl('workflows/feature.yml'));
+    assert.equal(xread(x, RULES('plan')), tpl('rules/plan.md'));
+    assert.equal(xread(x, RULES('verify')), verify, 'a rules file the repo has is not touched');
+    assert.equal(xread(x, AGENT('planner')), agentTemplate('planner'));
+    const v = versionOf(x);
+    assert.deepEqual(v.excluded, [AGENT('reviewer')]);
+    assert.equal(v.files[AGENT('wireframe-proposer')], sha256(agentTemplate('wireframe-proposer')));
+    assert.deepEqual(Object.keys(v.files), [...Object.keys(v.files)].sort());
+    const s = await getSetup(x.ui);
+    assert.ok(wfEntry(s, 'feature'), 'the new workflow is served');
+    assert.deepEqual(s.addableWorkflows.map((w) => w.id), ['hotfix', 'small']);
+    // A task can start on it at once.
+    const st = stage(x.dir, ['start', '--workflow', 'feature', '--title', 'Add export'], 'aw1');
+    assert.equal(st.code, 0, st.stderr);
+    // Adding it again: 409 exists.
+    const again = await addPost(x, { id: 'feature', ui: true, ...(await bases(x)) });
+    assert.equal(again.status, 409, again.text);
+    assert.equal(again.json.error.code, 'exists');
+  });
+
+  test('ui: false leaves out the UI-only stage, its rules and its agent (which stays excluded)', async () => {
+    const x = await bugfixRepo();
+    const r = await addPost(x, { id: 'feature', ui: false, ...(await bases(x, 'feature', false)) });
+    assert.equal(r.status, 200, r.text);
+    const wf = parseYaml(xread(x, '.shipline/workflows/feature.yml'));
+    assert.deepEqual(wf.stages.map((s) => s.id), ['ticket', 'feasibility', 'questions', 'plan', 'implement', 'verify', 'pr']);
+    assert.ok(xread(x, '.shipline/workflows/feature.yml').startsWith('# Feature workflow. Stage fields:'), 'header comments kept');
+    assert.ok(!xexists(x, RULES('wireframes')));
+    assert.ok(!xexists(x, AGENT('wireframe-proposer')));
+    assert.deepEqual(versionOf(x).excluded, ['reviewer', 'wireframe-proposer'].map(AGENT));
+  });
+
+  test('a workflow whose agents are all there writes only the workflow and its missing rules; VERSION is untouched', async () => {
+    const x = await bugfixRepo();
+    const version = xread(x, '.shipline/bin/VERSION');
+    const r = await addPost(x, { id: 'hotfix', ui: false, ...(await bases(x, 'hotfix', false)) });
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.json.written.filter((w) => w.kind === 'agent'), []);
+    assert.equal(xread(x, '.shipline/workflows/hotfix.yml'), tpl('workflows/hotfix.yml'));
+    assert.equal(xread(x, '.shipline/bin/VERSION'), version);
+  });
+
+  test('the team\'s own agent of the same name is used as it is: not replaced, still excluded', async () => {
+    const x = await bugfixRepo({ [AGENT('planner')]: '# Our planner\n' });
+    assert.deepEqual(versionOf(x).excluded, ['planner', 'reviewer', 'wireframe-proposer'].map(AGENT));
+    const r = await addPost(x, { id: 'feature', ui: false, ...(await bases(x, 'feature', false)) });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(xread(x, AGENT('planner')), '# Our planner\n');
+    assert.ok(versionOf(x).excluded.includes(AGENT('planner')));
+    assert.equal(parseYaml(xread(x, '.shipline/workflows/feature.yml')).stages.find((s) => s.id === 'plan').agent, 'planner');
+  });
+
+  test('a stale base (VERSION changed since it was loaded): 409 changed, nothing written', async () => {
+    const x = await bugfixRepo();
+    const b = await bases(x, 'feature', true);
+    const before = snapshot(x.dir);
+    const r = await addPost(x, { id: 'feature', ui: true, ...b, baseVersionHash: sha256('something else') });
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.json.error.code, 'changed');
+    assert.deepEqual(r.json.error.details.paths, ['.shipline/bin/VERSION']);
+    assert.deepEqual(snapshot(x.dir), before);
+    assert.ok(!xexists(x, AGENT('planner')));
+  });
+
+  test('a rules file that appeared after the preview: 409 changed naming it, nothing written; previewing again leaves it out', async () => {
+    const x = await bugfixRepo();
+    const b = await bases(x, 'feature', true);
+    writeFileSync(path.join(x.dir, RULES('plan')), '# Our plan rules\n');
+    const before = snapshot(x.dir);
+    const r = await addPost(x, { id: 'feature', ui: true, ...b });
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.json.error.code, 'changed');
+    assert.deepEqual(r.json.error.details.paths, [RULES('plan')]);
+    assert.deepEqual(snapshot(x.dir), before);
+    assert.ok(!xexists(x, '.shipline/workflows/feature.yml'));
+    // A fresh preview no longer lists it, and the save then keeps the team's file.
+    const r2 = await addPost(x, { id: 'feature', ui: true, ...(await bases(x, 'feature', true)) });
+    assert.equal(r2.status, 200, r2.text);
+    assert.ok(!r2.json.written.some((w) => w.id === 'plan'));
+    assert.equal(xread(x, RULES('plan')), '# Our plan rules\n');
+  });
+
+  test('a save whose paths differ from the plan (none sent, or one the plan no longer has): 409 changed, nothing written', async () => {
+    const x = await bugfixRepo();
+    const before = snapshot(x.dir);
+    const none = await addPost(x, { id: 'feature', ui: true, ...(await bases(x)) });
+    assert.equal(none.status, 409, none.text);
+    assert.equal(none.json.error.code, 'changed');
+    assert.ok(none.json.error.details.paths.includes('.shipline/workflows/feature.yml'));
+    const b = await bases(x, 'feature', true);
+    const extraPath = await addPost(x, { id: 'feature', ui: false, ...b }); // previewed with ui: true
+    assert.equal(extraPath.status, 409, extraPath.text);
+    assert.ok(extraPath.json.error.details.paths.includes(RULES('wireframes')));
+    const notNull = await addPost(x, { id: 'feature', ui: true, ...b, baseHashes: { ...b.baseHashes, [RULES('plan')]: 'abc' } });
+    assert.equal(notNull.status, 400, notNull.text);
+    assert.deepEqual(snapshot(x.dir), before);
+  });
+
+  test('a write failing part-way rolls back the files already written; VERSION untouched', {
+    skip: (process.platform === 'win32' && 'needs a read-only folder (POSIX permissions)') || (process.getuid && process.getuid() === 0 && 'root ignores folder permissions'),
+  }, async () => {
+    const x = await bugfixRepo();
+    const b = await bases(x, 'feature', true);
+    const before = snapshot(x.dir);
+    const version = xread(x, '.shipline/bin/VERSION');
+    const agents = path.join(x.dir, '.claude/agents');
+    chmodSync(agents, 0o555); // the workflow and rules are written first, then an agent write fails
+    try {
+      const r = await addPost(x, { id: 'feature', ui: true, ...b });
+      assert.equal(r.status, 500, r.text);
+      assert.equal(r.json.error.code, 'write-failed');
+    } finally {
+      chmodSync(agents, 0o755);
+    }
+    assert.deepEqual(snapshot(x.dir), before);
+    assert.ok(!xexists(x, '.shipline/workflows/feature.yml'));
+    assert.ok(!xexists(x, RULES('plan')));
+    assert.equal(xread(x, '.shipline/bin/VERSION'), version);
+  });
+
+  test('bad requests: an unknown or missing id, ui not a boolean, a missing base; nothing written', async () => {
+    const x = await bugfixRepo();
+    const b = await bases(x);
+    const before = snapshot(x.dir);
+    for (const [body, status, code] of [
+      [{ id: 'nope', ui: true, ...b }, 400, 'bad-target'],
+      [{ id: '../bugfix', ui: true, ...b }, 400, 'bad-target'],
+      [{ ui: true, ...b }, 400, 'bad-target'],
+      [{ id: 'feature', ...b }, 400, 'bad-request'],
+      [{ id: 'feature', ui: 'yes', ...b }, 400, 'bad-request'],
+      [{ id: 'feature', ui: true, baseHashes: {} }, 400, 'bad-request'],
+      [{ id: 'feature', ui: true, baseVersionHash: b.baseVersionHash }, 400, 'bad-request'],
+      [{ id: 'bugfix', ui: true, ...b }, 409, 'exists'],
+    ]) {
+      const r = await addPost(x, body);
+      assert.equal(r.status, status, `${JSON.stringify(body)}: ${r.text}`);
+      assert.equal(r.json.error.code, code, JSON.stringify(body));
+    }
+    assert.deepEqual(snapshot(x.dir), before);
+  });
+
+  test('a "repo newer" VERSION refuses it with 423', async () => {
+    const x = await bugfixRepo();
+    writeFileSync(path.join(x.dir, '.shipline/bin/VERSION'), '{"package":"9.9.9","interface":99}\n');
+    await x.ui.close();
+    const u = await startUi(x.dir);
+    extra.push({ dir: null, ui: u });
+    const r = await api(u, 'POST', '/api/setup/add-workflow', { body: { id: 'feature', ui: true, baseVersionHash: 'x', baseHashes: {} } });
+    assert.equal(r.status, 423, r.text);
+    assert.ok(!existsSync(path.join(x.dir, '.shipline/workflows/feature.yml')));
   });
 });

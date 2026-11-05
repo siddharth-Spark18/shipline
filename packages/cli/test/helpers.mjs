@@ -101,9 +101,19 @@ export function runInit(dir, ...flags) {
   return run(process.execPath, [BIN, 'init', dir, ...(yes ? ['--yes'] : []), ...flags], { cwd: dir });
 }
 
-// A temporary git repo with one commit, then `shipline init` run through the real bin.
+// `shipline init` with everything chosen (every workflow with its UI stages, every agent, the standalone
+// `reviewer` too): test/fixtures/init-all.mjs, which runs init's own code with the questions answered.
+// Since 0.12.0 `init --yes` installs only what the chosen workflows use, so this is the full install.
+// With a selection, init gets those answers instead (it fills what they leave out).
+export function runInitAll(dir, selection = null) {
+  const args = [path.join(FIXTURES, 'init-all.mjs'), dir, ...(selection ? [JSON.stringify(selection)] : [])];
+  return run(process.execPath, args, { cwd: dir });
+}
+
+// A temporary git repo with one commit, then `shipline init` with everything chosen (runInitAll), or with
+// opts.yes the real bin's `init --yes` (trimmed to what the workflows use, and to no UI stages here).
 // opts.commitInit: also commit the files init wrote, so `git status` starts clean.
-export function makeRepo({ init = true, commitInit = false } = {}) {
+export function makeRepo({ init = true, commitInit = false, yes = false } = {}) {
   const dir = tmpDir();
   git(dir, 'init', '-q');
   git(dir, 'checkout', '-q', '-b', 'main');
@@ -116,7 +126,7 @@ export function makeRepo({ init = true, commitInit = false } = {}) {
   git(dir, 'add', '-A');
   git(dir, 'commit', '-q', '-m', 'initial');
   if (init) {
-    const r = runInit(dir);
+    const r = yes ? runInit(dir) : runInitAll(dir);
     if (r.code !== 0) throw new Error(`init failed: ${r.stderr}`);
     if (commitInit) {
       git(dir, 'add', '-A');

@@ -8,11 +8,12 @@ import { createAuth } from './auth.mjs';
 import { createChats } from './chat.mjs';
 import { routes as chatRoutes } from './chat-routes.mjs';
 import { routes as diagnosticsRoutes } from './diagnostics.mjs';
+import { installedRoutes, notInstalled, routes as installRoutes } from './install-routes.mjs';
 import { HttpError, parseJsonBody, readBody, sendError, sendJson } from './http.mjs';
 import { initLog, log } from './log.mjs';
 import { openBrowser } from './open-browser.mjs';
 import { createPrompts } from './prompts.mjs';
-import { resolveRepo } from './repo.mjs';
+import { gitRootOf, installRootFor, resolveRepo } from './repo.mjs';
 import { stopEverything as stopAllShells } from './shell.mjs';
 import { routes as setupRoutes } from './setup.mjs';
 import { createHub } from './sse.mjs';
@@ -118,27 +119,57 @@ function sendStatic(req, res, pathname) {
   res.end(req.method === 'HEAD' ? undefined : body);
 }
 
-export async function startServer({ dir, port = 0, open = true } = {}) {
-  let repo;
-  try {
-    repo = await resolveRepo(dir);
-  } catch (e) {
-    if (e.code === 'NO_REPO')
-      fail('No Shipline setup found here. Run `npx @forgeyard/shipline init` first.');
-    fail(`Could not load the repo's .shipline/bin/lib.mjs: ${e.message}`);
-  }
-  try {
-    storeDir(repo.root);
-  } catch (e) {
-    fail(e.message);
-  }
+// Builds everything a repo needs (repo, log, store, prompts, chats, watch) on `app` and returns its route table.
+// Used when the server starts on an installed repo, and again when the install wizard finishes. `repo` is an
+// already resolved repo (startServer resolves it first to detect install mode).
+export async function startRepoMode(app, root, repo = null) {
+  repo = repo || (await resolveRepo(root));
+  storeDir(repo.root);
   initLog(repo.root);
   log('start', { root: repo.root, uiVersion: UI_VERSION, node: process.version });
   log('version', { repo: repo.version, ui: INTERFACE, state: repo.state });
 
+  app.repo = repo;
+  if (repo.state === 'repo-older') {
+    app.addBanner({ id: 'version', kind: 'version', text: UPGRADE_TEXT });
+  } else if (repo.state === 'repo-newer') {
+    const v = repo.version.package || 'latest';
+    app.addBanner({
+      id: 'version',
+      kind: 'version',
+      text: `This repo was set up with Shipline ${v}. Run \`npx @forgeyard/shipline@${v} ui\`.`,
+    });
+  }
+  app.prompts = createPrompts(app);
+  app.chats = createChats(app);
+  app.watch = await startTaskWatch(app);
+  app.table = [
+    ...diagnosticsRoutes(app),
+    ...app.prompts.routes(),
+    ...chatRoutes(app),
+    ...setupRoutes(app),
+    ...taskRoutes(app),
+    ...installedRoutes(),
+    { method: 'GET', path: '/api/events', handler: ({ req, res }) => app.hub.connect(req, res) },
+  ];
+  app.mode = 'repo'; // last: until now the install routes answer
+  return app.table;
+}
+
+export async function startServer({ dir, port = 0, open = true } = {}) {
+  let repo = null;
+  try {
+    repo = await resolveRepo(dir);
+  } catch (e) {
+    // No Shipline setup here: serve the install wizard, which writes nothing until Install.
+    if (e.code !== 'NO_REPO') fail(`Could not load the repo's .shipline/bin/lib.mjs: ${e.message}`);
+  }
   const hub = createHub();
   const banners = new Map();
+  let switching = null;
   const app = {
+    mode: repo ? 'repo' : 'install',
+    install: repo ? null : { root: installRootFor(dir), isGit: gitRootOf(dir) !== null },
     repo,
     hub,
     uiVersion: UI_VERSION,
@@ -147,40 +178,26 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
     watch: null,
     prompts: null,
     chats: null,
+    table: [],
     addBanner(banner) {
       banners.set(banner.id, banner);
       hub.send('banner', banner);
+    },
+    // After a successful install: the same server, port and auth, now with the repo's full routes. Requests
+    // that arrive meanwhile share the one switch; a failed switch can be tried again.
+    async switchToRepo() {
+      if (app.mode === 'repo') return;
+      switching ||= startRepoMode(app, app.install.root).catch((e) => {
+        switching = null;
+        throw e;
+      });
+      await switching;
     },
   };
   hub.onConnect((reply) => {
     for (const b of banners.values()) reply('banner', b);
   });
-  if (repo.state === 'repo-older') {
-    banners.set('version', {
-      id: 'version',
-      kind: 'version',
-      text: UPGRADE_TEXT,
-    });
-  } else if (repo.state === 'repo-newer') {
-    const v = repo.version.package || 'latest';
-    banners.set('version', {
-      id: 'version',
-      kind: 'version',
-      text: `This repo was set up with Shipline ${v}. Run \`npx @forgeyard/shipline@${v} ui\`.`,
-    });
-  }
-
-  app.prompts = createPrompts(app);
-  app.chats = createChats(app);
-
-  const table = [
-    ...diagnosticsRoutes(app),
-    ...app.prompts.routes(),
-    ...chatRoutes(app),
-    ...setupRoutes(app),
-    ...taskRoutes(app),
-    { method: 'GET', path: '/api/events', handler: ({ req, res }) => hub.connect(req, res) },
-  ];
+  if (!repo) app.table = installRoutes(app);
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -198,14 +215,23 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
       app.auth.check(req, { method: req.method, pathname, isStatic });
 
       if (isStatic) return sendStatic(req, res, pathname);
+      // Installed meanwhile (a terminal `init`, or another tab's Install): serve the repo from now on, so the
+      // wizard's reload opens the normal UI.
+      if (
+        isApi &&
+        app.mode === 'install' &&
+        existsSync(path.join(app.install.root, '.shipline', 'config.yml'))
+      )
+        await app.switchToRepo();
       // Routes may have :params (for example /api/chats/:id); an exact path matches first.
       const matches = [];
-      for (const r of table) {
+      for (const r of app.table) {
         const params = matchPath(r.path, pathname);
         if (params) matches.push({ ...r, params });
       }
       const route = matches.find((r) => r.method === req.method);
       if (!route) {
+        if (isApi && app.mode === 'install') notInstalled();
         if (isApi && matches.length)
           throw new HttpError(405, 'method-not-allowed', 'Method not allowed');
         throw new HttpError(404, 'not-found', 'Not found');
@@ -238,10 +264,16 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
   app.port = server.address().port;
   app.auth = createAuth(app.port);
 
-  // Started modules, closed in reverse order.
+  // Started modules, closed in reverse order. watch, chats and shell exist only once a repo is served.
   const closers = [{ name: 'hub', close: () => hub.close() }];
-  app.watch = await startTaskWatch(app);
-  closers.push({ name: 'watch', close: () => app.watch.close() });
+  if (repo) {
+    try {
+      await startRepoMode(app, repo.root, repo);
+    } catch (e) {
+      fail(e.message);
+    }
+  }
+  closers.push({ name: 'watch', close: () => app.watch && app.watch.close() });
   closers.push({
     name: 'http',
     close: () =>
@@ -252,7 +284,7 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
   });
 
   // After http, so shutdown stops the claude process group and releases the lock before the server closes.
-  closers.push({ name: 'chats', close: () => app.chats.close() });
+  closers.push({ name: 'chats', close: () => app.chats && app.chats.close() });
   closers.push({ name: 'shell', close: () => stopAllShells() });
 
   let shuttingDown = false;
@@ -292,7 +324,10 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
 
   // The URL carries the token on purpose: it is printed and opened, and never logged.
   const url = `http://127.0.0.1:${app.port}/?t=${app.auth.token}`;
-  console.log(`Shipline UI for ${repo.root}`);
+  if (!repo) {
+    console.log(`Shipline setup for ${app.install.root}`);
+    console.log('Nothing is written until you press Install in the browser.');
+  } else console.log(`Shipline UI for ${repo.root}`);
   console.log(url);
   console.log('Press Ctrl+C to stop.');
   if (open) openBrowser(url);

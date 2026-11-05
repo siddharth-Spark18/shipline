@@ -3,17 +3,33 @@
 
 const NONE = '__none__'; // a select value cannot reliably be null
 
-// info: { workflows, agents, repoAgents, repoSkills, detected, trackerDefault, missingStageAgents(selection) } (see init.mjs).
-// Returns { workflows, agents, clashes, stageAgents, skills, commands, tracker, ci }.
-export async function askSelection(info) {
-  let prompts;
+async function loadPrompts() {
   try {
-    prompts = await import('@inquirer/prompts');
+    return await import('@inquirer/prompts');
   } catch (e) {
     // @inquirer/prompts 8 needs Node 20.17+; init and the hooks otherwise run on Node 18.
     throw new Error(`the interactive questions could not be loaded (${e.message}). They need Node 20.17 or newer; on older Node, run \`init --yes\`.`);
   }
-  const { checkbox, confirm, input, select } = prompts;
+}
+
+// The first question (Node 20+ only; init skips it otherwise): 'terminal' or 'browser'.
+export async function askWhere() {
+  const { select } = await loadPrompts();
+  return select({
+    message: 'Set up here in the terminal, or in the browser?',
+    choices: [
+      { name: 'In the terminal', value: 'terminal' },
+      { name: 'In the browser (opens the Shipline UI)', value: 'browser' },
+    ],
+    default: 'terminal',
+  });
+}
+
+// info: { workflows, agents, repoAgents, repoSkills, detected, trackerDefault, uiDetected, agentUse,
+//   missingStageAgents(selection), defaultAgents(workflowIds, ui) } (see init.mjs).
+// Returns { workflows, ui, agents, clashes, stageAgents, skills, commands, tracker, ci }.
+export async function askSelection(info) {
+  const { checkbox, confirm, input, select } = await loadPrompts();
 
   // 1. Workflows (at least one).
   const workflows = await checkbox({
@@ -26,15 +42,28 @@ export async function askSelection(info) {
     validate: (chosen) => chosen.length > 0 || 'Choose at least one workflow.',
   });
 
-  // 2. Shipline's agents (none is fine).
-  const agents = await checkbox({
-    message: "Which of Shipline's agents should be installed?",
-    choices: info.agents.map((a) => ({
-      name: info.repoAgents.includes(a) ? `${a} (you already have an agent with this name)` : a,
-      value: a,
-      checked: true,
-    })),
+  // 1b. Whether the repo has a UI (decides if the UI-only stages, such as wireframes, are written).
+  const ui = await confirm({
+    message: `Does this repo have a UI? (detected: ${info.uiDetected ? 'yes' : 'no'})`,
+    default: info.uiDetected,
   });
+
+  // 2. Shipline's agents (none is fine). The agents the chosen workflows' stages use are ticked; standalone
+  // agents (no stage names them) come in a section of their own, unticked.
+  const used = info.defaultAgents(workflows, ui);
+  const standalone = info.agents.filter((a) => (info.agentUse[a] || []).length === 0);
+  const label = (a) => (info.repoAgents.includes(a) ? `${a} (you already have an agent with this name)` : a);
+  const stageChosen = await checkbox({
+    message: "Which of Shipline's agents should be installed? (ticked: used by the workflows you chose)",
+    choices: info.agents.filter((a) => !standalone.includes(a)).map((a) => ({ name: label(a), value: a, checked: used.includes(a) })),
+  });
+  const standaloneChosen = standalone.length
+    ? await checkbox({
+        message: 'Optional agents that no stage uses (off by default):',
+        choices: standalone.map((a) => ({ name: label(a), value: a, checked: false })),
+      })
+    : [];
+  const agents = info.agents.filter((a) => stageChosen.includes(a) || standaloneChosen.includes(a));
 
   // 3. One question per name clash.
   const clashes = {};
@@ -54,7 +83,7 @@ export async function askSelection(info) {
   const stageAgents = {};
   const present = agents.filter((a) => clashes[a] !== 'skip');
   const repoOwn = info.repoAgents.filter((a) => !present.includes(a));
-  for (const m of info.missingStageAgents({ workflows, agents, clashes })) {
+  for (const m of info.missingStageAgents({ workflows, agents, clashes, ui })) {
     const picked = await select({
       message: `Stage "${m.stage}" of the ${m.workflow} workflow suggests the "${m.agent}" agent, which is not installed. Use which agent instead?`,
       choices: [
@@ -107,5 +136,5 @@ export async function askSelection(info) {
   // 8. The optional pull-request check (default No).
   const ci = await confirm({ message: 'Add a Shipline CI check for pull requests?', default: false });
 
-  return { workflows, agents, clashes, stageAgents, skills, commands, tracker, ci };
+  return { workflows, ui, agents, clashes, stageAgents, skills, commands, tracker, ci };
 }

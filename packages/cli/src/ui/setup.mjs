@@ -22,7 +22,8 @@ import {
   validateConfig,
   validateWorkflow,
 } from '../setup-schema.mjs';
-import { shippedAgents } from '../init.mjs';
+import { planWorkflowAdd, shippedAgents, shippedWorkflows } from '../install.mjs';
+import { detectUi } from '../detect-ui.mjs';
 import { CI_WORKFLOW, CI_WORKFLOW_TEMPLATE, TEMPLATES, VERSION_FILE } from '../hashes.mjs';
 import { detectEol, toEol } from '../store.mjs';
 import { HttpError } from './http.mjs';
@@ -870,6 +871,135 @@ async function ciApply(app, body) {
   return { written };
 }
 
+// ---------- add a shipped workflow ----------
+
+// Works out what adding a shipped workflow writes, without writing. Throws 400/409 for a bad request.
+// Returns { writes: [{ to, data, agent? }], version, files, excluded }, where files and excluded are VERSION's
+// `files` and `excluded` after the agents it installs are recorded.
+function planAddWorkflow(app, body) {
+  const { root } = app.repo;
+  if (!isObj(body)) throw badRequest('Expected { id, ui, baseVersionHash, baseHashes, preview? }');
+  if (typeof body.id !== 'string' || !shippedWorkflows().some((w) => w.id === body.id))
+    throw new HttpError(400, 'bad-target', `"${body.id}" is not one of Shipline's workflows`);
+  if (typeof body.ui !== 'boolean') throw badRequest('ui must be true or false');
+  if (existsSync(path.join(root, '.shipline', 'workflows', `${body.id}.yml`)))
+    throw new HttpError(409, 'exists', `The ${body.id} workflow is already installed`);
+  const version = readVersionFile(root);
+  if (!version.data)
+    throw badRequest(
+      '.shipline/bin/VERSION is missing or unreadable; run `npx @forgeyard/shipline upgrade`',
+    );
+  const plan = planWorkflowAdd(root, body.id, body.ui);
+  const files = isObj(version.data.files) ? { ...version.data.files } : {};
+  const excluded = new Set(excludedOf(version.data));
+  for (const w of plan.writes) {
+    if (!w.agent) continue;
+    excluded.delete(w.to);
+    files[w.to] = sha256(w.data);
+  }
+  return { writes: plan.writes, version, files, excluded: [...excluded].sort() };
+}
+
+async function addWorkflowPreview(app, body) {
+  const plan = planAddWorkflow(app, body);
+  const files = [];
+  for (const w of plan.writes) {
+    const text = w.data.toString('utf8');
+    const kind = w.agent ? 'agent' : w.to.startsWith('.shipline/workflows/') ? 'workflow' : 'rules';
+    const id = path.basename(w.to).replace(/\.(yml|md)$/, '');
+    files.push({
+      kind,
+      id,
+      text,
+      diff: await textDiff(app.repo.root, '', text),
+      removedComments: [],
+      errors: [],
+    });
+  }
+  return {
+    files,
+    // The exact paths this preview would write. The dialog sends them back as baseHashes (null = must not
+    // exist yet), so the save can refuse when the plan changed in between.
+    paths: plan.writes.map((w) => w.to),
+    version: {
+      before: plan.version.data,
+      after: { ...plan.version.data, files: plan.files, excluded: plan.excluded },
+    },
+  };
+}
+
+async function addWorkflowApply(app, body) {
+  const { root } = app.repo;
+  const plan = planAddWorkflow(app, body);
+  if (typeof body.baseVersionHash !== 'string') throw badRequest('baseVersionHash is required');
+  if (!isObj(body.baseHashes)) throw badRequest('baseHashes is required');
+
+  // Everything written is new. The version file must be unchanged, and the set of paths must be exactly the
+  // previewed one (baseHashes: { path: null }): a file that appeared since the preview would otherwise be
+  // silently left out, and one that disappeared would be written without having been shown.
+  const changed = [];
+  if (plan.version.hash !== body.baseVersionHash) changed.push(VERSION_FILE);
+  const previewed = Object.keys(body.baseHashes);
+  const planned = plan.writes.map((w) => w.to);
+  for (const p of previewed) {
+    if (body.baseHashes[p] !== null) throw badRequest(`baseHashes["${p}"] must be null`);
+    if (!planned.includes(p) || fileHash(path.join(root, p)) !== null) changed.push(p);
+  }
+  for (const p of planned) if (!previewed.includes(p)) changed.push(p);
+  if (changed.length)
+    throw new HttpError(409, 'changed', 'The repo changed since the preview. Preview again.', {
+      paths: [...new Set(changed)],
+    });
+
+  // All or nothing: a failed write removes the files this call already created; VERSION is written last.
+  const created = [];
+  const written = [];
+  try {
+    for (const w of plan.writes) {
+      const abs = path.join(root, w.to);
+      writeNew(abs, w.data);
+      created.push(abs);
+      const kind = w.agent
+        ? 'agent'
+        : w.to.startsWith('.shipline/workflows/')
+          ? 'workflow'
+          : 'rules';
+      const id = path.basename(w.to).replace(/\.(yml|md)$/, '');
+      written.push({ kind, id, action: 'write', file: w.to, hash: sha256(w.data) });
+    }
+    if (plan.writes.some((w) => w.agent)) {
+      const sorted = Object.fromEntries(
+        Object.keys(plan.files)
+          .sort()
+          .map((k) => [k, plan.files[k]]),
+      );
+      writeAtomic(
+        path.join(root, VERSION_FILE),
+        JSON.stringify({ ...plan.version.data, files: sorted, excluded: plan.excluded }, null, 2) +
+          '\n',
+      ); // last
+    }
+  } catch (e) {
+    for (const abs of created.reverse()) {
+      try {
+        unlinkSync(abs);
+      } catch {
+        // Best effort: report the original error.
+      }
+    }
+    log('add-workflow-failed', { workflow: body.id, message: e && e.message });
+    if (e instanceof HttpError) throw e;
+    throw new HttpError(
+      500,
+      'write-failed',
+      `Adding the workflow failed and was rolled back: ${e.message}`,
+    );
+  }
+  for (const w of written)
+    log('add-workflow', { workflow: body.id, file: w.file, hashAfter: w.hash });
+  return { written: written.map(({ kind, id, action }) => ({ kind, id, action })) };
+}
+
 // ---------- GET /api/setup ----------
 
 function setup(app) {
@@ -891,6 +1021,10 @@ function setup(app) {
     },
     versionHash: version.hash,
     ci: ciSetup(app),
+    addableWorkflows: shippedWorkflows()
+      .filter((w) => !existsSync(path.join(root, '.shipline', 'workflows', `${w.id}.yml`)))
+      .map((w) => ({ id: w.id, name: w.name, description: w.description })),
+    uiDetected: detectUi(root).ui,
   };
 }
 
@@ -908,6 +1042,16 @@ export function routes(app) {
         return url.searchParams.get('preview') === '1'
           ? agentsPreview(app, body)
           : agentsApply(app, body);
+      },
+    },
+    {
+      method: 'POST',
+      path: '/api/setup/add-workflow',
+      handler: async ({ body, url }) => {
+        app.repo.requireWritable();
+        return url.searchParams.get('preview') === '1' || (isObj(body) && body.preview === true)
+          ? addWorkflowPreview(app, body)
+          : addWorkflowApply(app, body);
       },
     },
     {

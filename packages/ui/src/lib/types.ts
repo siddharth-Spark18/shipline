@@ -19,6 +19,10 @@ export interface VersionInfo {
 }
 
 export interface Status {
+  /** 'install' while no repo is installed (only `root`, `state` and `uiVersion` are then present). */
+  mode?: 'repo' | 'install';
+  /** Install mode only. */
+  state?: InstallState;
   uiVersion: string | VersionInfo;
   repoVersion: VersionInfo;
   versionState: VersionState;
@@ -168,6 +172,18 @@ export interface SetupData {
   /** SHA-256 of the raw `.shipline/bin/VERSION` text. */
   versionHash: string;
   ci: SetupCi;
+  /** Shipped workflows this repo does not have yet. */
+  addableWorkflows: { id: string; name: string; description: string }[];
+  /** Whether the repo looks like it has a UI (the default of "Add shipped workflow"'s switch). */
+  uiDetected: boolean;
+}
+
+/** POST /api/setup/add-workflow. New files only, so `baseHashes` is normally empty; the version hash must match. */
+export interface AddWorkflowRequest {
+  id: string;
+  ui: boolean;
+  baseVersionHash: string;
+  baseHashes: Record<string, string | null>;
 }
 
 /** The pull-request check: its workflow file and config.yml's `ci:` values (defaults filled in). */
@@ -515,4 +531,72 @@ export interface PromptEvent {
 export interface PromptResolvedEvent {
   id: string;
   outcome: 'allow' | 'deny' | 'timeout';
+}
+
+// --- Install wizard ---
+
+export type InstallState = 'clean' | 'partial' | 'installed';
+
+export interface InstallWorkflow {
+  id: string;
+  name: string;
+  description: string;
+  stages: { id: string; name: string; agent: string | null; condition: string | null }[];
+}
+
+export interface InstallAgent {
+  name: string;
+  description: string;
+  /** '<workflow>.<stage>' of every shipped stage that names this agent; empty for a standalone agent. */
+  usedBy: string[];
+}
+
+/** What the wizard sends: every field is required. */
+export interface InstallSelection {
+  workflows: string[];
+  ui: boolean;
+  agents: string[];
+  clashes: Record<string, 'keep' | 'ours' | 'skip'>;
+  stageAgents: Record<string, string | null>;
+  skills: string[];
+  commands: { test: string; lint: string; build: string };
+  tracker: 'jira' | 'github';
+  ci: boolean;
+}
+
+export interface InstallInfo {
+  root: string;
+  isGit: boolean;
+  state: InstallState;
+  found: ('claude-md-block' | 'hooks')[];
+  workflows: InstallWorkflow[];
+  agents: InstallAgent[];
+  repoAgents: string[];
+  repoSkills: string[];
+  detected: { test: string; lint: string; build: string; sources: Record<string, string> };
+  trackerDefault: 'jira' | 'github';
+  uiDetected: boolean;
+  /** What `init --yes` would choose. */
+  defaults: InstallSelection;
+}
+
+export interface InstallPreviewFile {
+  path: string;
+  action: 'create' | 'overwrite' | 'merge';
+  /** For create and overwrite (not given for VERSION, which is computed when written). */
+  text?: string;
+  /** For merge. */
+  diff?: DiffHunk[];
+}
+
+export interface InstallBase {
+  settings: string | null;
+  claudeMd: string | null;
+}
+
+export interface InstallPreview {
+  files: InstallPreviewFile[];
+  excluded: string[];
+  collisions: string[];
+  base: InstallBase;
 }

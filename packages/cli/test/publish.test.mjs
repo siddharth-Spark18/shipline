@@ -34,7 +34,7 @@ function packFiles() {
 describe('package.json', () => {
   test('name, version, bin and files', () => {
     assert.equal(pkg.name, '@forgeyard/shipline');
-    assert.equal(pkg.version, '0.11.0');
+    assert.equal(pkg.version, '0.12.0');
     assert.deepEqual(pkg.bin, { shipline: 'bin/shipline.mjs' });
     for (const f of ['bin', 'src', 'templates', 'ui-dist']) assert.ok(pkg.files.includes(f), f);
     assert.ok(!pkg.files.includes('test'));
@@ -163,7 +163,11 @@ describe('known-hashes.json', () => {
   test('records every current template hash (hash-templates.mjs was run for this version)', () => {
     const missing = Object.entries(templateHashes()).filter(([p, h]) => !(KNOWN[p] && KNOWN[p][h])).map(([p]) => p);
     assert.deepEqual(missing, [], 'run: node packages/cli/scripts/hash-templates.mjs');
-    assert.ok(Object.values(KNOWN).some((byHash) => Object.values(byHash).includes(PACKAGE_VERSION)), 'the publish workflow check passes');
+    // The publish workflow makes the same check (.github/workflows/publish.yml). It no longer asks for an entry
+    // under this version: a release that changes no template (0.12.0) adds none.
+    const workflow = readFileSync(path.join(REPO, '.github', 'workflows', 'publish.yml'), 'utf8');
+    assert.match(workflow, /known-hashes\.json must record every current template hash/);
+    assert.match(workflow, /templateHashes\(\)/);
   });
 
   test('format: { "<install path>": { "<sha256>": "<version>" } }, sorted by path', () => {

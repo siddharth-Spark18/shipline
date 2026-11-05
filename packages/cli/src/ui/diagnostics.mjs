@@ -7,6 +7,7 @@ import { readLock } from './sessions.mjs';
 
 export function routes(app) {
   const status = () => ({
+    mode: 'repo',
     uiVersion: app.uiVersion,
     repoVersion: app.repo.version,
     versionState: app.repo.state,

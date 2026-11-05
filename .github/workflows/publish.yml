@@ -24,14 +24,17 @@ jobs:
             exit 1
           fi
 
-      - name: known-hashes.json must have an entry for this version
+      # Every hash of the templates being published must be recorded (hash-templates.mjs was run). A release that
+      # changes no template adds no entry, so this checks the hashes rather than an entry for the version.
+      - name: known-hashes.json must record every current template hash
         run: |
-          node -e "
-            const v = require('./packages/cli/package.json').version;
-            const known = require('./packages/cli/src/known-hashes.json');
-            const found = Object.values(known).some((byHash) => Object.values(byHash).includes(v));
-            if (!found) {
-              console.error('packages/cli/src/known-hashes.json has no entry for ' + v + '. Run: node packages/cli/scripts/hash-templates.mjs');
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            import { templateHashes } from './packages/cli/src/hashes.mjs';
+            const known = JSON.parse(readFileSync('./packages/cli/src/known-hashes.json', 'utf8'));
+            const missing = Object.entries(templateHashes()).filter(([p, h]) => !(known[p] && known[p][h])).map(([p]) => p);
+            if (missing.length) {
+              console.error('packages/cli/src/known-hashes.json is missing the current hash of: ' + missing.join(', ') + '. Run: node packages/cli/scripts/hash-templates.mjs');
               process.exit(1);
             }
           "

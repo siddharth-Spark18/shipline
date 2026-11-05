@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DiffView } from '@/components/diff-view';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { AddWorkflowDialog } from '@/pages/setup/add-workflow-dialog';
 import { AgentsSkills } from '@/pages/setup/agents-skills';
 import { CiCheck } from '@/pages/setup/ci-check';
 import { ConfigForm } from '@/pages/setup/config-form';
@@ -66,6 +67,7 @@ export default function SetupPage({
   const [selected, setSelected] = useState('config');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newWorkflowOpen, setNewWorkflowOpen] = useState(false);
+  const [addWorkflowOpen, setAddWorkflowOpen] = useState(false);
   const [startingChat, setStartingChat] = useState(false);
 
   // Whenever the files are (re)loaded from disk, the edit copies start over from them.
@@ -241,6 +243,16 @@ export default function SetupPage({
             <PlusIcon />
             New workflow
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="justify-start"
+            disabled={readOnly || data.addableWorkflows.length === 0}
+            onClick={() => setAddWorkflowOpen(true)}
+          >
+            <PlusIcon />
+            Add shipped workflow
+          </Button>
           {data.workflows.map((w) => (
             <Button
               key={w.id}
@@ -346,6 +358,13 @@ export default function SetupPage({
         onOpenChange={setNewWorkflowOpen}
         existingIds={workflowIds}
         onCreated={setSelected}
+      />
+
+      <AddWorkflowDialog
+        open={addWorkflowOpen}
+        onOpenChange={setAddWorkflowOpen}
+        data={data}
+        onAdded={setSelected}
       />
 
       <SaveDialog

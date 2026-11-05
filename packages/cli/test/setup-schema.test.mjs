@@ -111,7 +111,7 @@ describe('the small.yml template (Small change workflow)', () => {
     const m = template('small');
     assert.equal(m.id, 'small');
     assert.equal(m.name, 'Small change');
-    assert.deepEqual(m.stages.map((s) => s.id), ['jira', 'implement', 'verify', 'pr']);
+    assert.deepEqual(m.stages.map((s) => s.id), ['ticket', 'implement', 'verify', 'pr']); // `jira` before 0.10.0
     assert.deepEqual(m.stages.map((s) => s.agent ?? null), [null, 'builder', 'qa-bug-hunter', 'builder']);
     const verify = m.stages.find((s) => s.id === 'verify');
     assert.equal(verify.enforcement, 'block');
@@ -232,9 +232,38 @@ describe('workflow checks', () => {
   });
 });
 
+describe('tracker and setup (Teams Phase 1, D and E)', () => {
+  test('jira, github, or no tracker at all pass with no issue', () => {
+    for (const tracker of ['jira', 'github']) assert.deepEqual(validateConfig({ ...baseConfig(), tracker }), [], tracker);
+    const none = baseConfig();
+    delete none.tracker;
+    assert.deepEqual(validateConfig(none), []);
+  });
+
+  test('any other tracker is a warning, not an error: "not supported; the ticket stage will be skipped"', () => {
+    for (const tracker of ['linear', 'Jira', 'GitHub']) {
+      const issues = validateConfig({ ...baseConfig(), tracker });
+      assert.deepEqual(issues, [{ path: 'tracker', message: 'not supported; the ticket stage will be skipped', severity: 'warning' }], tracker);
+      assert.deepEqual(errorsOnly(issues), []);
+    }
+  });
+
+  test('setup: done is accepted as a top-level key', () => {
+    assert.deepEqual(validateConfig({ ...baseConfig(), setup: 'done' }), []);
+  });
+
+  test('setup: done survives a write in the layout', () => {
+    const raw = readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8');
+    const out = emitConfig({ ...baseConfig(), setup: 'done' }, { layout: configLayout(), raw });
+    assert.equal(parseYaml(out).setup, 'done');
+    assert.match(out, /^setup: done$/m);
+  });
+});
+
 describe('known fields, header and layout', () => {
   test('KNOWN_FIELDS lists the form fields from the schema table', () => {
-    assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands', 'skills', 'ci']);
+    // `setup` is known (so not listed under "other fields") but the form doesn't edit it (Teams Phase 1, E).
+    assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup']);
     assert.deepEqual(KNOWN_FIELDS.config.commands, ['test', 'lint', 'build']);
     assert.deepEqual(KNOWN_FIELDS.config.ci, ['missing_block', 'skip_label']);
     for (const f of ['id', 'name', 'description', 'branch_type', 'stages']) assert.ok(KNOWN_FIELDS.workflow.top.includes(f), f);

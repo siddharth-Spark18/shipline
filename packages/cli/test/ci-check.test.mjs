@@ -5,7 +5,7 @@ import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { makeRepo, removeDir, run, stage, tmpDir } from './helpers.mjs';
+import { makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
 
 let dir;
 let scratch;
@@ -281,6 +281,65 @@ stages:
       assert.match(done.summary, /\| plan \| done \| your answer \|/);
     } finally {
       rmSync(path.join(dir, '.shipline', 'workflows', 'mini.yml'), { force: true });
+    }
+  });
+});
+
+// Teams Phase 1, D: the stage was renamed `jira` -> `ticket`; a summary and a workflow may use either id.
+describe('the jira/ticket alias and the Closes line', () => {
+  const wfPath = () => path.join(dir, '.shipline', 'workflows', 'tix.yml');
+  // A workflow whose ticket stage is a block stage, so a summary that fails to match it would fail the check.
+  const tixWorkflow = (id) => `id: tix\nname: Tix\nstages:\n  - id: ${id}\n    artifact: ticket.md\n    enforcement: block\n  - id: build\n    enforcement: guide\n`;
+  const tixSummary = (id, status) => ({
+    v: 1,
+    workflow: 'tix',
+    task: 'issue-5-x',
+    stages: [
+      { id, status, enforcement: 'block', confirmed: status === 'done' ? 'auto' : null },
+      { id: 'build', status: 'done', enforcement: 'guide', confirmed: 'auto' },
+    ],
+  });
+  before(() => setCi({ missing_block: 'fail', skip_label: 'shipline:skip' }));
+  after(() => rmSync(wfPath(), { force: true }));
+
+  for (const [summaryId, workflowId] of [['jira', 'ticket'], ['ticket', 'jira'], ['ticket', 'ticket']]) {
+    test(`a summary with \`${summaryId}\` against a workflow with \`${workflowId}\`: done passes, pending fails`, () => {
+      writeFileSync(wfPath(), tixWorkflow(workflowId));
+      const r = check(body(tixSummary(summaryId, 'done')));
+      assert.equal(r.code, 0, r.stdout);
+      assert.deepEqual(errors(r), []);
+      const p = check(body(tixSummary(summaryId, 'pending')));
+      assert.equal(p.code, 1, p.stdout);
+      assert.match(p.stdout, new RegExp(`Stage "${workflowId}" is a block stage and is not done \\(it is pending\\)`));
+    });
+  }
+
+  test('a "Closes #123" line before the summary is ignored', () => {
+    writeFileSync(wfPath(), tixWorkflow('ticket'));
+    const r = check(`Closes #123\n${body(tixSummary('ticket', 'done'))}`);
+    assert.equal(r.code, 0, r.stdout);
+    assert.deepEqual(errors(r), []);
+  });
+
+  test('end to end with tracker: github: pr-summary (starting with Closes #5) pasted into a PR passes', () => {
+    const cfg = path.join(dir, '.shipline', 'config.yml');
+    const saved = readFileSync(cfg, 'utf8');
+    writeFileSync(cfg, saved.replace('tracker: jira', 'tracker: github'));
+    writeFileSync(wfPath(), tixWorkflow('ticket'));
+    try {
+      const s = 'ci-github';
+      assert.equal(stage(dir, ['start', '--workflow', 'tix', '--title', 'X', '--ticket', '#5'], s).code, 0);
+      const task = path.join(storeOf(dir), 'tasks', 'issue-5-x');
+      writeFileSync(path.join(task, 'ticket.md'), '# 5\n');
+      assert.equal(stage(dir, ['advance'], s).code, 0);
+      assert.equal(stage(dir, ['advance'], s).code, 0);
+      const summary = stage(dir, ['pr-summary'], s).stdout;
+      assert.ok(summary.startsWith('Closes #5\n### Shipline\n'), summary);
+      const r = check(`Adds X.\n\n${summary}`);
+      assert.equal(r.code, 0, r.stdout);
+      rmSync(task, { recursive: true });
+    } finally {
+      writeFileSync(cfg, saved);
     }
   });
 });

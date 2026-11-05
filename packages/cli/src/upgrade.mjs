@@ -9,11 +9,13 @@ import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline/promises';
 import { detectEol, parseYaml, toEol } from '../templates/shipline/bin/lib.mjs';
 import {
-  CI_WORKFLOW, CI_WORKFLOW_TEMPLATE, CLAUDE_MD_KEY, END, PACKAGE_VERSION, SETTINGS_KEY, START, VERSION_FILE,
+  CI_WORKFLOW, CI_WORKFLOW_TEMPLATE, CLAUDE_MD_KEY, END, PACKAGE_VERSION, SETTINGS_KEY, START, TEMPLATES, VERSION_FILE,
   canonicalSettingsPart, claudeMdBlock, claudeMdSection, ownedTemplateFiles, sha256, templateSettings,
 } from './hashes.mjs';
 import { INTERFACE, STORE_INTERFACE, compareInterface, readRepoVersion } from './interface.mjs';
 import { mergeSettingsObject, parseSettings } from './init.mjs';
+import { detectCommands } from './detect-commands.mjs';
+import { KNOWN_STUB_RULES } from './known-stub-rules.mjs';
 import { configLayout } from './setup-schema.mjs';
 import { encodePath, shiplineHome, storeDir } from './store.mjs';
 import { emitConfig, emitWorkflow } from './yaml-emit.mjs';
@@ -22,6 +24,15 @@ const require = createRequire(import.meta.url);
 const KNOWN = require('./known-hashes.json');
 const RECENT_MS = 30 * 60 * 1000;
 const REMOVED_CONFIG_KEYS = ['artifact_root', 'folder_pattern'];
+const COMMAND_KEYS = ['test', 'lint', 'build'];
+// Appended to a team's edited rules/jira.md when it becomes rules/ticket.md.
+const TICKET_DEFAULTS_HEADING = '## Shipline defaults (0.10.0)';
+const TICKET_DEFAULTS = [
+  'The stage is now called "ticket" and works with Jira or GitHub Issues (`tracker:` in `.shipline/config.yml`). Read the ticket read-only.',
+  '- Jira: if the Atlassian tools are not available (the connector is missing, needs authentication, or failed to start), skip this stage with `stage.mjs skip --reason "Jira not connected"`.',
+  '- GitHub: run `gh issue view <n> --json number,title,body,labels,url,state` and save the result to `ticket.md`. If `gh` is missing, not signed in, or the call fails, skip this stage with `stage.mjs skip --reason "GitHub not connected"`.',
+  'The stage is optional, so don\'t ask the developer before skipping it.',
+].join('\n');
 
 const readText = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : null);
 const posix = (p) => p.split(path.sep).join('/');
@@ -269,9 +280,10 @@ function planShared(root, version, force) {
   return shared;
 }
 
-// config.yml loses artifact_root and folder_pattern; workflows lose {artifact_root} allow_paths entries.
+// config.yml loses artifact_root and folder_pattern and gets its empty commands filled in; workflows lose
+// {artifact_root} allow_paths entries and have their `jira` stage renamed `ticket`.
 function planConfig(root) {
-  const out = { config: null, workflows: [], artifactRoot: null };
+  const out = { config: null, workflows: [], artifactRoot: null, warnings: [] };
   const cfgFile = path.join(root, '.shipline', 'config.yml');
   const raw = readText(cfgFile);
   if (raw !== null) {
@@ -285,10 +297,24 @@ function planConfig(root) {
       out.artifactRoot = model.artifact_root.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
     }
     const present = REMOVED_CONFIG_KEYS.filter((k) => Object.prototype.hasOwnProperty.call(model, k));
-    if (present.length) {
-      for (const k of present) delete model[k];
+    for (const k of present) delete model[k];
+
+    // Commands that are empty or missing are filled from the repo's files; a set command is never touched.
+    const detected = detectCommands(root);
+    const current = model.commands && typeof model.commands === 'object' && !Array.isArray(model.commands) ? model.commands : {};
+    const fills = COMMAND_KEYS.filter((k) => detected[k] && !(typeof current[k] === 'string' && current[k].trim())).map((k) => ({
+      key: k,
+      command: detected[k],
+      source: detected.sources[k],
+    }));
+    if (fills.length) {
+      model.commands = { ...current };
+      for (const f of fills) model.commands[f.key] = f.command;
+    }
+
+    if (present.length || fills.length) {
       const text = emitConfig(model, { layout: configLayout(), raw });
-      out.config = { keys: present, text, diff: lineDiff(raw, text) };
+      out.config = { keys: present, fills, text, diff: lineDiff(raw, text) };
     }
   }
 
@@ -296,15 +322,20 @@ function planConfig(root) {
   if (existsSync(wfDir)) {
     for (const name of readdirSync(wfDir).filter((n) => n.endsWith('.yml')).sort()) {
       const wfRaw = readFileSync(path.join(wfDir, name), 'utf8');
-      if (!wfRaw.includes('{artifact_root}')) continue;
+      const hasRoot = wfRaw.includes('{artifact_root}');
+      if (!hasRoot && !/\bjira\b/.test(wfRaw)) continue;
       let model;
       try {
         model = parseYaml(wfRaw);
       } catch (e) {
-        throw new Error(`.shipline/workflows/${name} could not be parsed (${e.message}). Fix it first; nothing was changed.`);
+        if (hasRoot) throw new Error(`.shipline/workflows/${name} could not be parsed (${e.message}). Fix it first; nothing was changed.`);
+        out.warnings.push(`.shipline/workflows/${name} could not be parsed (${e.message}), so its jira stage was not checked`);
+        continue;
       }
       let changed = 0;
-      for (const stage of (model && Array.isArray(model.stages) ? model.stages : [])) {
+      let renamed = false;
+      const stages = model && Array.isArray(model.stages) ? model.stages : [];
+      for (const stage of stages) {
         if (!stage || !Array.isArray(stage.blocks)) continue;
         for (const b of stage.blocks) {
           if (!b || !Array.isArray(b.allow_paths)) continue;
@@ -316,9 +347,59 @@ function planConfig(root) {
           }
         }
       }
-      if (!changed) continue;
+      const jira = stages.find((st) => st && st.id === 'jira');
+      if (jira) {
+        if (stages.some((st) => st && st.id === 'ticket')) {
+          out.warnings.push(`.shipline/workflows/${name} has both a jira and a ticket stage; its jira stage was left alone`);
+        } else {
+          jira.id = 'ticket';
+          if (jira.name === 'Jira ticket') jira.name = 'Ticket';
+          renamed = true;
+        }
+      }
+      if (!changed && !renamed) continue;
       const text = emitWorkflow(model, { header: leadingHeader(wfRaw), raw: wfRaw });
-      out.workflows.push({ file: `.shipline/workflows/${name}`, entries: changed, text, diff: lineDiff(wfRaw, text) });
+      out.workflows.push({ file: `.shipline/workflows/${name}`, entries: changed, renamed, text, diff: lineDiff(wfRaw, text) });
+    }
+  }
+  return out;
+}
+
+const normalizeLf = (text) => toEol(text, '\n');
+const isStubRule = (file, text) => (KNOWN_STUB_RULES[file] || []).includes(sha256(normalizeLf(text)));
+
+// The rules files: an untouched stub (one that matches a shipped version) gets the new default, and rules/jira.md
+// becomes rules/ticket.md. A file the team edited is never overwritten. Missing files are not added.
+// -> { write: [{ file, text, note }], remove: [file], warnings: [] }
+function planRules(root) {
+  const out = { write: [], remove: [], warnings: [] };
+  const dir = path.join(root, '.shipline', 'rules');
+  const tplDir = path.join(TEMPLATES, 'shipline', 'rules');
+  const rel = (f) => `.shipline/rules/${f}`;
+  const tplText = (f) => readFileSync(path.join(tplDir, f), 'utf8');
+
+  const jira = readText(path.join(dir, 'jira.md'));
+  if (jira !== null) {
+    if (existsSync(path.join(dir, 'ticket.md'))) {
+      out.warnings.push(`${rel('jira.md')} was left alone because ${rel('ticket.md')} already exists; merge them by hand and delete jira.md`);
+    } else if (isStubRule('jira.md', jira)) {
+      out.write.push({ file: 'ticket.md', text: toEol(tplText('ticket.md'), detectEol(jira)), note: 'new default (jira.md was unedited)' });
+      out.remove.push('jira.md');
+    } else {
+      const eol = detectEol(jira);
+      const text = toEol(jira.replace(/\s*$/, '') + `\n\n${TICKET_DEFAULTS_HEADING}\n\n${TICKET_DEFAULTS}\n`, eol);
+      out.write.push({ file: 'ticket.md', text, note: 'your jira.md content kept, Jira and GitHub text appended' });
+      out.remove.push('jira.md');
+    }
+  }
+
+  if (existsSync(tplDir)) {
+    for (const f of readdirSync(tplDir).filter((n) => n.endsWith('.md') && n !== 'ticket.md').sort()) {
+      const cur = readText(path.join(dir, f));
+      if (cur === null || !isStubRule(f, cur)) continue;
+      const next = toEol(tplText(f), detectEol(cur));
+      if (next === cur) continue;
+      out.write.push({ file: f, text: next, note: 'unedited stub replaced by the new default' });
     }
   }
   return out;
@@ -430,7 +511,7 @@ function rewriteTaskDirs(file, root, artifactRoot, storePath) {
 }
 
 function apply(root, ctx) {
-  const { files, shared, cfgPlan, mig, hasGit, artifactRoot } = ctx;
+  const { files, shared, cfgPlan, rulesPlan, mig, hasGit, artifactRoot } = ctx;
   let step = 'preparing the store';
   let gitRemoved = [];
   try {
@@ -457,6 +538,8 @@ function apply(root, ctx) {
     }
     if (cfgPlan.config) writeFileSync(path.join(root, '.shipline', 'config.yml'), cfgPlan.config.text);
     for (const w of cfgPlan.workflows) writeFileSync(path.join(root, w.file), w.text);
+    for (const r of rulesPlan.write) writeFileSync(path.join(root, '.shipline', 'rules', r.file), r.text);
+    for (const f of rulesPlan.remove) rmSync(path.join(root, '.shipline', 'rules', f), { force: true });
 
     step = 'staging the removal of the old task folders (git rm)';
     for (const t of mig.tasks) {
@@ -527,6 +610,7 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
   let files;
   let shared;
   let cfgPlan;
+  let rulesPlan;
   let storePath;
   const hasGit = isGitRepo(root);
   try {
@@ -534,6 +618,7 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     files = planFiles(root, version, force);
     shared = planShared(root, version, force);
     cfgPlan = planConfig(root);
+    rulesPlan = planRules(root);
   } catch (e) {
     console.error(`shipline: ${e.message}`);
     return 1;
@@ -553,7 +638,7 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
   const skipped = [...files.skip, ...(shared.claude.action === 'skip' ? [{ to: 'CLAUDE.md (Shipline block)', diff: shared.claude.diff }] : []), ...(shared.settings.action === 'skip' ? [{ to: '.claude/settings.json (Shipline hook entries and allow rules)', diff: shared.settings.diff }] : [])];
   const nothingToDo =
     !files.add.length && !files.replace.length && !files.remove.length && !sharedActions.length &&
-    !cfgPlan.config && !cfgPlan.workflows.length && !mig.tasks.length && !mig.state.length && !versionChanged;
+    !cfgPlan.config && !cfgPlan.workflows.length && !rulesPlan.write.length && !rulesPlan.remove.length && !mig.tasks.length && !mig.state.length && !versionChanged;
 
   if (nothingToDo) {
     console.log('Already up to date.');
@@ -579,14 +664,26 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
   out.push(`  .claude/settings.json (hook entries, allow rules for ~/.shipline): ${shared.settings.action}`);
   out.push('', 'Config and workflows');
   if (cfgPlan.config) {
-    out.push(`  ~ .shipline/config.yml: remove ${cfgPlan.config.keys.join(', ')}`);
+    const what = [];
+    if (cfgPlan.config.keys.length) what.push(`remove ${cfgPlan.config.keys.join(', ')}`);
+    if (cfgPlan.config.fills.length) what.push('fill empty commands');
+    out.push(`  ~ .shipline/config.yml: ${what.join('; ')}`);
+    for (const f of cfgPlan.config.fills) out.push(`    commands: ${f.key} <- \`${f.command}\` (${f.source})`);
     out.push(...cfgPlan.config.diff);
   }
   for (const w of cfgPlan.workflows) {
-    out.push(`  ~ ${w.file}: remove ${w.entries} {artifact_root} allow_paths entr${w.entries === 1 ? 'y' : 'ies'}`);
+    const what = [];
+    if (w.entries) what.push(`remove ${w.entries} {artifact_root} allow_paths entr${w.entries === 1 ? 'y' : 'ies'}`);
+    if (w.renamed) what.push('rename stage jira to ticket');
+    out.push(`  ~ ${w.file}: ${what.join('; ')}`);
     out.push(...w.diff);
   }
   if (!cfgPlan.config && !cfgPlan.workflows.length) out.push('  (no changes)');
+  out.push('', 'Rules');
+  for (const r of rulesPlan.write) out.push(`  ~ .shipline/rules/${r.file}: ${r.note}`);
+  for (const f of rulesPlan.remove) out.push(`  - remove   .shipline/rules/${f} (renamed to ticket.md)`);
+  if (!rulesPlan.write.length && !rulesPlan.remove.length) out.push('  (no changes)');
+
   if (needsMigration) {
     out.push('', `Task data -> ${storePath}`);
     if (!mig.tasks.length && !mig.state.length) out.push('  (nothing to move)');
@@ -595,7 +692,8 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     if (mig.leftovers.length) out.push(`  left in place (not task folders): ${mig.leftovers.join(', ')}`);
     if (!hasGit && mig.tasks.length) out.push('  not a git repository: the old task folders are deleted from disk after the copies are verified, with no git rm');
   }
-  if (mig.warnings.length) out.push('', 'Warnings', ...mig.warnings.map((w) => `  ! ${w}`));
+  const warnings = [...cfgPlan.warnings, ...rulesPlan.warnings, ...mig.warnings];
+  if (warnings.length) out.push('', 'Warnings', ...warnings.map((w) => `  ! ${w}`));
   if (mig.problems.length) out.push('', 'Cannot upgrade yet. Nothing was changed:', ...mig.problems.map((p) => `  - ${p}`));
   console.log(out.join('\n'));
 
@@ -620,7 +718,7 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
   }
 
   try {
-    apply(root, { files, shared, cfgPlan, mig, hasGit, artifactRoot, excluded });
+    apply(root, { files, shared, cfgPlan, rulesPlan, mig, hasGit, artifactRoot, excluded });
   } catch (e) {
     console.error(`shipline: ${e.message}`);
     return 1;

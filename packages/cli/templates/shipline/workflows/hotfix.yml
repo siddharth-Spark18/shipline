@@ -3,8 +3,8 @@ id: hotfix
 name: Hotfix
 description: urgent production fix, shortest safe path
 stages:
-  - id: jira
-    name: Jira ticket
+  - id: ticket
+    name: Ticket
     artifact: ticket.md
     optional: true
     enforcement: guide

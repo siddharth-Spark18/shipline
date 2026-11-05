@@ -7,7 +7,9 @@ import { readDefaults, validateControls } from './controls.mjs';
 import { HttpError, MAX_IMAGE_BODY } from './http.mjs';
 import { getChat, listChats, liveLock } from './sessions.mjs';
 import { startShell, stopRun } from './shell.mjs';
-import { jiraStatus } from './stream.mjs';
+import { sameStage } from '../../templates/shipline/bin/lib.mjs';
+import { chatTasks } from './tasks.mjs';
+import { ticketStatus } from './tracker.mjs';
 import { trustRepo } from './trust.mjs';
 import { readHistory } from './transcript.mjs';
 
@@ -70,6 +72,7 @@ async function requireClaude() {
 
 export function routes(app) {
   const root = app.repo.root;
+  const ghCache = {}; // the 60 s `gh auth status` result, per server
 
   const preflight = async () => {
     app.repo.requireUpgraded();
@@ -114,14 +117,22 @@ export function routes(app) {
     {
       method: 'GET',
       path: '/api/chats/:id',
-      handler: ({ params }) => {
+      handler: async ({ params }) => {
         const chat = withStatus(app, requireChat(app, params.id));
         const h = readHistory(root, chat.id);
         const init = app.chats.initInfo(chat.id);
-        const jira = init ? jiraStatus(init.mcpServers) : null;
+        const tasks = chatTasks(app, chat.task_dirs);
+        const { cfg } = app.repo.getConfig();
+        const current = tasks.find((t) => t.dir === chat.task_dir);
+        const stage =
+          current && current.stages.find((s) => s.status !== 'done' && s.status !== 'skipped');
+        const ticket = await ticketStatus((cfg && cfg.tracker) || 'jira', init, {
+          atTicketStage: Boolean(stage && sameStage(stage.id, 'ticket')),
+          ghCache,
+        });
         return h.unavailable
-          ? { chat, history: null, unavailable: true, jira }
-          : { chat, history: h.history, jira };
+          ? { chat, history: null, unavailable: true, ticket, tasks }
+          : { chat, history: h.history, ticket, tasks };
       },
     },
     {

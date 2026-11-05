@@ -34,7 +34,7 @@ function packFiles() {
 describe('package.json', () => {
   test('name, version, bin and files', () => {
     assert.equal(pkg.name, '@forgeyard/shipline');
-    assert.equal(pkg.version, '0.9.0');
+    assert.equal(pkg.version, '0.10.0');
     assert.deepEqual(pkg.bin, { shipline: 'bin/shipline.mjs' });
     for (const f of ['bin', 'src', 'templates', 'ui-dist']) assert.ok(pkg.files.includes(f), f);
     assert.ok(!pkg.files.includes('test'));

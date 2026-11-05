@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { detectEol, isInside, parseYaml, toEol } from '../templates/shipline/bin/lib.mjs';
 import { INTERFACE } from './interface.mjs';
 import {
@@ -7,7 +8,8 @@ import {
   TEMPLATES, canonicalSettingsPart, claudeMdBlock, claudeMdSection, isShiplineHookEntry, ownedTemplateFiles, sha256,
   templateFiles, templateSettings,
 } from './hashes.mjs';
-import { configLayout } from './setup-schema.mjs';
+import { detectCommands } from './detect-commands.mjs';
+import { TRACKERS, configLayout } from './setup-schema.mjs';
 import { storeDir } from './store.mjs';
 import { emitConfig } from './yaml-emit.mjs';
 
@@ -158,8 +160,23 @@ function defaultSelection(info) {
     clashes: Object.fromEntries(info.agents.filter((a) => info.repoAgents.includes(a)).map((a) => [a, 'keep'])),
     stageAgents: {},
     skills: [],
+    commands: pickCommands(info.detected),
+    tracker: 'jira',
     ci: false,
   };
+}
+
+const COMMAND_KEYS = ['test', 'lint', 'build'];
+const pickCommands = (detected) => Object.fromEntries(COMMAND_KEYS.map((k) => [k, (detected && detected[k]) || '']));
+
+// 'github' when `origin` points at github.com, otherwise 'jira' (also with no remote or no git).
+function trackerDefault(root) {
+  try {
+    const url = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+    return url.includes('github.com') ? 'github' : 'jira';
+  } catch {
+    return 'jira';
+  }
 }
 
 function checkSelection(info, sel) {
@@ -172,6 +189,13 @@ function checkSelection(info, sel) {
   if (!Array.isArray(sel.agents) || sel.agents.some((a) => !info.agents.includes(a))) fail('unknown agent');
   for (const [name, c] of Object.entries(sel.clashes || {})) if (!['keep', 'ours', 'skip'].includes(c)) fail(`clash "${name}" must be keep, ours or skip`);
   if (sel.ci !== undefined && typeof sel.ci !== 'boolean') fail('ci must be true or false');
+  if (sel.tracker !== undefined && !TRACKERS.includes(sel.tracker)) fail(`tracker must be ${TRACKERS.join(' or ')}`);
+  if (sel.commands !== undefined) {
+    const c = sel.commands;
+    if (!c || typeof c !== 'object' || Array.isArray(c) || Object.entries(c).some(([k, v]) => !COMMAND_KEYS.includes(k) || typeof v !== 'string')) {
+      fail('commands must be an object of test, lint and build text');
+    }
+  }
   if (sel.skills !== undefined && (!Array.isArray(sel.skills) || sel.skills.some((n) => typeof n !== 'string' || !ID_RE.test(n)))) fail('skills must be a list of names');
 }
 
@@ -218,11 +242,25 @@ function planWrites(info, selection) {
       const clash = clashOf(info, selection, m[1]);
       if (!selection.agents.includes(m[1]) || clash === 'skip' || clash === 'keep') continue;
       writes.push({ to: f.to, data: readFileSync(f.from), overwrite: clash === 'ours' });
-    } else if (f.to === '.shipline/config.yml' && selection.skills && selection.skills.length) {
+    } else if (f.to === '.shipline/config.yml') {
       const text = readFileSync(f.from, 'utf8');
       const model = parseYaml(text) || {};
-      model.skills = selection.skills;
-      writes.push({ to: f.to, data: Buffer.from(emitConfig(model, { layout: configLayout(), raw: text })) });
+      const commands = { ...pickCommands(null), ...selection.commands };
+      let changed = false;
+      if (selection.skills && selection.skills.length) {
+        model.skills = selection.skills;
+        changed = true;
+      }
+      if (COMMAND_KEYS.some((k) => commands[k])) {
+        model.commands = commands;
+        changed = true;
+      }
+      if (selection.tracker && selection.tracker !== model.tracker) {
+        model.tracker = selection.tracker;
+        changed = true;
+      }
+      if (!changed) writes.push({ to: f.to, data: Buffer.from(text) });
+      else writes.push({ to: f.to, data: Buffer.from(emitConfig(model, { layout: configLayout(), raw: text })) });
     } else writes.push({ to: f.to, data: readFileSync(f.from) });
   }
   if (selection.ci) writes.push({ to: CI_WORKFLOW, data: readFileSync(CI_WORKFLOW_TEMPLATE) });
@@ -235,6 +273,11 @@ function excludedPaths(info, selection) {
     .filter((a) => !selection.agents.includes(a) || ['skip', 'keep'].includes(clashOf(info, selection, a)))
     .map(AGENT_PATH)
     .sort();
+}
+
+function commandsSummary(commands, detected) {
+  const rows = COMMAND_KEYS.filter((k) => commands[k]).map((k) => `  ${k}: ${commands[k]}${detected.sources[k] && commands[k] === detected[k] ? ` (from ${detected.sources[k]})` : ''}`);
+  return rows.length ? `Commands for the verify stage:\n${rows.join('\n')}` : 'No test, lint or build commands set; add them under commands: in .shipline/config.yml.';
 }
 
 // Returns a process exit code. Preflights everything, then writes. `prompts` (optional) replaces the interactive
@@ -273,6 +316,8 @@ export async function runInit({ target, dryRun = false, yes = false, prompts = n
     repoAgents: listNames(path.join(root, '.claude', 'agents')),
     repoSkills: listNames(path.join(root, '.claude', 'skills'), { dirs: true }),
   };
+  info.detected = detectCommands(root);
+  info.trackerDefault = trackerDefault(root);
   info.missingStageAgents = (selection) => missingStageAgents(info.workflows, selection);
 
   let selection;
@@ -285,7 +330,7 @@ export async function runInit({ target, dryRun = false, yes = false, prompts = n
     console.error(`shipline: init cancelled, nothing was written. ${e.message}`);
     return 1;
   }
-  selection = { clashes: {}, stageAgents: {}, skills: [], ci: false, ...selection };
+  selection = { clashes: {}, stageAgents: {}, skills: [], commands: pickCommands(info.detected), tracker: 'jira', ci: false, ...selection };
 
   // Preflight: nothing is written until every check passes.
   const writes = planWrites(info, selection);
@@ -393,9 +438,11 @@ export async function runInit({ target, dryRun = false, yes = false, prompts = n
   created ${writes.filter((f) => f.to !== CI_WORKFLOW).length} files under .shipline/ and .claude/
   ${settingsText === null ? 'created' : 'merged hooks and allow rules into'} .claude/settings.json
   ${claudeMd === null ? 'created' : 'appended a marked block to'} CLAUDE.md
-${kept.length ? `\nKept your own agents (used where Shipline's would be): ${kept.join(', ')}. To use Shipline's instead: \`shipline ui\` -> Setup -> Agents & skills, or uninstall and re-run \`init\` interactively.\n` : ''}${selection.ci ? `\nAdded the pull-request check .github/workflows/shipline.yml (paste \`node .shipline/bin/stage.mjs pr-summary\` into PR descriptions).\n` : ''}
-Next: open Claude Code in this repo and run /shipline-setup to customize workflows, rules and enforcement.
-Or set it up in the browser: \`npx @forgeyard/shipline ui\`.
+${kept.length ? `\nKept your own agents (used where Shipline's would be): ${kept.join(', ')}. To use Shipline's instead: \`npx @forgeyard/shipline ui\` -> Setup -> Agents & skills, or uninstall and re-run \`init\` interactively.\n` : ''}${selection.ci ? `\nAdded the pull-request check .github/workflows/shipline.yml (paste \`node .shipline/bin/stage.mjs pr-summary\` into PR descriptions).\n` : ''}
+${commandsSummary(selection.commands, info.detected)}
+Tracker: ${selection.tracker === 'github' ? 'GitHub Issues (read with the gh CLI)' : 'Jira (read through the Atlassian MCP)'}. Change it in .shipline/config.yml.
+
+Next: tailor the rules to this repo. Run \`/shipline-setup\` in Claude Code, or open \`npx @forgeyard/shipline ui\` and use Setup -> Set up with Claude.
 Then commit .shipline/, .claude/ and CLAUDE.md so teammates get the same flow on clone (Node 18+ required).`);
   return 0;
 }

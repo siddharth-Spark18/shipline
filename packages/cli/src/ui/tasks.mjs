@@ -3,9 +3,11 @@ import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'n
 // git's own name for "no file" in --no-index mode; it works on every platform (see git.mjs).
 const GIT_NULL = '/dev/null';
 import path from 'node:path';
+import { findStage } from '../../templates/shipline/bin/lib.mjs';
 import { isInside, tasksDir } from '../store.mjs';
 import { HttpError } from './http.mjs';
 import { fileDiff, gitOk, gitRun, looksBinary } from './git.mjs';
+import { log } from './log.mjs';
 
 const FILE_LIMIT = 1024 * 1024;
 
@@ -62,6 +64,37 @@ export function readOpenTasks(root, cfg, legacy = false) {
 // Same shape as listOpenTasks in the vendored lib.mjs: { dir, slug, workflow, branch, done, next }.
 export function listOpenTasks(root, cfg, legacy = false) {
   return readOpenTasks(root, cfg, legacy).map(({ manifest, ...task }) => task);
+}
+
+// One task folder in the store, finished or not: { dir, slug, workflow, branch, done, next, manifest }, or null when
+// the folder is outside this repo's store, missing, or has no readable manifest (each with a log line only). `dir` is
+// an absolute store path, as the chat state stores it.
+export function readTask(root, dir) {
+  if (typeof dir !== 'string' || !dir || dir.includes('\0')) return null;
+  const inStore = resolveInsideStore(root, path.resolve(dir));
+  if (!inStore) {
+    log('task-outside-store', { dir });
+    return null;
+  }
+  if (inStore.missing) {
+    log('task-missing', { dir });
+    return null;
+  }
+  const m = readManifest(inStore.real);
+  if (!m || !m.task || !Array.isArray(m.stages)) {
+    log('task-unreadable', { dir });
+    return null;
+  }
+  const cur = m.stages.find((s) => !isDone(s.status));
+  return {
+    dir,
+    slug: path.basename(inStore.real),
+    workflow: m.task.workflow,
+    branch: m.task.branch,
+    done: m.stages.filter((s) => s.status === 'done').map((s) => s.id),
+    next: cur ? cur.id : null,
+    manifest: m,
+  };
 }
 
 // `git status --porcelain=v1 -z --untracked-files=all` -> [{ path, oldPath?, index, worktree }].
@@ -203,22 +236,30 @@ export async function collectTasks(app) {
   const changes = await collectChanges(root);
   if (!cfg) return { tasks: [], changes, configError: error };
 
+  const taskView = makeTaskView(app);
+  const tasks = readOpenTasks(root, cfg, app.repo.needsUpgrade).map(taskView);
+  return { tasks, changes };
+}
+
+// Task entries (from readOpenTasks or readTask) -> the Task shape the browser gets. Stage names come from the task's
+// workflow file; a `jira` stage in the manifest finds the workflow's `ticket` stage and the other way round.
+function makeTaskView(app) {
+  const { root } = app.repo;
   const workflows = new Map();
   const workflowStages = (id) => {
     if (!workflows.has(id)) {
-      let names = new Map();
+      let stages = [];
       try {
-        names = new Map(app.repo.lib.loadWorkflow(root, id).stages.map((s) => [s.id, s.name]));
+        stages = app.repo.lib.loadWorkflow(root, id).stages;
       } catch {
         // Missing or broken workflow file: stage ids are shown instead of names.
       }
-      workflows.set(id, names);
+      workflows.set(id, stages);
     }
     return workflows.get(id);
   };
-
-  const tasks = readOpenTasks(root, cfg, app.repo.needsUpgrade).map((t) => {
-    const names = workflowStages(t.workflow);
+  return (t) => {
+    const stagesCfg = workflowStages(t.workflow);
     return {
       dir: t.dir,
       slug: t.slug,
@@ -226,9 +267,10 @@ export async function collectTasks(app) {
       workflow: t.workflow,
       branch: t.branch,
       stages: t.manifest.stages.map((s) => {
+        const found = findStage(stagesCfg, s.id);
         const stage = {
           id: s.id,
-          name: names.get(s.id) || s.id,
+          name: (found && found.name) || s.id,
           status: s.status,
           artifact: s.artifact ?? null,
         };
@@ -237,8 +279,19 @@ export async function collectTasks(app) {
       }),
       files: taskFiles(t.dir),
     };
-  });
-  return { tasks, changes };
+  };
+}
+
+// The tasks a chat has worked on, in order: its task_dirs resolved to the GET /api/tasks Task shape, finished tasks
+// included. A folder that is gone, unreadable or outside the store is left out.
+export function chatTasks(app, taskDirs) {
+  const view = makeTaskView(app);
+  const out = [];
+  for (const dir of taskDirs || []) {
+    const t = readTask(app.repo.root, dir);
+    if (t) out.push(view(t));
+  }
+  return out;
 }
 
 // ---------- file access (ported from the v1 hub (removed)) ----------

@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
 import {
-  ListChecksIcon,
   MessageSquareIcon,
   MonitorIcon,
   MoonIcon,
@@ -23,7 +22,6 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -33,14 +31,13 @@ import {
 } from '@/components/ui/sidebar';
 import { StageDot, StageTrail } from '@/components/stage-dots';
 import { findTask, usePrompts, useTasks } from '@/lib/queries';
-import type { ChatSummary, Status, Task } from '@/lib/types';
+import type { ChatSummary, Status } from '@/lib/types';
 
-export type View = 'chat' | 'setup' | 'tasks';
+export type View = 'chat' | 'setup';
 
 const NAV: { view: View; label: string; icon: typeof MessageSquareIcon }[] = [
   { view: 'chat', label: 'Chat', icon: MessageSquareIcon },
   { view: 'setup', label: 'Setup', icon: SettingsIcon },
-  { view: 'tasks', label: 'Tasks', icon: ListChecksIcon },
 ];
 
 const THEMES = [
@@ -49,35 +46,20 @@ const THEMES = [
   { value: 'dark', label: 'Dark', icon: MoonIcon },
 ] as const;
 
-interface ChatGroup {
-  key: string;
-  label: string;
-  task?: Task;
-  chats: ChatSummary[];
+/** Active chats first, then the most recently active; the server already sends newest first. */
+function sortChats(chats: ChatSummary[]): ChatSummary[] {
+  const stamp = (c: ChatSummary) => new Date(c.last_active).getTime() || 0;
+  return [...chats].sort(
+    (a, b) => Number(b.status === 'active') - Number(a.status === 'active') || stamp(b) - stamp(a),
+  );
 }
 
-/** Chats grouped by the task they work on; chats without a task go last under "No task". */
-function groupChats(chats: ChatSummary[], tasks: Task[] | undefined): ChatGroup[] {
-  const groups: ChatGroup[] = [];
-  const none: ChatGroup = { key: '', label: 'No task', chats: [] };
-  const sorted = [...chats].sort(
-    (a, b) => Number(b.status === 'active') - Number(a.status === 'active'),
-  );
-  for (const c of sorted) {
-    const task = findTask(tasks, c.task_dir);
-    if (!task) {
-      none.chats.push(c);
-      continue;
-    }
-    let g = groups.find((x) => x.key === task.dir);
-    if (!g) {
-      g = { key: task.dir, label: task.title || task.slug, task, chats: [] };
-      groups.push(g);
-    }
-    g.chats.push(c);
-  }
-  return none.chats.length > 0 ? [...groups, none] : groups;
-}
+/** The folder name of a task, used as its title when the task is finished and so not in the unfinished list. */
+const taskName = (dir: string) =>
+  dir
+    .replace(/[\\/]+$/, '')
+    .split(/[\\/]/)
+    .pop() ?? dir;
 
 function ThemeMenu() {
   const { theme = 'system', setTheme } = useTheme();
@@ -132,7 +114,7 @@ export function AppSidebar({
   const prompts = usePrompts();
   const { isMobile, setOpenMobile } = useSidebar();
   const waiting = useMemo(() => new Set(prompts.map((p) => p.chatId)), [prompts]);
-  const groups = useMemo(() => groupChats(chats, tasks.data?.tasks), [chats, tasks.data]);
+  const sorted = useMemo(() => sortChats(chats), [chats]);
 
   const repoName = status?.root
     ? (status.root.split(/[\\/]/).filter(Boolean).pop() ?? 'Shipline')
@@ -198,19 +180,17 @@ export function AppSidebar({
           </SidebarMenu>
         </SidebarGroup>
 
-        {groups.length === 0 && (
+        {sorted.length === 0 && (
           <SidebarGroup className="group-data-[collapsible=icon]:hidden">
             <p className="px-2 text-xs text-muted-foreground">No chats yet.</p>
           </SidebarGroup>
         )}
-        {groups.map((g) => (
-          <SidebarGroup key={g.key || 'none'} className="py-1 group-data-[collapsible=icon]:hidden">
-            <SidebarGroupLabel className="text-[11px] font-semibold tracking-wide uppercase">
-              <span className="truncate">{g.task ? `Task: ${g.label}` : g.label}</span>
-            </SidebarGroupLabel>
+        {sorted.length > 0 && (
+          <SidebarGroup className="py-1 group-data-[collapsible=icon]:hidden">
             <SidebarMenu>
-              {g.chats.map((c) => {
+              {sorted.map((c) => {
                 const active = c.status === 'active';
+                const task = findTask(tasks.data?.tasks, c.task_dir);
                 return (
                   <SidebarMenuItem key={c.id}>
                     <SidebarMenuButton
@@ -234,7 +214,14 @@ export function AppSidebar({
                             <Badge className="h-4 px-1.5 text-[10px]">Needs answer</Badge>
                           )}
                         </div>
-                        {g.task && <StageTrail stages={g.task.stages} className="pl-4" />}
+                        {c.task_dir && (
+                          <div className="flex min-w-0 items-center gap-2 pl-4 text-xs text-muted-foreground">
+                            <span className="min-w-0 flex-1 truncate">
+                              {task ? task.title || task.slug : taskName(c.task_dir)}
+                            </span>
+                            {task && <StageTrail stages={task.stages} />}
+                          </div>
+                        )}
                       </div>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -242,7 +229,7 @@ export function AppSidebar({
               })}
             </SidebarMenu>
           </SidebarGroup>
-        ))}
+        )}
       </SidebarContent>
 
       <SidebarFooter>

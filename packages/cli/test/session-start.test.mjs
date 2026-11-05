@@ -41,7 +41,9 @@ before(() => {
   assert.ok(!existsSync(path.join(dir, 'docs')), 'stage.mjs wrote nothing into the repo');
   // The mirror for the v1 hook.
   cpSync(tasks, path.join(dir, 'docs', 'shipline'), { recursive: true });
-  appendFileSync(path.join(dir, '.shipline', 'config.yml'), '\nartifact_root: docs/shipline\n');
+  // `setup: done` keeps the 0.10.0 once-per-developer setup nudge (a systemMessage the v1 hook never printed) out
+  // of the comparison; the nudge has its own tests in session-start-nudge.test.mjs.
+  appendFileSync(path.join(dir, '.shipline', 'config.yml'), '\nartifact_root: docs/shipline\nsetup: done\n');
   git(dir, 'switch', '-q', '-c', 'feature/LL-12-add-export');
 });
 
@@ -57,7 +59,7 @@ test('a new session with two open tasks: output is byte-equal to the interface-1
   assert.equal(lines[1], 'Unfinished Shipline tasks (offer to resume; if several, list them and ask which):');
   assert.deepEqual(lines.slice(2, 4).sort(), [
     '- LL-12-add-export [feature]: feasibility done, next: questions (matches the current git branch, likely this one)',
-    '- fix-crash [bugfix]: nothing done yet, next: jira',
+    '- fix-crash [bugfix]: nothing done yet, next: ticket', // the shipped workflows' stage is `ticket` since 0.10.0
   ]);
   assert.equal(lines[4], 'To resume: node .shipline/bin/stage.mjs resume <task folder>');
   assert.equal(lines.length, 5);

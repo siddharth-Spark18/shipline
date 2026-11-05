@@ -114,9 +114,9 @@ describe('init writes VERSION', () => {
     assert.ok(!existsSync(path.join(dir, '.shipline')));
   });
 
-  test('the success message points at `npx @forgeyard/shipline ui`', () => {
+  test('the success message ends with the setup nudge (Teams Phase 1, E)', () => {
     const r = runInit(fresh());
-    assert.match(r.stdout, /Or set it up in the browser: `npx @forgeyard\/shipline ui`\./);
+    assert.match(r.stdout, /Next: tailor the rules to this repo\. Run `\/shipline-setup` in Claude Code, or open `npx @forgeyard\/shipline ui` and use Setup -> Set up with Claude\./);
     assert.ok(!/npx shipline/.test(r.stdout));
   });
 

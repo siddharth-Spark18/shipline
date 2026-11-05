@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   findRoot, loadConfig, loadWorkflow, readSession, readManifest, readStdinJson, stateDir, storeDir, shiplineHome,
-  isInside, stageEnforcement, isDone, globToRegExp, listOpenTasks, currentBranch, safeId, out, failOpen,
+  isInside, stageEnforcement, findStage, isDone, globToRegExp, listOpenTasks, currentBranch, safeId, out, failOpen,
 } from './lib.mjs';
 
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -152,7 +152,7 @@ try {
   for (const stage of wf.stages) {
     const mode = stageEnforcement(stage);
     if (mode === 'guide' || !Array.isArray(stage.blocks)) continue;
-    const ms = manifest.stages.find((s) => s.id === stage.id);
+    const ms = findStage(manifest.stages, stage.id);
     if (!ms || isDone(ms.status)) continue;
 
     for (const b of stage.blocks) {

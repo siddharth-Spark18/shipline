@@ -5,7 +5,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { CLI_ROOT, cleanEnv, homeFor, makeRepo, removeDir, stage, tmpDir } from './helpers.mjs';
 
@@ -50,6 +50,9 @@ function viaShell(command, event, PATH) {
 before(() => {
   dir = makeRepo({ commitInit: true });
   scratch = tmpDir('shipline-preflight-');
+  // No once-per-developer setup nudge: otherwise the first SessionStart run prints it and writes its marker, and the
+  // second (the one compared with it) doesn't.
+  appendFileSync(path.join(dir, '.shipline', 'config.yml'), '\nsetup: done\n');
   // A started task, so the guard has something to say about an Edit.
   assert.equal(stage(dir, ['start', '--workflow', 'feature', '--title', 'Add export'], SESSION).code, 0);
 });

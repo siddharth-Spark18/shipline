@@ -80,7 +80,10 @@ export function connectEvents(queryClient: QueryClient): () => void {
 
     es.addEventListener('tasks', (e) => {
       const data = parse<TasksData>(e as MessageEvent);
-      if (data) queryClient.setQueryData(queryKeys.tasks, data);
+      if (!data) return;
+      queryClient.setQueryData(queryKeys.tasks, data);
+      // A chat's task list is part of GET /api/chats/<id>; refresh the chats being shown.
+      void queryClient.invalidateQueries({ queryKey: ['chat'] });
     });
 
     es.addEventListener('banner', (e) => {

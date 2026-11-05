@@ -10,7 +10,7 @@ You are customizing the Shipline files that `npx @forgeyard/shipline init` creat
 
 ## 1. Read the repo first
 
-Read `CLAUDE.md`, `.claude/agents/`, `package.json` (or the language's equivalent), CI config, README and the folder layout. Also read `.shipline/config.yml`, `.shipline/workflows/*.yml` and `.shipline/rules/*.md`. Note existing conventions (test/lint/build commands, branch and PR naming, docs folders, UI or not) and bring them into your questions as proposals.
+Read `CLAUDE.md`, `.claude/agents/`, `package.json` (or the language's equivalent), CI config, README and the folder layout. Also read `.shipline/config.yml`, `.shipline/workflows/*.yml` and `.shipline/rules/*.md`. Note that `init` already detected the test/lint/build commands and shipped default rules in `.shipline/rules/*.md`; improve on them rather than starting from nothing. Note existing conventions (test/lint/build commands, branch and PR naming, docs folders, UI or not) and bring them into your questions as proposals.
 
 ## 2. Interview
 
@@ -21,10 +21,13 @@ Cover these topics, one group at a time:
 3. **Confirmation per stage:** should Claude ask the developer before advancing (`confirm_to_advance: true`) or advance by itself? The developer's own answer to a fixed question is what lets the stage advance (recorded by a hook, not by Claude); it is not cryptographic proof.
 4. **Rules per stage:** repo-specific instructions for each stage (what a good plan contains here, coding conventions, what verify must check, PR template and reviewers). Write them to `.shipline/rules/<stage>.md`.
 5. **Repo skills:** which of the repo's own skills in `.claude/skills/` should Claude be pointed to at every stage? List them in `skills: [name, ...]` in `.shipline/config.yml`.
-6. **Naming and commands:** the branch pattern (`branch_pattern`) and the test/lint/build commands the verify stage should run (leave empty if none).
+6. **Tracker:** where does this team track work, Jira or GitHub Issues? Set `tracker: jira` or `tracker: github` in `.shipline/config.yml` (Linear and others are not supported; the ticket stage is then skipped).
+7. **Naming and commands:** the branch pattern (`branch_pattern`) and the test/lint/build commands the verify stage should run (leave empty if none).
 
 ## 3. Write
 
 After the developer approves your summary, edit only: `.shipline/config.yml`, `.shipline/workflows/*.yml` (keep the field names; see the comment at the top of `feature.yml`), `.shipline/rules/*.md` (add a file for every new stage id), and, only if the developer asks, the `<!-- shipline:start -->` block in `CLAUDE.md`. The YAML parser supports a small subset: nested maps, lists, inline `[a, b]` lists, quoted strings, `#` comments. Use single quotes around regexes. Do not touch the hook scripts in `.shipline/bin/`.
+
+As the last write, once the developer has approved the summary and the files are written, add `setup: done` as a top-level key in `.shipline/config.yml`. It stops the "default rules" reminder in Claude Code and the Setup page.
 
 Finish by listing what changed and reminding the developer to commit `.shipline/`, `.claude/` and `CLAUDE.md` so teammates get the same flow on clone.

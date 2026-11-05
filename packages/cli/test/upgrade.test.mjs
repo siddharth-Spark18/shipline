@@ -397,9 +397,16 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
     assert.match(out, /CLAUDE\.md block: replace/);
     assert.match(out, /\.claude\/settings\.json \(hook entries, allow rules for ~\/\.shipline\): replace/);
     assert.match(out, /~ \.shipline\/config\.yml: remove artifact_root, folder_pattern/);
-    assert.match(out, /~ \.shipline\/workflows\/feature\.yml: remove 1 \{artifact_root\} allow_paths entry/);
-    assert.match(out, /~ \.shipline\/workflows\/bugfix\.yml: remove 1 \{artifact_root\} allow_paths entry/);
-    assert.ok(!out.includes('hotfix.yml'));
+    // Teams Phase 1, F: the `jira` stage of every workflow becomes `ticket`.
+    assert.match(out, /~ \.shipline\/workflows\/feature\.yml: remove 1 \{artifact_root\} allow_paths entry; rename stage jira to ticket/);
+    assert.match(out, /~ \.shipline\/workflows\/bugfix\.yml: remove 1 \{artifact_root\} allow_paths entry; rename stage jira to ticket/);
+    assert.match(out, /~ \.shipline\/workflows\/hotfix\.yml: rename stage jira to ticket\n/);
+    // Every 0.6.0 rules file is an unedited stub: each is replaced, and jira.md becomes the new ticket.md.
+    assert.match(out, /~ \.shipline\/rules\/ticket\.md: new default \(jira\.md was unedited\)/);
+    assert.match(out, /- remove {3}\.shipline\/rules\/jira\.md \(renamed to ticket\.md\)/);
+    for (const f of ['feasibility', 'fix', 'implement', 'plan', 'pr', 'questions', 'reproduce', 'root_cause', 'verify', 'wireframes']) {
+      assert.ok(out.includes(`  ~ .shipline/rules/${f}.md: unedited stub replaced by the new default\n`), f);
+    }
     assert.ok(out.includes(`Task data -> ${store}`));
     for (const t of TASKS) assert.ok(out.includes(`  move task docs/shipline/${t}/ -> tasks/${t}/ (git rm staged afterwards)`), t);
     assert.match(out, /move \d+ item\(s\) from \.shipline\/\.state\/ \(session state, UI data\); the folder is then removed/);
@@ -491,7 +498,7 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
     assert.match(cfg, /^team_owner: platform$/m);
   });
 
-  test('workflows lose only their {artifact_root} allow_paths entries; rules and hotfix.yml are untouched', () => {
+  test('workflows lose only their {artifact_root} allow_paths entries and have jira renamed ticket; unedited stub rules get the new defaults', () => {
     const feature = read(dir, '.shipline/workflows/feature.yml');
     assert.ok(!feature.includes('{artifact_root}'));
     assert.match(feature, /^ {8}allow_paths: \[("?)docs\/\*\*\1\]$/m, 'the team\'s own entry stays (re-emitted, so its quoting may change)');
@@ -500,8 +507,17 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
     assert.ok(!bugfix.includes('{artifact_root}'));
     assert.ok(!/^\s+allow_paths:/m.test(bugfix), 'an entry list left empty is removed');
     assert.match(bugfix, /^ {6}- tools: 'Edit\|Write\|MultiEdit\|NotebookEdit'$/m, 'the block itself stays');
-    assert.equal(read(dir, '.shipline/workflows/hotfix.yml'), orig.hotfix);
-    assert.deepEqual(tree(path.join(dir, '.shipline/rules')), orig.rules);
+    // hotfix.yml had no {artifact_root} entry: only its jira stage changes.
+    assert.equal(read(dir, '.shipline/workflows/hotfix.yml'), orig.hotfix.replace('  - id: jira\n    name: Jira ticket\n', '  - id: ticket\n    name: Ticket\n'));
+    for (const f of ['feature', 'bugfix', 'hotfix']) {
+      const wf = read(dir, `.shipline/workflows/${f}.yml`);
+      assert.ok(!/^\s+- id: jira$/m.test(wf), f);
+      assert.match(wf, /^ {2}- id: ticket\n {4}name: Ticket\n {4}artifact: ticket\.md$/m, f);
+    }
+    // Every rules file was an unedited 0.6.0 stub: all now hold the shipped defaults, and jira.md became ticket.md.
+    const rules = tree(path.join(dir, '.shipline/rules'));
+    assert.deepEqual(Object.keys(rules).sort(), Object.keys(orig.rules).map((f) => (f === 'jira.md' ? 'ticket.md' : f)).sort());
+    for (const f of Object.keys(rules)) assert.equal(rules[f], sha(template(`.shipline/rules/${f}`)), f);
     // The hooks still load every workflow.
     assert.match(stage(dir, ['workflows']).stdout, /^bugfix: .*\n^feature: .*\n^hotfix: /m);
   });
@@ -947,5 +963,182 @@ describe('the CI workflow (.github/workflows/shipline.yml)', () => {
     }
     assert.equal(read(dir, CI), own);
     assert.ok(!(CI in version(dir).files));
+  });
+});
+
+// ---------- Teams Phase 1, B and F ----------
+
+describe('0.10.0: commands, the jira -> ticket stage, and the rules files', () => {
+  const LEGACY_RULES = path.join(LEGACY, '.shipline', 'rules');
+  const legacyRule = (f) => readFileSync(path.join(LEGACY_RULES, f), 'utf8');
+  const rulesTemplate = (f) => readFileSync(path.join(TEMPLATES_ROOT, 'shipline', 'rules', f), 'utf8');
+  const write = (dir, rel, text) => writeFileSync(path.join(dir, rel), text);
+  const commit = (dir) => {
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '--allow-empty', '-m', 'team edits');
+  };
+  // Makes the install look like 0.9.0, so upgrade shows its plan (a repo that is already 0.10.0 with nothing to
+  // change only prints "Already up to date.").
+  const asOlder = (d) => {
+    const v = version(d);
+    v.package = '0.9.0';
+    writeFileSync(path.join(d, '.shipline', 'bin', 'VERSION'), JSON.stringify(v, null, 2) + '\n');
+  };
+  // A fresh install, then `prepare` to make it look like an older or edited one, committed.
+  const repo = (prepare) => {
+    const dir = makeRepo({ commitInit: true });
+    dirs.push(dir);
+    prepare(dir);
+    commit(dir);
+    return dir;
+  };
+  const toJira = (text) => text.replace('  - id: ticket\n    name: Ticket\n', '  - id: jira\n    name: Jira ticket\n');
+
+  test('empty commands are filled from the repo\'s files and a set one is kept; --dry-run shows them and writes nothing', () => {
+    const dir = repo((d) => {
+      write(d, 'package.json', JSON.stringify({ scripts: { test: 'jest', lint: 'eslint .', build: 'tsc' } }));
+      write(d, 'yarn.lock', '');
+      write(d, '.shipline/config.yml', read(d, '.shipline/config.yml').replace('  test: ""', '  test: make check'));
+    });
+    const before = snapshot(dir);
+    const dry = upgrade(dir, '--dry-run');
+    assert.equal(dry.code, 0, dry.stderr);
+    assert.match(dry.stdout, /~ \.shipline\/config\.yml: fill empty commands/);
+    assert.ok(dry.stdout.includes('    commands: lint <- `yarn run lint` (package.json)\n'), dry.stdout);
+    assert.ok(dry.stdout.includes('    commands: build <- `yarn run build` (package.json)\n'), dry.stdout);
+    assert.ok(!dry.stdout.includes('commands: test <-'), 'a set command is never overwritten');
+    assert.match(dry.stdout, /^ {4}\+ {3}lint: yarn run lint$/m, 'the diff shows the new line');
+    assert.deepEqual(snapshot(dir), before, '--dry-run wrote nothing');
+
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    const cfg = read(dir, '.shipline/config.yml');
+    assert.match(cfg, /^commands:\n {2}test: make check\n {2}lint: yarn run lint\n {2}build: yarn run build\n/m);
+    assert.match(cfg, /^# Optional\. The verify stage runs only the commands you set here\./m, 'comments are kept');
+    assert.equal(upgrade(dir, '--yes').stdout, 'Already up to date.\n', 'a second run has nothing to fill');
+  });
+
+  test('nothing detected: config.yml is not touched', () => {
+    const dir = repo(() => {});
+    assert.equal(upgrade(dir, '--yes').stdout, 'Already up to date.\n');
+  });
+
+  test('a workflow\'s `jira` stage becomes `ticket` (named Ticket), with a diff in the plan; open tasks are not rewritten', () => {
+    let manifestBefore;
+    const dir = repo((d) => {
+      write(d, '.shipline/workflows/feature.yml', toJira(read(d, '.shipline/workflows/feature.yml')));
+      // A hand-renamed stage keeps its own name.
+      write(d, '.shipline/workflows/bugfix.yml', read(d, '.shipline/workflows/bugfix.yml').replace('  - id: ticket\n    name: Ticket\n', '  - id: jira\n    name: Our tracker\n'));
+    });
+    assert.equal(stage(dir, ['start', '--workflow', 'feature', '--title', 'Add export'], 's1').code, 0);
+    const mf = path.join(storeOf(dir), 'tasks', 'add-export', 'manifest.json');
+    manifestBefore = readFileSync(mf, 'utf8');
+    assert.equal(JSON.parse(manifestBefore).stages[0].id, 'jira');
+
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /~ \.shipline\/workflows\/feature\.yml: rename stage jira to ticket\n/);
+    assert.match(r.stdout, /^ {4}- {3}- id: jira$/m);
+    assert.match(r.stdout, /^ {4}\+ {3}- id: ticket$/m);
+    assert.match(r.stdout, /^ {4}\+ {5}name: Ticket$/m);
+    assert.ok(!r.stdout.includes('hotfix.yml'), 'a workflow already on `ticket` is left alone');
+    assert.equal(read(dir, '.shipline/workflows/feature.yml'), readFileSync(path.join(TEMPLATES_ROOT, 'shipline', 'workflows', 'feature.yml'), 'utf8'));
+    assert.match(read(dir, '.shipline/workflows/bugfix.yml'), /^ {2}- id: ticket\n {4}name: Our tracker$/m);
+    assert.equal(readFileSync(mf, 'utf8'), manifestBefore, 'the open task\'s manifest is not rewritten');
+    // The open task (stage `jira`) still works against the renamed workflow.
+    const st = stage(dir, ['status'], 's1');
+    assert.equal(st.code, 0, st.stderr);
+    assert.match(st.stdout, /^Current stage: Ticket \[jira\]$/m);
+    assert.match(st.stdout, /^Repo rules for this stage \(\.shipline\/rules\/ticket\.md\):$/m);
+  });
+
+  test('a workflow with both a jira and a ticket stage is left alone, with a warning', () => {
+    let wf;
+    const dir = repo((d) => {
+      wf = read(d, '.shipline/workflows/hotfix.yml').replace(
+        '  - id: ticket\n',
+        '  - id: jira\n    name: Old Jira\n    artifact: jira.md\n    enforcement: guide\n  - id: ticket\n',
+      );
+      write(d, '.shipline/workflows/hotfix.yml', wf);
+      asOlder(d);
+    });
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /! \.shipline\/workflows\/hotfix\.yml has both a jira and a ticket stage; its jira stage was left alone/);
+    assert.equal(read(dir, '.shipline/workflows/hotfix.yml'), wf);
+  });
+
+  test('rules/jira.md unedited (a shipped version): replaced by the new ticket.md', () => {
+    const dir = repo((d) => {
+      rmSync(path.join(d, '.shipline/rules/ticket.md'));
+      write(d, '.shipline/rules/jira.md', legacyRule('jira.md'));
+    });
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /~ \.shipline\/rules\/ticket\.md: new default \(jira\.md was unedited\)/);
+    assert.match(r.stdout, /- remove {3}\.shipline\/rules\/jira\.md \(renamed to ticket\.md\)/);
+    assert.ok(!existsSync(path.join(dir, '.shipline/rules/jira.md')));
+    assert.equal(read(dir, '.shipline/rules/ticket.md'), rulesTemplate('ticket.md'));
+  });
+
+  test('rules/jira.md edited: renamed to ticket.md with its content kept and the 0.10.0 Jira and GitHub text appended', () => {
+    const team = '# Jira rules\n\n- Our project key is ACME.\n- Always link the epic.\n';
+    const dir = repo((d) => {
+      rmSync(path.join(d, '.shipline/rules/ticket.md'));
+      write(d, '.shipline/rules/jira.md', team);
+    });
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /~ \.shipline\/rules\/ticket\.md: your jira\.md content kept, Jira and GitHub text appended/);
+    assert.ok(!existsSync(path.join(dir, '.shipline/rules/jira.md')));
+    const ticket = read(dir, '.shipline/rules/ticket.md');
+    assert.ok(ticket.startsWith(team + '\n## Shipline defaults (0.10.0)\n\n'), ticket);
+    assert.match(ticket, /skip --reason "Jira not connected"/);
+    assert.match(ticket, /gh issue view <n> --json number,title,body,labels,url,state/);
+    assert.match(ticket, /skip --reason "GitHub not connected"/);
+    assert.ok(ticket.endsWith('\n') && !ticket.endsWith('\n\n'));
+  });
+
+  test('rules/jira.md next to an existing ticket.md: both left alone, with a warning', () => {
+    const dir = repo((d) => {
+      write(d, '.shipline/rules/jira.md', legacyRule('jira.md'));
+      asOlder(d);
+    });
+    const ticketBefore = read(dir, '.shipline/rules/ticket.md');
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /! \.shipline\/rules\/jira\.md was left alone because \.shipline\/rules\/ticket\.md already exists/);
+    assert.equal(read(dir, '.shipline/rules/jira.md'), legacyRule('jira.md'));
+    assert.equal(read(dir, '.shipline/rules/ticket.md'), ticketBefore);
+  });
+
+  test('stub rules (any shipped version, LF or CRLF) get the new default; edited rules are kept', () => {
+    const edited = legacyRule('verify.md') + '\n- Run the e2e suite too.\n';
+    const dir = repo((d) => {
+      write(d, '.shipline/rules/plan.md', legacyRule('plan.md'));
+      write(d, '.shipline/rules/pr.md', legacyRule('pr.md')); // the 0.6.0 pr.md text
+      write(d, '.shipline/rules/fix.md', legacyRule('fix.md').replace(/\n/g, '\r\n'));
+      write(d, '.shipline/rules/verify.md', edited);
+    });
+    const before = snapshot(dir);
+    const dry = upgrade(dir, '--dry-run');
+    assert.equal(dry.code, 0, dry.stderr);
+    for (const f of ['plan', 'pr', 'fix']) assert.ok(dry.stdout.includes(`  ~ .shipline/rules/${f}.md: unedited stub replaced by the new default\n`), f);
+    assert.ok(!dry.stdout.includes('rules/verify.md'), 'an edited file is not mentioned');
+    assert.deepEqual(snapshot(dir), before, '--dry-run wrote nothing');
+
+    assert.equal(upgrade(dir, '--yes').code, 0);
+    assert.equal(read(dir, '.shipline/rules/plan.md'), rulesTemplate('plan.md'));
+    assert.equal(read(dir, '.shipline/rules/pr.md'), rulesTemplate('pr.md'));
+    assert.equal(read(dir, '.shipline/rules/fix.md'), rulesTemplate('fix.md').replace(/\n/g, '\r\n'), 'the file keeps its CRLF line endings');
+    assert.equal(read(dir, '.shipline/rules/verify.md'), edited);
+    // The current defaults are not stubs: nothing more to do.
+    assert.equal(upgrade(dir, '--yes').stdout, 'Already up to date.\n');
+  });
+
+  test('a rules file the repo deleted is not added back', () => {
+    const dir = repo((d) => rmSync(path.join(d, '.shipline/rules/wireframes.md')));
+    assert.equal(upgrade(dir, '--yes').stdout, 'Already up to date.\n');
+    assert.ok(!existsSync(path.join(dir, '.shipline/rules/wireframes.md')));
   });
 });

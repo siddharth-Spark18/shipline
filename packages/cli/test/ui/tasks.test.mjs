@@ -64,8 +64,8 @@ describe('GET /api/tasks', () => {
     assert.equal(t.title, 'Add export');
     assert.equal(t.workflow, 'feature');
     assert.equal(t.branch, 'feature/add-export');
-    assert.deepEqual(t.stages[0], { id: 'jira', name: 'Jira ticket', status: 'in_progress', artifact: 'ticket.md' });
-    assert.deepEqual(t.stages.map((s) => s.id), ['jira', 'feasibility', 'questions', 'plan', 'wireframes', 'implement', 'verify', 'pr']);
+    assert.deepEqual(t.stages[0], { id: 'ticket', name: 'Ticket', status: 'in_progress', artifact: 'ticket.md' }); // `jira` before 0.10.0
+    assert.deepEqual(t.stages.map((s) => s.id), ['ticket', 'feasibility', 'questions', 'plan', 'wireframes', 'implement', 'verify', 'pr']);
     assert.equal(t.stages[3].name, 'Plan');
     assert.deepEqual(t.files.map((f) => f.name), ['manifest.json']);
     assert.equal(typeof t.files[0].size, 'number');
@@ -80,7 +80,7 @@ describe('GET /api/tasks', () => {
     assert.equal(stage(dir, ['skip', '--reason', 'no ticket'], 's2').code, 0);
     let r = await api(ui, 'GET', '/api/tasks');
     const quick = r.json.tasks.find((t) => t.slug === 'quick');
-    assert.deepEqual(quick.stages[0], { id: 'jira', name: 'Jira ticket', status: 'skipped', reason: 'no ticket', artifact: 'ticket.md' });
+    assert.deepEqual(quick.stages[0], { id: 'ticket', name: 'Ticket', status: 'skipped', reason: 'no ticket', artifact: 'ticket.md' });
     rmSync(path.join(storeOf(dir), 'tasks', 'quick'), { recursive: true });
     r = await api(ui, 'GET', '/api/tasks');
     assert.deepEqual(r.json.tasks.map((t) => t.slug), ['add-export']);

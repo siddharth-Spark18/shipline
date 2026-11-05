@@ -3,8 +3,8 @@ id: small
 name: Small change
 description: a typo, rename, config tweak or one-file fix; Claude picks it without asking
 stages:
-  - id: jira
-    name: Jira ticket
+  - id: ticket
+    name: Ticket
     artifact: ticket.md
     optional: true
     enforcement: guide

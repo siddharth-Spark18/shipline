@@ -27,11 +27,25 @@ export function writeAtomic(file, text) {
   renameSync(tmp, file);
 }
 
-// [{ id, title, created, last_active, task_dir | null, status: 'active' | 'ended' }]
+// An entry's task_dirs: every task folder the chat bound to, oldest first, no duplicates. An entry written before
+// 0.10.0 has none and reads as [task_dir] (or []); a task_dir missing from the list is appended.
+function normalize(chat) {
+  if (!chat || typeof chat !== 'object') return chat;
+  const dirs = [];
+  const add = (d) => {
+    if (typeof d === 'string' && d && !dirs.includes(d)) dirs.push(d);
+  };
+  if (Array.isArray(chat.task_dirs)) chat.task_dirs.forEach(add);
+  add(chat.task_dir);
+  return { ...chat, task_dirs: dirs };
+}
+
+// [{ id, title, created, last_active, task_dir | null, task_dirs: string[], status: 'active' | 'ended' }]
+// task_dir is the current (last bound) task.
 export function listChats(root) {
   try {
     const list = JSON.parse(readFileSync(sessionsFile(root), 'utf8'));
-    return Array.isArray(list) ? list : [];
+    return Array.isArray(list) ? list.map(normalize) : [];
   } catch {
     return [];
   }
@@ -46,6 +60,15 @@ export function addChat(root, chat) {
   list.push(chat);
   writeAtomic(sessionsFile(root), JSON.stringify(list, null, 2) + '\n');
   return chat;
+}
+
+// Adds a task folder to the chat's task_dirs (no change when it is already there). Returns the updated entry, or
+// null when the id is unknown.
+export function addTaskDir(root, id, dir) {
+  const chat = getChat(root, id);
+  if (!chat) return null;
+  if (chat.task_dirs.includes(dir)) return chat;
+  return updateChat(root, id, { task_dirs: [...chat.task_dirs, dir] });
 }
 
 // Returns the updated entry, or null when the id is unknown.

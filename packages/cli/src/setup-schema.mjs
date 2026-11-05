@@ -9,7 +9,7 @@ const TEMPLATES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 
 // Keys the form edits. Anything else in a file is shown as "other fields (kept)".
 export const KNOWN_FIELDS = {
   config: {
-    top: ['branch_pattern', 'tracker', 'commands', 'skills', 'ci'],
+    top: ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup'],
     commands: ['test', 'lint', 'build'],
     ci: ['missing_block', 'skip_label'],
   },
@@ -27,6 +27,7 @@ const ENFORCEMENT = ['guide', 'warn', 'block'];
 export const CI_MISSING_BLOCK = ['fail-unless-label', 'warn', 'fail'];
 export const DEFAULT_CI = { missing_block: 'fail-unless-label', skip_label: 'shipline:skip' };
 const SKIP_LABEL_MAX = 50;
+export const TRACKERS = ['jira', 'github'];
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const err = (p, message) => ({ path: p, message });
@@ -60,6 +61,9 @@ export function validateConfig(model, { skills = null } = {}) {
   if (!isObj(model)) return [err('', 'config must be a map')];
 
   checkPattern(model, 'branch_pattern', out);
+  if (model.tracker !== undefined && model.tracker !== null && model.tracker !== '' && !TRACKERS.includes(model.tracker)) {
+    out.push(warn('tracker', 'not supported; the ticket stage will be skipped'));
+  }
   if (model.commands !== undefined && model.commands !== null && !isObj(model.commands)) {
     out.push(err('commands', 'must be a map of commands'));
   }

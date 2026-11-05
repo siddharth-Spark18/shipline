@@ -13,11 +13,20 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { TaskCanvas } from '@/components/task-panel';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ChatTasksPanel } from '@/components/task-panel';
 import { ApiError, api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
-import { findTask, useMediaQuery, usePrompts, useTasks } from '@/lib/queries';
-import type { ChatSummary, ChatsResponse, ImageData, PromptEvent, VersionState } from '@/lib/types';
+import { useMediaQuery, usePrompts, useTasks } from '@/lib/queries';
+import { sameStage } from '@/lib/stages';
+import type {
+  ChatSummary,
+  ChatsResponse,
+  ImageData,
+  PromptEvent,
+  Task,
+  VersionState,
+} from '@/lib/types';
 import { chatStore, useChatLive } from '@/pages/chat/chat-store';
 import { ChatControls } from '@/pages/chat/chat-controls';
 import { Composer } from '@/pages/chat/composer';
@@ -25,11 +34,11 @@ import { MessageList } from '@/pages/chat/message-list';
 import {
   ClaudeMissingNotice,
   FatalNotice,
-  JiraNotice,
   LockHeldNotice,
   OrphansNotice,
   ResultLine,
   ResumeCommand,
+  TicketNotice,
 } from '@/pages/chat/notices';
 import { mergeHistory, normalizeHistory } from '@/pages/chat/timeline';
 
@@ -41,6 +50,66 @@ interface Blocker {
 }
 
 const NOTE_KEY = 'shipline.chat.terminalNote';
+
+const normDir = (p: string) => p.replace(/\/+$/, '');
+
+/**
+ * GET /api/chats/<id>: the history, the ticket notice's data and the chat's tasks. Shared by the page (right
+ * panel) and the open chat; they use one query. Refetched on `tasks` and chat `task` events (see lib/events.ts).
+ */
+function useChatDetail(id: string | null) {
+  return useQuery({
+    queryKey: queryKeys.chat(id ?? ''),
+    // History from Claude's session file overlaps what this page already streamed. The overlap
+    // is removed when the two are merged (by tool id / text), not by trimming live items:
+    // the session file keeps growing during a turn, so a count taken before the fetch is wrong.
+    queryFn: () => api.chat(id as string),
+    enabled: id !== null,
+    gcTime: 0,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** The first stage not done or skipped: what the task is at (the one in progress, else the first pending). */
+function currentStageOf(task: Task | undefined) {
+  return (
+    task?.stages.find((s) => s.status === 'in_progress') ??
+    task?.stages.find((s) => s.status === 'pending')
+  );
+}
+
+/** Unfinished tasks that no active chat is working on, each with a Resume button (new-chat screen). */
+function UnfinishedTasks({ tasks, onResume }: { tasks: Task[]; onResume: (task: Task) => void }) {
+  if (tasks.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm">Unfinished tasks</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ul className="flex flex-col divide-y">
+          {tasks.map((t) => (
+            <li key={t.dir} className="flex items-center gap-3 py-2 first:pt-0 last:pb-0">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{t.title || t.slug}</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {t.workflow}
+                  {' · next: '}
+                  {currentStageOf(t)?.name ?? 'nothing'}
+                </p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => onResume(t)}>
+                Resume
+              </Button>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
 
 /** Said once: terminal and extension sessions are not locked out. */
 function TerminalNote() {
@@ -103,6 +172,7 @@ export default function ChatPage({
   // follows the task: it opens when the chat has one, and stays closed otherwise.
   const [panelPref, setPanelPref] = useState<Record<string, 'open' | 'closed'>>({});
   const [sheetOpen, setSheetOpen] = useState(false);
+  const detail = useChatDetail(selectedId);
 
   const list = chats.data?.chats ?? [];
   const select = onSelect;
@@ -150,9 +220,20 @@ export default function ChatPage({
   };
 
   const selected = list.find((c) => c.id === selectedId) ?? null;
-  const task = findTask(tasks.data?.tasks, selected?.task_dir);
+  const chatInfo = detail.data?.chat ?? selected;
+  const chatTasks = detail.data?.tasks ?? [];
   const changes = tasks.data?.changes ?? [];
-  const hasTask = Boolean(task) || Boolean(selected?.task_dir);
+  const hasTask = chatTasks.length > 0 || Boolean(chatInfo?.task_dir);
+  // Unfinished tasks that are not the current task of an active chat: offered with Resume on the new-chat screen.
+  const busyDirs = new Set(
+    list
+      .filter((c) => c.status === 'active' && c.task_dir)
+      .map((c) => normDir(c.task_dir as string)),
+  );
+  const resumable = (tasks.data?.tasks ?? []).filter((t) => !busyDirs.has(normDir(t.dir)));
+  const panel = (
+    <ChatTasksPanel tasks={chatTasks} currentDir={chatInfo?.task_dir} changes={changes} />
+  );
   const prefKey = selectedId ?? '';
   const panelOpen = (panelPref[prefKey] ?? (hasTask ? 'open' : 'closed')) === 'open';
   const sideOpen = wide && panelOpen;
@@ -208,12 +289,18 @@ export default function ChatPage({
         <ClaudeMissingNotice code={blocker.code} message={blocker.message} />
       ) : (
         <div className="flex flex-1 flex-col justify-end gap-3">
-          <div className="flex-1">
-            <h2 className="text-base font-medium">New chat</h2>
-            <p className="text-sm text-muted-foreground">
-              Describe the work. This runs your own installed <code>claude</code> in this checkout,
-              with the repo's Shipline hooks.
-            </p>
+          <div className="flex flex-1 flex-col gap-4 overflow-y-auto">
+            <div>
+              <h2 className="text-base font-medium">New chat</h2>
+              <p className="text-sm text-muted-foreground">
+                Describe the work. This runs your own installed <code>claude</code> in this
+                checkout, with the repo's Shipline hooks.
+              </p>
+            </div>
+            <UnfinishedTasks
+              tasks={resumable}
+              onResume={(t) => void startChat(`Resume the Shipline task ${t.slug}`, [])}
+            />
           </div>
           <Composer
             disabled={readOnly}
@@ -252,7 +339,7 @@ export default function ChatPage({
             aria-hidden={!sideOpen}
             {...(sideOpen ? {} : { inert: '' })}
           >
-            {wide && <TaskCanvas task={task} changes={changes} />}
+            {wide && panel}
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>
@@ -263,11 +350,11 @@ export default function ChatPage({
         >
           <SheetHeader>
             <SheetTitle>Task panel</SheetTitle>
-            <SheetDescription>Progress, artifacts and changes for this chat.</SheetDescription>
+            <SheetDescription>
+              The tasks in this chat, and the working tree changes.
+            </SheetDescription>
           </SheetHeader>
-          <div className="min-h-0 flex-1">
-            <TaskCanvas task={task} changes={changes} />
-          </div>
+          <div className="min-h-0 flex-1">{panel}</div>
         </SheetContent>
       </Sheet>
     </div>
@@ -299,45 +386,25 @@ function ChatView({
 }) {
   const queryClient = useQueryClient();
   const live = useChatLive(id);
-  const tasks = useTasks();
-
-  const detail = useQuery({
-    queryKey: queryKeys.chat(id),
-    queryFn: async () => {
-      // History from Claude's session file overlaps what this page already streamed. The overlap
-      // is removed when the two are merged below (by tool id / text), not by trimming live items:
-      // the session file keeps growing during a turn, so a count taken before the fetch is wrong.
-      return api.chat(id);
-    },
-    gcTime: 0,
-    staleTime: 0,
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: false,
-  });
+  const detail = useChatDetail(id);
 
   const chat = detail.data?.chat ?? summary;
   const history = useMemo(() => normalizeHistory(detail.data?.history), [detail.data]);
   const items = useMemo(() => mergeHistory(history, live.items), [history, live.items]);
 
-  // The task shows up once `stage.mjs start` writes the state file; refresh the chat when tasks change.
-  const tasksUpdated = tasks.dataUpdatedAt;
-  const hasTask = Boolean(chat?.task_dir);
-  useEffect(() => {
-    if (hasTask || !tasksUpdated) return;
-    void queryClient.invalidateQueries({ queryKey: queryKeys.chat(id) });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.chats });
-  }, [tasksUpdated, hasTask, id, queryClient]);
-
   const ended = live.ended ?? chat?.status === 'ended';
   const busy = live.busy ?? chat?.busy ?? false;
-  // The Jira notice: the task is at the `jira` stage (the one in progress, else the first pending) and the
-  // Atlassian connector can't be used. `jira` is null until the chat has started.
-  const chatTask = findTask(tasks.data?.tasks, chat?.task_dir);
-  const currentStage =
-    chatTask?.stages.find((s) => s.status === 'in_progress') ??
-    chatTask?.stages.find((s) => s.status === 'pending');
-  const jira = detail.data?.jira;
-  const jiraProblem = currentStage?.id === 'jira' && jira && jira !== 'connected' ? jira : null;
+  // The ticket notice: the chat's current task is at the ticket stage (`jira` in tasks from before 0.10.0) and the
+  // repo's tracker can't be used. `ticket` is null when there is nothing to report (for GitHub, only at that stage).
+  const chatTask = detail.data?.tasks?.find(
+    (t) => chat?.task_dir && normDir(t.dir) === normDir(chat.task_dir),
+  );
+  const currentStage = currentStageOf(chatTask);
+  const ticket = detail.data?.ticket;
+  const ticketProblem =
+    currentStage && sameStage(currentStage.id, 'ticket') && ticket && ticket.status !== 'connected'
+      ? ticket
+      : null;
   const resumeCommand = live.fatal?.resumeCommand ?? `claude --resume ${id}`;
   const missing = blocker?.code.startsWith('claude-') ? blocker : null;
 
@@ -449,7 +516,9 @@ function ChatView({
       {live.fatal && <FatalNotice chatId={id} fatal={live.fatal} onNewChat={onNewChat} />}
       {live.orphans && <OrphansNotice onKill={() => void killOrphans()} killing={killing} />}
       {live.result && <ResultLine result={live.result} />}
-      {jiraProblem && !ended && <JiraNotice status={jiraProblem} />}
+      {ticketProblem && !ended && ticketProblem.status !== 'connected' && (
+        <TicketNotice tracker={ticketProblem.tracker} status={ticketProblem.status} />
+      )}
 
       {missing ? (
         <ClaudeMissingNotice code={missing.code} message={missing.message} />

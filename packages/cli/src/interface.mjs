@@ -8,10 +8,16 @@ import path from 'node:path';
 // 1 = the 0.3.0 shape. 2 = lost-task warning and visible warn reminders in the guard.
 // 3 = tasks, session state and UI data live in the store (~/.shipline/projects/<repo>/), artifact_root and
 // folder_pattern are gone from config.yml, and VERSION carries the `files` hash map.
-export const INTERFACE = 3;
+// 4 = Trust: answer-based confirmations (record-answer.mjs, the PostToolUse hook, no --confirmed/--force),
+// the store guard, `stage.mjs pr-summary` and the optional CI check.
+export const INTERFACE = 4;
+
+// The first interface whose tasks and session state live in the store (interface 3). Below it, `upgrade` moves
+// the data out of the repo, and the UI chat stays disabled until then.
+export const STORE_INTERFACE = 3;
 
 // What interface-1 repos lack. Used only for banner text.
-export const MISSING_BEFORE = ['the lost-task warning', 'visible warn reminders', 'task storage outside the repo (the store)'];
+export const MISSING_BEFORE = ['the lost-task warning', 'visible warn reminders', 'task storage outside the repo (the store)', 'Trust: answer-based confirmations and the CI check'];
 
 // Returns { package, interface, files, excluded }, or { legacy: true, interface: 1 } when the file is missing or unreadable.
 export function readRepoVersion(root) {

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { detectEol, isInside, parseYaml, toEol } from '../templates/shipline/bin/lib.mjs';
 import { INTERFACE } from './interface.mjs';
 import {
-  CLAUDE_MD_KEY, HOOK_MARK, PACKAGE_VERSION, SETTINGS_KEY, START, VERSION_FILE,
+  CI_WORKFLOW, CI_WORKFLOW_TEMPLATE, CLAUDE_MD_KEY, HOOK_MARK, PACKAGE_VERSION, SETTINGS_KEY, START, VERSION_FILE,
   TEMPLATES, canonicalSettingsPart, claudeMdBlock, claudeMdSection, isShiplineHookEntry, ownedTemplateFiles, sha256,
   templateFiles, templateSettings,
 } from './hashes.mjs';
@@ -158,6 +158,7 @@ function defaultSelection(info) {
     clashes: Object.fromEntries(info.agents.filter((a) => info.repoAgents.includes(a)).map((a) => [a, 'keep'])),
     stageAgents: {},
     skills: [],
+    ci: false,
   };
 }
 
@@ -170,6 +171,7 @@ function checkSelection(info, sel) {
   if (sel.workflows.some((id) => !info.workflows.some((w) => w.id === id))) fail('unknown workflow');
   if (!Array.isArray(sel.agents) || sel.agents.some((a) => !info.agents.includes(a))) fail('unknown agent');
   for (const [name, c] of Object.entries(sel.clashes || {})) if (!['keep', 'ours', 'skip'].includes(c)) fail(`clash "${name}" must be keep, ours or skip`);
+  if (sel.ci !== undefined && typeof sel.ci !== 'boolean') fail('ci must be true or false');
   if (sel.skills !== undefined && (!Array.isArray(sel.skills) || sel.skills.some((n) => typeof n !== 'string' || !ID_RE.test(n)))) fail('skills must be a list of names');
 }
 
@@ -223,6 +225,7 @@ function planWrites(info, selection) {
       writes.push({ to: f.to, data: Buffer.from(emitConfig(model, { layout: configLayout(), raw: text })) });
     } else writes.push({ to: f.to, data: readFileSync(f.from) });
   }
+  if (selection.ci) writes.push({ to: CI_WORKFLOW, data: readFileSync(CI_WORKFLOW_TEMPLATE) });
   return writes;
 }
 
@@ -282,7 +285,7 @@ export async function runInit({ target, dryRun = false, yes = false, prompts = n
     console.error(`shipline: init cancelled, nothing was written. ${e.message}`);
     return 1;
   }
-  selection = { clashes: {}, stageAgents: {}, skills: [], ...selection };
+  selection = { clashes: {}, stageAgents: {}, skills: [], ci: false, ...selection };
 
   // Preflight: nothing is written until every check passes.
   const writes = planWrites(info, selection);
@@ -367,6 +370,7 @@ export async function runInit({ target, dryRun = false, yes = false, prompts = n
     // Last write: if anything above failed, VERSION is never written.
     const versionAbs = path.join(root, VERSION_FILE);
     const owned = new Set(ownedTemplateFiles().map((f) => f.to));
+    if (selection.ci) owned.add(CI_WORKFLOW);
     const fileHashes = Object.fromEntries(Object.entries(written).filter(([to]) => owned.has(to)));
     fileHashes[CLAUDE_MD_KEY] = sha256(claudeMdBlock(newClaudeMd));
     fileHashes[SETTINGS_KEY] = sha256(canonicalSettingsPart(JSON.parse(newSettings)));
@@ -386,10 +390,10 @@ export async function runInit({ target, dryRun = false, yes = false, prompts = n
   const kept = info.agents.filter((a) => selection.agents.includes(a) && clashOf(info, selection, a) === 'keep');
   console.log(`Shipline initialized in ${root}
 
-  created ${writes.length} files under .shipline/ and .claude/
+  created ${writes.filter((f) => f.to !== CI_WORKFLOW).length} files under .shipline/ and .claude/
   ${settingsText === null ? 'created' : 'merged hooks and allow rules into'} .claude/settings.json
   ${claudeMd === null ? 'created' : 'appended a marked block to'} CLAUDE.md
-${kept.length ? `\nKept your own agents (used where Shipline's would be): ${kept.join(', ')}. To use Shipline's instead: \`shipline ui\` -> Setup -> Agents & skills, or uninstall and re-run \`init\` interactively.\n` : ''}
+${kept.length ? `\nKept your own agents (used where Shipline's would be): ${kept.join(', ')}. To use Shipline's instead: \`shipline ui\` -> Setup -> Agents & skills, or uninstall and re-run \`init\` interactively.\n` : ''}${selection.ci ? `\nAdded the pull-request check .github/workflows/shipline.yml (paste \`node .shipline/bin/stage.mjs pr-summary\` into PR descriptions).\n` : ''}
 Next: open Claude Code in this repo and run /shipline-setup to customize workflows, rules and enforcement.
 Or set it up in the browser: \`npx @forgeyard/shipline ui\`.
 Then commit .shipline/, .claude/ and CLAUDE.md so teammates get the same flow on clone (Node 18+ required).`);

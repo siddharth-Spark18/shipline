@@ -26,6 +26,8 @@ export interface ChatLive {
   /** Unknown until an `ended`/`fatal` event or a continue; then the server's status applies. */
   ended?: boolean;
   fatal?: FatalInfo;
+  /** Processes the stopped chat left running (after Stop, POSIX); cleared by a kill or when they end. */
+  orphans?: boolean;
   result: ChatResult | null;
   ctx: StreamCtx;
 }
@@ -57,6 +59,8 @@ function ingest(e: ChatEvent) {
       };
     }
     if (e.kind === 'ended') return { busy: false, ended: true };
+    if (e.kind === 'orphans') return { orphans: true };
+    if (e.kind === 'orphans-cleared') return { orphans: false };
     // 'task' only refreshes queries (events.ts); it carries no stream event.
     if (e.kind !== 'event') return {};
     const items = applyEvent(s.items, e.event, s.ctx);
@@ -124,7 +128,8 @@ export const chatStore = {
   dropItem: (id: string, itemId: string) =>
     update(id, (s) => ({ items: s.items.filter((i) => i.id !== itemId) })),
   setBusy: (id: string, busy: boolean) => update(id, () => ({ busy })),
-  resumed: (id: string) => update(id, () => ({ ended: false, fatal: undefined })),
+  resumed: (id: string) => update(id, () => ({ ended: false, fatal: undefined, orphans: false })),
+  clearOrphans: (id: string) => update(id, () => ({ orphans: false })),
   recordDenied: (id: string, tool: string) =>
     update(id, (s) => {
       s.ctx.denied.push(tool);

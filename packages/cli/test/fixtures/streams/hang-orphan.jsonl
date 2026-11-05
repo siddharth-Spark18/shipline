@@ -1,0 +1,9 @@
+# NOT A REAL CAPTURE. Hand-made stand-in for `claude -p --output-format stream-json` output, read by
+# test/fixtures/fake-claude.mjs (see its header). Trust plan, E (leftover processes): starts a grandchild that
+# ignores SIGTERM in claude's process group before system/init, finishes the turn, then hangs. claude itself
+# dies on Stop's SIGTERM; the grandchild stays, so the server must report it as a leftover process.
+@wait-user
+@spawn-stubborn-child
+{"type":"system","subtype":"init","session_id":"{{SESSION_ID}}","cwd":"{{CWD}}","model":"fake-model","tools":["Bash","Edit","Write","AskUserQuestion"],"mcp_servers":[{"name":"shipline_ui","status":"connected"}],"permissionMode":"default"}
+{"type":"result","subtype":"success","is_error":false,"session_id":"{{SESSION_ID}}","duration_ms":1200,"num_turns":1,"result":"Done.","total_cost_usd":0.0123,"usage":{"input_tokens":10,"output_tokens":20}}
+@hang

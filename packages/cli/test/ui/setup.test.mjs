@@ -8,6 +8,7 @@ import path from 'node:path';
 import { CLI_ROOT, makeRepo, removeDir, runInit, stage, storeOf } from '../helpers.mjs';
 import { api, openEvents, startUi } from './helpers.mjs';
 import { headerFor } from '../../src/setup-schema.mjs';
+import { INTERFACE } from '../../src/interface.mjs';
 
 const sha256 = (t) => crypto.createHash('sha256').update(t).digest('hex');
 const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -177,7 +178,7 @@ describe('saving', () => {
     assert.equal(wfEntry(s3, 'hotfix').model.stages[0].sla_hours, 4);
     assert.equal(s3.config.model.team_owner, 'platform');
     assert.equal(s3.config.model.commands.typecheck, 'pnpm tsc');
-    assert.match(read('.shipline/config.yml'), /\n {2}typecheck: pnpm tsc\n\n# Optional[^\n]*\nskills: \[\]\n\nteam_owner: platform\n$/);
+    assert.match(read('.shipline/config.yml'), /\n {2}typecheck: pnpm tsc\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n\nteam_owner: platform\n$/);
   });
 
   test('a file changed on disk gives 409, and in a two-file save nothing is written', async () => {
@@ -582,7 +583,8 @@ describe('agents and skills (prepublish plan, Setup -> Agents & skills)', () => 
     let v = versionOf(x);
     assert.deepEqual(v.excluded, [AGENT('researcher'), AGENT('reviewer')]);
     assert.ok(!(AGENT('researcher') in v.files));
-    assert.equal(v.interface, 3);
+    assert.equal(v.interface, INTERFACE);
+    assert.equal(INTERFACE, 4);
     let s = await getSetup(x.ui);
     assert.deepEqual(s.agents.shipline.find((a) => a.name === 'researcher'), { name: 'researcher', installed: false, excluded: true, hash: null });
     assert.equal(s.versionHash, sha256(xread(x, '.shipline/bin/VERSION')));
@@ -863,5 +865,143 @@ describe('config.yml', () => {
     t = await api(x.ui, 'GET', '/api/tasks');
     assert.deepEqual(t.json.tasks.map((k) => k.dir).sort(), [path.join(tasks, 'new-place'), path.join(tasks, 'old-place')]);
     assert.ok(!existsSync(path.join(x.dir, 'work')));
+  });
+});
+
+// Trust plan, C and API: Setup's CI check section. GET /api/setup has `ci`; POST /api/setup/ci (with ?preview=1)
+// adds or removes .github/workflows/shipline.yml and saves config.yml's ci: through the usual save pipeline.
+describe('CI check (Trust plan)', () => {
+  const CI = '.github/workflows/shipline.yml';
+  const CONFIG = '.shipline/config.yml';
+  const ciTemplate = () => readFileSync(path.join(CLI_ROOT, 'templates', 'github', 'shipline.yml'), 'utf8');
+  const ciPost = (x, body, { preview = false } = {}) => api(x.ui, 'POST', `/api/setup/ci${preview ? '?preview=1' : ''}`, { body });
+  const xread = (x, rel) => readFileSync(path.join(x.dir, rel), 'utf8');
+  const xexists = (x, rel) => existsSync(path.join(x.dir, rel));
+  const versionOf = (x) => JSON.parse(xread(x, '.shipline/bin/VERSION'));
+  // The base hashes the page would send, from GET /api/setup.
+  async function bases(x) {
+    const s = await getSetup(x.ui);
+    return { baseHashes: { [CONFIG]: s.config.hash, [CI]: s.ci.workflowHash }, baseVersionHash: s.versionHash };
+  }
+  const tree = (x) => ({ ...snapshot(x.dir), ci: xexists(x, CI) ? xread(x, CI) : null });
+
+  test('GET /api/setup: ci shows the defaults and installed: false on a fresh install', async () => {
+    const x = await scratchRepo();
+    const s = await getSetup(x.ui);
+    assert.deepEqual(s.ci, { installed: false, missing_block: 'fail-unless-label', skip_label: 'shipline:skip', workflowHash: null });
+  });
+
+  test('preview of an install shows the workflow file and writes nothing; unchanged settings leave config.yml out', async () => {
+    const x = await scratchRepo();
+    const before = tree(x);
+    const p = await ciPost(x, { install: true, missing_block: 'fail-unless-label', skip_label: 'shipline:skip' }, { preview: true });
+    assert.equal(p.status, 200, p.text);
+    assert.deepEqual(p.json.files.map((f) => f.kind), ['ci']);
+    const [f] = p.json.files;
+    assert.equal(f.text, ciTemplate());
+    assert.deepEqual(f.errors, []);
+    assert.ok(f.diff.length > 0);
+    assert.deepEqual(tree(x), before);
+  });
+
+  test('apply install: writes the workflow, records its hash in VERSION.files; GET shows it installed', async () => {
+    const x = await scratchRepo();
+    const configBefore = xread(x, CONFIG);
+    const r = await ciPost(x, { install: true, missing_block: 'fail-unless-label', skip_label: 'shipline:skip', ...(await bases(x)) });
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.json.written, [{ kind: 'ci', action: 'write' }]);
+    assert.equal(xread(x, CI), ciTemplate());
+    assert.equal(xread(x, CONFIG), configBefore, 'config.yml is untouched when the settings did not change');
+    assert.equal(versionOf(x).files[CI], sha256(ciTemplate()));
+    const s = await getSetup(x.ui);
+    assert.deepEqual(s.ci, { installed: true, missing_block: 'fail-unless-label', skip_label: 'shipline:skip', workflowHash: sha256(ciTemplate()) });
+    assert.equal(s.versionHash, sha256(xread(x, '.shipline/bin/VERSION')));
+  });
+
+  test('changing missing_block and skip_label saves config.yml\'s ci: (preview first), and the hooks read it', async () => {
+    const x = await scratchRepo();
+    const body = { install: false, missing_block: 'warn', skip_label: 'no-ci' };
+    const p = await ciPost(x, body, { preview: true });
+    assert.equal(p.status, 200, p.text);
+    assert.deepEqual(p.json.files.map((f) => f.kind), ['config']);
+    assert.match(p.json.files[0].text, /\nci:\n {2}missing_block: warn\n(?: {2}#[^\n]*\n)? {2}skip_label: no-ci\n/);
+    const r = await ciPost(x, { ...body, ...(await bases(x)) });
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.json.written.map((w) => w.kind), ['config']);
+    assert.equal(xread(x, CONFIG), p.json.files[0].text);
+    const s = await getSetup(x.ui);
+    assert.deepEqual(s.ci, { installed: false, missing_block: 'warn', skip_label: 'no-ci', workflowHash: null });
+    assert.deepEqual(s.config.model.ci, { missing_block: 'warn', skip_label: 'no-ci' });
+    assert.ok(!xexists(x, CI));
+  });
+
+  test('apply remove: deletes the workflow (and the empty .github/ folders) and its VERSION.files entry', async () => {
+    const x = await scratchRepo();
+    assert.equal((await ciPost(x, { install: true, ...(await bases(x)) })).status, 200);
+    const p = await ciPost(x, { install: false }, { preview: true });
+    assert.equal(p.status, 200, p.text);
+    assert.deepEqual(p.json.files.map((f) => [f.kind, f.text]), [['ci', null]]);
+    const r = await ciPost(x, { install: false, ...(await bases(x)) });
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.json.written, [{ kind: 'ci', action: 'delete' }]);
+    assert.ok(!xexists(x, CI));
+    assert.ok(!xexists(x, '.github'));
+    assert.ok(!(CI in versionOf(x).files));
+    assert.equal((await getSetup(x.ui)).ci.installed, false);
+  });
+
+  test('remove keeps the team\'s other workflows and the .github/workflows folder', async () => {
+    const x = await scratchRepo((d) => {
+      mkdirSync(path.join(d, '.github', 'workflows'), { recursive: true });
+      writeFileSync(path.join(d, '.github', 'workflows', 'test.yml'), 'name: tests\n');
+    });
+    assert.equal((await ciPost(x, { install: true, ...(await bases(x)) })).status, 200);
+    assert.equal((await ciPost(x, { install: false, ...(await bases(x)) })).status, 200);
+    assert.ok(!xexists(x, CI));
+    assert.equal(xread(x, '.github/workflows/test.yml'), 'name: tests\n');
+  });
+
+  test('409 when config.yml or the workflow changed on disk since the page loaded; nothing is written', async () => {
+    const x = await scratchRepo();
+    const b = await bases(x);
+    writeFileSync(path.join(x.dir, CONFIG), xread(x, CONFIG) + '\nteam_owner: platform\n');
+    let before = tree(x);
+    let r = await ciPost(x, { install: true, missing_block: 'warn', skip_label: 'shipline:skip', ...b });
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.json.error.code, 'changed');
+    assert.deepEqual(r.json.error.details.paths, [CONFIG]);
+    assert.deepEqual(tree(x), before);
+
+    // The workflow appeared on disk after the page loaded (its base hash says "absent").
+    const b2 = await bases(x);
+    mkdirSync(path.join(x.dir, '.github', 'workflows'), { recursive: true });
+    writeFileSync(path.join(x.dir, CI), 'name: someone else\n');
+    before = tree(x);
+    r = await ciPost(x, { install: false, ...b2 });
+    assert.equal(r.status, 409, r.text);
+    assert.deepEqual(r.json.error.details.paths, [CI]);
+    assert.deepEqual(tree(x), before);
+  });
+
+  test('invalid settings are refused (400) before anything is written, the workflow included', async () => {
+    const x = await scratchRepo();
+    const before = tree(x);
+    for (const bad of [{ missing_block: 'ignore' }, { skip_label: 'x'.repeat(51) }, { skip_label: '  ' }]) {
+      const r = await ciPost(x, { install: true, missing_block: 'fail', skip_label: 'shipline:skip', ...bad, ...(await bases(x)) });
+      assert.equal(r.status, 400, `${JSON.stringify(bad)}: ${r.text}`);
+      const p = await ciPost(x, { install: true, missing_block: 'fail', skip_label: 'shipline:skip', ...bad }, { preview: true });
+      assert.equal(p.status, 200, p.text);
+      assert.ok(p.json.files.find((f) => f.kind === 'config').errors.length > 0, JSON.stringify(bad));
+    }
+    assert.deepEqual(tree(x), before);
+  });
+
+  test('a malformed request is 400: install not a boolean, or baseHashes missing an entry', async () => {
+    const x = await scratchRepo();
+    const before = tree(x);
+    assert.equal((await ciPost(x, { install: 'yes' })).status, 400);
+    assert.equal((await ciPost(x, { install: true })).status, 400);
+    assert.equal((await ciPost(x, { install: true, baseHashes: { [CONFIG]: (await getSetup(x.ui)).config.hash } })).status, 400);
+    assert.deepEqual(tree(x), before);
   });
 });

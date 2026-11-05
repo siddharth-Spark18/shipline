@@ -117,8 +117,8 @@ describe('fixtures (item 14)', () => {
     const model = parseYaml(readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8'));
     model.commands = {};
     const out = emitConfig(model, { layout: configLayout() });
-    // The shipped config ends with `skills: []` after the commands block.
-    assert.match(out, /\ncommands:\n\n# Optional[^\n]*\nskills: \[\]\n$/);
+    // The shipped config has `skills: []` after the commands block, then ends with the ci block (Trust plan).
+    assert.match(out, /\ncommands:\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n$/);
     assert.equal(parseYaml(out).commands, null);
   });
 

@@ -34,7 +34,7 @@ function packFiles() {
 describe('package.json', () => {
   test('name, version, bin and files', () => {
     assert.equal(pkg.name, '@forgeyard/shipline');
-    assert.equal(pkg.version, '0.7.0');
+    assert.equal(pkg.version, '0.8.0');
     assert.deepEqual(pkg.bin, { shipline: 'bin/shipline.mjs' });
     for (const f of ['bin', 'src', 'templates', 'ui-dist']) assert.ok(pkg.files.includes(f), f);
     assert.ok(!pkg.files.includes('test'));
@@ -170,7 +170,8 @@ describe('known-hashes.json', () => {
     const paths = Object.keys(KNOWN);
     assert.deepEqual(paths, [...paths].sort());
     for (const [p, byHash] of Object.entries(KNOWN)) {
-      assert.ok(/^\.(shipline|claude)\/|^CLAUDE\.md#shipline$/.test(p), p);
+      // The optional CI workflow (Trust plan, C) is the one Shipline-owned file outside .shipline/ and .claude/.
+      assert.ok(/^\.(shipline|claude)\/|^CLAUDE\.md#shipline$|^\.github\/workflows\/shipline\.yml$/.test(p), p);
       for (const [h, v] of Object.entries(byHash)) {
         assert.match(h, /^[0-9a-f]{64}$/, p);
         assert.match(v, /^\d+\.\d+\.\d+$/, p);

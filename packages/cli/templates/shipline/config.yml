@@ -14,3 +14,10 @@ commands:
 
 # Optional. Names of this repo's own skills (.claude/skills/<name>) that Claude may use at any stage.
 skills: []
+
+# Optional. The pull-request check (.github/workflows/shipline.yml, added from `init` or Setup, CI check) reads this.
+# missing_block: what happens when the PR description has no Shipline summary: fail-unless-label | warn | fail
+ci:
+  missing_block: fail-unless-label
+  # The PR label that lets a PR without a summary pass (with fail-unless-label).
+  skip_label: shipline:skip

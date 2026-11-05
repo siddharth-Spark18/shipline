@@ -293,3 +293,67 @@ describe('a legacy install', () => {
     assert.ok(!exists(dir, '.claude/skills/shipline-workflow'), 'Shipline skill left behind');
   });
 });
+
+// Trust plan, Surface Area: uninstall removes .github/workflows/shipline.yml only when VERSION.files recorded it
+// and the file is still what Shipline wrote.
+describe('the CI workflow', () => {
+  const CI = '.github/workflows/shipline.yml';
+  const template = () => readFileSync(path.join(FIXTURES, '..', '..', 'templates', 'github', 'shipline.yml'));
+
+  // init with the CI opt-in, as interactive init writes it: the template file plus its hash in VERSION.files.
+  function ciRepo({ record = true, other = false } = {}) {
+    const dir = bareRepo(other ? (d) => writeFile(d, '.github/workflows/test.yml', 'name: tests\n') : undefined);
+    initAndCommit(dir);
+    writeFile(dir, CI, template());
+    if (record) {
+      const vf = path.join(dir, '.shipline/bin/VERSION');
+      const v = readJson(vf);
+      v.files[CI] = sha(template());
+      writeFileSync(vf, JSON.stringify(v, null, 2) + '\n');
+    }
+    return dir;
+  }
+
+  test('recorded and unedited: removed, with the empty .github/ folders', () => {
+    const dir = ciRepo();
+    const r = uninstall(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /^ {2}- \.github\/workflows\/shipline\.yml$/m);
+    assert.ok(!exists(dir, CI));
+    assert.ok(!exists(dir, '.github'));
+  });
+
+  test('recorded, next to the team\'s own workflows: only Shipline\'s file goes', () => {
+    const dir = ciRepo({ other: true });
+    assert.equal(uninstall(dir, '--yes').code, 0);
+    assert.ok(!exists(dir, CI));
+    assert.equal(read(dir, '.github/workflows/test.yml'), 'name: tests\n');
+  });
+
+  test('recorded but edited by the team: kept, and the preview says so', () => {
+    const dir = ciRepo();
+    appendFileSync(path.join(dir, CI), '      - run: npm test\n');
+    const edited = read(dir, CI);
+    const r = uninstall(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!/- \.github\/workflows\/shipline\.yml/.test(r.stdout));
+    assert.match(r.stdout, /! \.github\/workflows\/shipline\.yml was edited since Shipline wrote it; left as it is/);
+    assert.equal(read(dir, CI), edited);
+  });
+
+  test('not recorded in VERSION.files (the team\'s own file with the same name): kept', () => {
+    const dir = ciRepo({ record: false });
+    const r = uninstall(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.stdout.includes('.github/workflows/shipline.yml'));
+    assert.ok(read(dir, CI).length > 0);
+  });
+
+  test('--dry-run lists it and removes nothing', () => {
+    const dir = ciRepo();
+    const r = uninstall(dir, '--dry-run');
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /^ {2}- \.github\/workflows\/shipline\.yml$/m);
+    assert.ok(exists(dir, CI));
+  });
+});

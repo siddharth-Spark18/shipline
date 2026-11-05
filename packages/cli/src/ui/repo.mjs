@@ -3,7 +3,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { INTERFACE, compareInterface, readRepoVersion } from '../interface.mjs';
+import { INTERFACE, STORE_INTERFACE, compareInterface, readRepoVersion } from '../interface.mjs';
 import { HttpError } from './http.mjs';
 
 // Walks up from `dir` to the first folder with .shipline/config.yml. Unlike findRoot in lib.mjs it
@@ -47,13 +47,13 @@ export async function resolveRepo(dir) {
     version,
     state,
     // True until the repo is upgraded: its tasks and state still live in the repo (interface below 3).
-    needsUpgrade: version.interface < INTERFACE,
+    needsUpgrade: version.interface < STORE_INTERFACE,
     // { cfg } or { cfg: null, error }; a config that doesn't parse never stops the server.
     getConfig: () => current,
     reloadConfig: load,
     // Chat is disabled for a repo whose old hooks still write state to .shipline/.state/.
     requireUpgraded() {
-      if (version.interface < INTERFACE) {
+      if (version.interface < STORE_INTERFACE) {
         throw new HttpError(
           423,
           'needs-upgrade',

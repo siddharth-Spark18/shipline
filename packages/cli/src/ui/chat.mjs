@@ -27,6 +27,8 @@ const STDERR_TAIL_BYTES = 4096;
 const KILL_AFTER_MS = 5000;
 const EXIT_GRACE_MS = 1000;
 const TITLE_LIMIT = 60;
+const ORPHAN_CHECK_MS = 400; // after claude exits: lets processes that handle SIGTERM finish dying
+const ORPHAN_POLL_MS = 2000; // while the notice is shown: has the group emptied by itself?
 
 // Signals a process group (POSIX, the child leads its own group) or tree (Windows). `child` is the fallback handle.
 export function killProcessTree(pid, signal, child) {
@@ -58,10 +60,51 @@ export function killProcessTree(pid, signal, child) {
 
 export const resumeCommand = (id) => `claude --resume ${id}`;
 
+// POSIX: does the process group still have members? (EPERM means it has, owned by someone else.)
+function groupAlive(pgid) {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (e) {
+    return Boolean(e && e.code === 'EPERM');
+  }
+}
+
 export function createChats(app) {
   const root = app.repo.root;
   let active = null;
   const emit = (payload) => app.hub.send('chat', payload);
+  // chatId -> { pgid, poll }: processes left running in a stopped chat's group (POSIX), until killed or gone.
+  const orphans = new Map();
+
+  function clearOrphans(chatId, announce) {
+    const o = orphans.get(chatId);
+    if (!o) return;
+    clearInterval(o.poll);
+    clearTimeout(o.first);
+    orphans.delete(chatId);
+    if (announce) emit({ chatId, kind: 'orphans-cleared' });
+  }
+
+  // After a Stop: once claude is gone, tell the UI if anything it started still runs in its process group.
+  function watchOrphans(chatId, pgid) {
+    clearOrphans(chatId, false);
+    const o = { pgid, poll: null, first: null };
+    orphans.set(chatId, o);
+    o.first = setTimeout(() => {
+      if (orphans.get(chatId) !== o) return;
+      if (!groupAlive(pgid)) {
+        orphans.delete(chatId);
+        return;
+      }
+      emit({ chatId, kind: 'orphans', pgid });
+      o.poll = setInterval(() => {
+        if (!groupAlive(pgid)) clearOrphans(chatId, true);
+      }, ORPHAN_POLL_MS);
+      o.poll.unref();
+    }, ORPHAN_CHECK_MS);
+    o.first.unref();
+  }
 
   const state = (id) => (active && active.id === id ? active : null);
 
@@ -181,6 +224,8 @@ export function createChats(app) {
         stderrTail: spawnError || stderrTail,
         resumeCommand: resumeCommand(chat.id),
       });
+    if (chat.stopping && process.platform !== 'win32' && chat.child && chat.child.pid)
+      watchOrphans(chat.id, chat.child.pid);
     chat.resolveExited();
   }
 
@@ -364,8 +409,19 @@ export function createChats(app) {
       await stopChat(chat);
     },
 
+    // SIGKILLs what a stopped chat left running (POSIX). false when nothing is left; the notice is cleared either way.
+    killOrphans(chatId) {
+      const o = orphans.get(chatId);
+      if (!o) return false;
+      const alive = groupAlive(o.pgid);
+      if (alive) killProcessTree(o.pgid, 'SIGKILL');
+      clearOrphans(chatId, true);
+      return alive;
+    },
+
     // Shutdown: stop the claude process group and release the lock.
     async close() {
+      for (const id of [...orphans.keys()]) clearOrphans(id, false); // left running: the developer decides
       if (active) await stopChat(active);
       releaseLock(root, app.port);
     },

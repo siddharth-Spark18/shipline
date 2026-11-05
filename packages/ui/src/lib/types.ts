@@ -100,6 +100,8 @@ export interface ConfigModel {
   } | null;
   /** Names of the repo's own `.claude/skills/<name>`; edited in the Agents & skills section. */
   skills?: string[] | null;
+  /** The pull-request check settings; edited in the CI check section. */
+  ci?: { missing_block?: string | null; skip_label?: string | null; [key: string]: unknown } | null;
   [key: string]: unknown;
 }
 
@@ -154,6 +156,31 @@ export interface SetupData {
   skills: SetupSkills;
   /** SHA-256 of the raw `.shipline/bin/VERSION` text. */
   versionHash: string;
+  ci: SetupCi;
+}
+
+/** The pull-request check: its workflow file and config.yml's `ci:` values (defaults filled in). */
+export interface SetupCi {
+  installed: boolean;
+  missing_block: CiMissingBlock;
+  skip_label: string;
+  /** SHA-256 of `.github/workflows/shipline.yml`, or null when it is absent. */
+  workflowHash: string | null;
+}
+
+export type CiMissingBlock = 'fail-unless-label' | 'warn' | 'fail';
+
+/** POST /api/setup/ci. `baseHashes` is keyed by `.shipline/config.yml` and `.github/workflows/shipline.yml`; null = absent. */
+export interface CiChange {
+  install: boolean;
+  missing_block: CiMissingBlock;
+  skip_label: string;
+  baseVersionHash?: string;
+  baseHashes: Record<string, string | null>;
+}
+
+export interface CiPreviewResponse {
+  files: PreviewFile[];
 }
 
 /** POST /api/setup/agents. `baseHashes` is keyed by `.claude/agents/<name>.md`; null = must not exist. */
@@ -200,9 +227,9 @@ export interface ImpactEntry {
 }
 
 export interface PreviewFile {
-  kind: SetupKind | 'agent';
+  kind: SetupKind | 'agent' | 'ci';
   id?: string;
-  /** Null for a removed agent file. */
+  /** Null for a removed agent or CI workflow file. */
   text: string | null;
   diff: DiffHunk[];
   removedComments: string[];
@@ -304,8 +331,10 @@ export interface BannerEvent {
 
 export interface ChatEvent {
   chatId: string;
-  kind: 'event' | 'fatal' | 'ended' | 'task';
+  kind: 'event' | 'fatal' | 'ended' | 'task' | 'orphans' | 'orphans-cleared';
   event?: unknown;
+  /** kind 'orphans': the process group that still has members after Stop. */
+  pgid?: number;
   /** kind 'task': the task folder this chat's session got bound to. */
   taskDir?: string;
   reason?: 'parse' | 'exit' | 'resume-failed';

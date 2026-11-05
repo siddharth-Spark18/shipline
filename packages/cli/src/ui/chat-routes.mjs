@@ -1,4 +1,4 @@
-// Chat API handlers: GET/POST /api/chats, GET /api/chats/<id>, and <id>/message, /stop, /continue.
+// Chat API handlers: GET/POST /api/chats, GET /api/chats/<id>, and <id>/message, /stop, /kill, /continue.
 // Node 20+, no dependencies.
 import { MIN_CLAUDE_VERSION, claudeHealth } from './claude.mjs';
 import { listCommands } from './commands.mjs';
@@ -173,6 +173,16 @@ export function routes(app) {
         requireChat(app, params.id);
         await app.chats.stop(params.id);
         return { ok: true };
+      },
+    },
+    {
+      method: 'POST',
+      path: '/api/chats/:id/kill',
+      handler: ({ params }) => {
+        requireChat(app, params.id);
+        if (!app.chats.killOrphans(params.id))
+          throw new HttpError(404, 'not-found', 'Nothing is left running');
+        return { killed: true };
       },
     },
     {

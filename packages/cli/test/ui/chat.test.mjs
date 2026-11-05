@@ -8,10 +8,11 @@ import { copyFileSync, chmodSync, existsSync, mkdirSync, readFileSync, statSync,
 import os from 'node:os';
 import path from 'node:path';
 import { CLI_ROOT, hook, makeRepo, removeDir, stage, storeOf } from '../helpers.mjs';
-import { api, openEvents, startUi } from './helpers.mjs';
+import { api, openEvents, sleep, startUi } from './helpers.mjs';
 import {
   FORBIDDEN,
   UUID_RE,
+  groupPids,
   isChat,
   isEnd,
   isEventType,
@@ -616,5 +617,87 @@ describe('images', () => {
       assert.equal(r.json.error.code, 'too-large');
       assert.match(r.json.error.message, /1 MB/);
     }
+  });
+});
+
+// Trust plan, E: processes a stopped chat leaves running. POSIX only: on Windows, Stop already takes down the
+// whole tree with taskkill /T.
+describe('leftover processes after Stop (Trust plan, E)', {
+  skip:
+    process.platform === 'win32' &&
+    'POSIX process groups only; on Windows Stop kills the whole tree with taskkill /T, covered by windows.test.mjs "Stop leaves no fake-claude or child process in tasklist"',
+}, () => {
+  const kill = (id) => api(ui, 'POST', `/api/chats/${id}/kill`);
+  const isOrphans = (id) => isChat(id, 'orphans');
+  const isCleared = (id) => isChat(id, 'orphans-cleared');
+
+  // Starts the hang-orphan script and stops it: claude dies on SIGTERM, its grandchild (which ignores SIGTERM)
+  // stays in claude's process group. Returns { id, pgid, child, orphans }.
+  async function stopWithOrphan() {
+    fake.script('hang-orphan');
+    const id = await startChat(ui, ev, 'Start a dev server');
+    const since = ev.mark();
+    const end = await stopChat(ui, ev, id);
+    assert.equal(end.data.kind, 'ended');
+    const pgid = fake.runs()[0].pid;
+    const child = fake.records().find((r) => r.child).child;
+    const orphans = await ev.waitFor(isOrphans(id), 5000, since);
+    return { id, pgid, child, orphans };
+  }
+
+  test('a grandchild that ignores SIGTERM produces the orphans event with the group id; claude itself is gone', async () => {
+    const { id, pgid, child, orphans } = await stopWithOrphan();
+    try {
+      assert.deepEqual(orphans.data, { chatId: id, kind: 'orphans', pgid });
+      assert.ok(!pidAlive(pgid), 'claude exited');
+      assert.ok(pidAlive(child), 'the grandchild is still running');
+      assert.deepEqual(groupPids(pgid), [child]);
+    } finally {
+      await kill(id);
+    }
+  });
+
+  test('POST /kill SIGKILLs the group, answers { killed: true } and sends orphans-cleared; a second /kill is 404', async () => {
+    const { id, pgid, child } = await stopWithOrphan();
+    const since = ev.mark();
+    const r = await kill(id);
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.json, { killed: true });
+    const cleared = await ev.waitFor(isCleared(id), 2000, since);
+    assert.deepEqual(cleared.data, { chatId: id, kind: 'orphans-cleared' });
+    await waitUntil(() => !pidAlive(child), 3000);
+    assert.deepEqual(groupPids(pgid), []);
+    const again = await kill(id);
+    assert.equal(again.status, 404, again.text);
+    assert.equal(again.json.error.code, 'not-found');
+  });
+
+  test('a group that empties by itself clears the notice (orphans-cleared), and /kill is then 404', async () => {
+    const { id, child } = await stopWithOrphan();
+    const since = ev.mark();
+    process.kill(child, 'SIGKILL');
+    const cleared = await ev.waitFor(isCleared(id), 5000, since); // the poll runs every 2 s
+    assert.deepEqual(cleared.data, { chatId: id, kind: 'orphans-cleared' });
+    assert.equal((await kill(id)).status, 404);
+  });
+
+  test('a Stop that leaves nothing running sends no orphans event, and /kill is 404', async () => {
+    fake.script('hang'); // its grandchild dies on SIGTERM
+    const id = await startChat(ui, ev);
+    const since = ev.mark();
+    await stopChat(ui, ev, id);
+    const child = fake.records().find((r) => r.child).child;
+    await waitUntil(() => !pidAlive(child), 3000);
+    await sleep(800); // past the ~400 ms check after the exit
+    assert.ok(!ev.events.slice(since).some(isOrphans(id)), 'no orphans event');
+    const r = await kill(id);
+    assert.equal(r.status, 404, r.text);
+    assert.equal(r.json.error.code, 'not-found');
+  });
+
+  test('/kill on an unknown chat is 404', async () => {
+    const r = await kill('00000000-0000-4000-8000-00000000abcd');
+    assert.equal(r.status, 404);
+    assert.equal(r.json.error.code, 'not-found');
   });
 });

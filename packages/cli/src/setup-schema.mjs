@@ -9,8 +9,9 @@ const TEMPLATES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 
 // Keys the form edits. Anything else in a file is shown as "other fields (kept)".
 export const KNOWN_FIELDS = {
   config: {
-    top: ['branch_pattern', 'tracker', 'commands', 'skills'],
+    top: ['branch_pattern', 'tracker', 'commands', 'skills', 'ci'],
     commands: ['test', 'lint', 'build'],
+    ci: ['missing_block', 'skip_label'],
   },
   workflow: {
     top: ['id', 'name', 'description', 'branch_type', 'stages'],
@@ -23,6 +24,9 @@ const ID_RE = /^[A-Za-z0-9_-]+$/;
 const CONTROL_RE = /[\u0000-\u001f\u007f]/;
 const PATTERN_VARS = new Set(['key', 'slug', 'type']);
 const ENFORCEMENT = ['guide', 'warn', 'block'];
+export const CI_MISSING_BLOCK = ['fail-unless-label', 'warn', 'fail'];
+export const DEFAULT_CI = { missing_block: 'fail-unless-label', skip_label: 'shipline:skip' };
+const SKIP_LABEL_MAX = 50;
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const err = (p, message) => ({ path: p, message });
@@ -68,6 +72,21 @@ export function validateConfig(model, { skills = null } = {}) {
         if (typeof n !== 'string' || !ID_RE.test(n)) out.push(err(p, 'may only contain letters, digits, - and _'));
         else if (skills && !skills.includes(n)) out.push(warn(p, `no skill folder .claude/skills/${n}/ found`));
       });
+    }
+  }
+  const ci = model.ci;
+  if (ci !== undefined && ci !== null) {
+    if (!isObj(ci)) out.push(err('ci', 'must be a map'));
+    else {
+      const mb = ci.missing_block;
+      if (mb !== undefined && mb !== null && !CI_MISSING_BLOCK.includes(mb)) {
+        out.push(err('ci.missing_block', `must be one of ${CI_MISSING_BLOCK.join(', ')}`));
+      }
+      const sl = ci.skip_label;
+      if (sl !== undefined && sl !== null) {
+        if (typeof sl !== 'string' || sl.trim() === '') out.push(err('ci.skip_label', 'must be a non-empty label name'));
+        else if (sl.length > SKIP_LABEL_MAX) out.push(err('ci.skip_label', `must be at most ${SKIP_LABEL_MAX} characters`));
+      }
     }
   }
   lineBreakErrors(model, '', out);

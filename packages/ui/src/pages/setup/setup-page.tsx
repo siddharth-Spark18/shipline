@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DiffView } from '@/components/diff-view';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { AgentsSkills } from '@/pages/setup/agents-skills';
+import { CiCheck } from '@/pages/setup/ci-check';
 import { ConfigForm } from '@/pages/setup/config-form';
 import { NewWorkflowDialog } from '@/pages/setup/new-workflow-dialog';
 import { SaveDialog, fileLabel } from '@/pages/setup/save-dialog';
@@ -29,6 +30,8 @@ import type { ConfigModel, ValidationIssue, VersionState } from '@/lib/types';
 
 /** Nav key of the Agents & skills section. The colon can't occur in a workflow id. */
 const AGENTS_KEY = ':agents';
+/** Nav key of the CI check section. */
+const CI_KEY = ':ci';
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -99,7 +102,10 @@ export default function SetupPage({ versionState }: { versionState: VersionState
 
   const workflowIds = data.workflows.map((w) => w.id!).filter(Boolean);
   const current =
-    selected === 'config' || selected === AGENTS_KEY || workflowIds.includes(selected)
+    selected === 'config' ||
+    selected === AGENTS_KEY ||
+    selected === CI_KEY ||
+    workflowIds.includes(selected)
       ? selected
       : 'config';
   const workflowFile = data.workflows.find((w) => w.id === current);
@@ -169,6 +175,13 @@ export default function SetupPage({ versionState }: { versionState: VersionState
           >
             Agents &amp; skills
           </Button>
+          <Button
+            variant={current === CI_KEY ? 'secondary' : 'ghost'}
+            className="justify-start"
+            onClick={() => setSelected(CI_KEY)}
+          >
+            CI check
+          </Button>
           <p className="mt-2 hidden px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase md:block">
             Workflows
           </p>
@@ -209,6 +222,15 @@ export default function SetupPage({ versionState }: { versionState: VersionState
               data={data}
               config={drafts.config}
               onConfigChange={(m: ConfigModel) => setDrafts({ ...drafts, config: m })}
+              readOnly={readOnly}
+              hasOtherEdits={entries.length > 0}
+              onReload={() => void reload()}
+            />
+          )}
+          {current === CI_KEY && (
+            <CiCheck
+              key={dataUpdatedAt}
+              data={data}
               readOnly={readOnly}
               hasOtherEdits={entries.length > 0}
               onReload={() => void reload()}

@@ -3,6 +3,8 @@ import type {
   AgentsPreviewResponse,
   ApiErrorEnvelope,
   ChatCommand,
+  CiChange,
+  CiPreviewResponse,
   ChatDetail,
   ChatsResponse,
   Diagnostics,
@@ -80,6 +82,8 @@ export const api = {
   agentsPreview: (req: AgentsChange) =>
     request<AgentsPreviewResponse>('POST', '/api/setup/agents?preview=1', req),
   agentsApply: (req: AgentsChange) => request<unknown>('POST', '/api/setup/agents', req),
+  ciPreview: (req: CiChange) => request<CiPreviewResponse>('POST', '/api/setup/ci?preview=1', req),
+  ciApply: (req: CiChange) => request<unknown>('POST', '/api/setup/ci', req),
   tasks: () => request<TasksData>('GET', '/api/tasks'),
   file: (path: string, mode: FileMode) =>
     request<FileResponse>('GET', `/api/file?path=${encodeURIComponent(path)}&mode=${mode}`),
@@ -106,6 +110,8 @@ export const api = {
     ),
   stopChat: (id: string) =>
     request<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/stop`),
+  killChat: (id: string) =>
+    request<{ killed: true }>('POST', `/api/chats/${encodeURIComponent(id)}/kill`),
   continueChat: (id: string) =>
     request<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/continue`),
   answerPrompt: (id: string, answer: PromptAnswer) =>

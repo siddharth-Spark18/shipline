@@ -14,6 +14,9 @@ export const HOOK_MARK = '.shipline/bin/';
 export const VERSION_FILE = '.shipline/bin/VERSION';
 export const CLAUDE_MD_KEY = 'CLAUDE.md#shipline';
 export const SETTINGS_KEY = '.claude/settings.json#shipline';
+// The optional pull-request check: installed only when the team opts in, so it is not part of ownedTemplateFiles().
+export const CI_WORKFLOW = '.github/workflows/shipline.yml';
+export const CI_WORKFLOW_TEMPLATE = path.join(TEMPLATES, 'github', 'shipline.yml');
 
 export const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 
@@ -83,11 +86,12 @@ export function claudeMdBlock(text) {
   return toEol(text.slice(a + START.length, b), '\n').trim(); // CRLF files hash the same as LF ones
 }
 
-// { <repo-relative path>: sha256 } of what a fresh install of this package would write for the owned files
-// and the two virtual entries.
+// { <repo-relative path>: sha256 } of what a fresh install of this package would write for the owned files,
+// the optional CI workflow and the two virtual entries.
 export function templateHashes() {
   const out = {};
   for (const f of ownedTemplateFiles()) out[f.to] = sha256(readFileSync(f.from));
+  out[CI_WORKFLOW] = sha256(readFileSync(CI_WORKFLOW_TEMPLATE));
   out[CLAUDE_MD_KEY] = sha256(claudeMdBlock(claudeMdSection()));
   out[SETTINGS_KEY] = sha256(canonicalSettingsPart(templateSettings()));
   return out;

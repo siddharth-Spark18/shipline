@@ -25,6 +25,7 @@ import {
   ClaudeMissingNotice,
   FatalNotice,
   LockHeldNotice,
+  OrphansNotice,
   ResultLine,
   ResumeCommand,
 } from '@/pages/chat/notices';
@@ -362,6 +363,21 @@ function ChatView({
     }
   };
 
+  const [killing, setKilling] = useState(false);
+  const killOrphans = async () => {
+    setKilling(true);
+    try {
+      await api.killChat(id);
+      chatStore.clearOrphans(id);
+    } catch (e) {
+      // 404: nothing was left (they ended on their own), so the notice can go either way.
+      if (e instanceof ApiError && e.status === 404) chatStore.clearOrphans(id);
+      else onError(e);
+    } finally {
+      setKilling(false);
+    }
+  };
+
   const resume = async () => {
     try {
       await api.continueChat(id);
@@ -421,6 +437,7 @@ function ChatView({
       />
 
       {live.fatal && <FatalNotice chatId={id} fatal={live.fatal} onNewChat={onNewChat} />}
+      {live.orphans && <OrphansNotice onKill={() => void killOrphans()} killing={killing} />}
       {live.result && <ResultLine result={live.result} />}
 
       {missing ? (

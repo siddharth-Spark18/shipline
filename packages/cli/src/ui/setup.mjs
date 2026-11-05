@@ -8,14 +8,22 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  rmdirSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
 import { emitConfig, emitWorkflow } from '../yaml-emit.mjs';
-import { configLayout, headerFor, validateConfig, validateWorkflow } from '../setup-schema.mjs';
+import {
+  CI_MISSING_BLOCK,
+  DEFAULT_CI,
+  configLayout,
+  headerFor,
+  validateConfig,
+  validateWorkflow,
+} from '../setup-schema.mjs';
 import { shippedAgents } from '../init.mjs';
-import { TEMPLATES, VERSION_FILE } from '../hashes.mjs';
+import { CI_WORKFLOW, CI_WORKFLOW_TEMPLATE, TEMPLATES, VERSION_FILE } from '../hashes.mjs';
 import { detectEol, toEol } from '../store.mjs';
 import { HttpError } from './http.mjs';
 import { textDiff } from './git.mjs';
@@ -711,6 +719,152 @@ async function agentsApply(app, body) {
   return { written: plan.changes.map((c) => ({ kind: 'agent', id: c.name, action: c.action })) };
 }
 
+// ---------- CI check (.github/workflows/shipline.yml and config.yml's ci:) ----------
+
+const CONFIG_REL = '.shipline/config.yml';
+
+// The ci: values in effect for a parsed config model (defaults where absent or invalid).
+function ciValues(model) {
+  const ci = model && isObj(model.ci) ? model.ci : {};
+  return {
+    missing_block: CI_MISSING_BLOCK.includes(ci.missing_block)
+      ? ci.missing_block
+      : DEFAULT_CI.missing_block,
+    skip_label:
+      typeof ci.skip_label === 'string' && ci.skip_label.trim()
+        ? ci.skip_label
+        : DEFAULT_CI.skip_label,
+  };
+}
+
+function ciSetup(app) {
+  const workflowHash = fileHash(path.join(app.repo.root, CI_WORKFLOW));
+  const config = loadFile(app, 'config');
+  return { installed: workflowHash !== null, ...ciValues(config.model), workflowHash };
+}
+
+// Works out a { install, missing_block, skip_label } request without writing. Throws 400 for a bad request.
+// Returns { config: prepared entry, workflow: { action, current, text } | null, version }.
+function planCi(app, body) {
+  const { root } = app.repo;
+  if (!isObj(body) || typeof body.install !== 'boolean')
+    throw badRequest('Expected { install, missing_block, skip_label, baseHashes }');
+  const config = loadFile(app, 'config');
+  if (config.parseError !== undefined)
+    throw badRequest(`config.yml does not parse (${config.parseError}); fix it by hand first`);
+
+  const want = {
+    missing_block: body.missing_block ?? DEFAULT_CI.missing_block,
+    skip_label: body.skip_label ?? DEFAULT_CI.skip_label,
+  };
+  const model = structuredClone(config.model);
+  // Don't add a ci: section that only repeats the defaults.
+  const hadCi = Object.prototype.hasOwnProperty.call(model, 'ci') && model.ci !== null;
+  const isDefault =
+    want.missing_block === DEFAULT_CI.missing_block && want.skip_label === DEFAULT_CI.skip_label;
+  if (hadCi || !isDefault) model.ci = want;
+  const entry = prepare(app, { kind: 'config', model, baseHash: config.hash });
+
+  const abs = path.join(root, CI_WORKFLOW);
+  const current = readText(abs);
+  let workflow = null;
+  if (body.install && current === null)
+    workflow = { action: 'write', current, text: readFileSync(CI_WORKFLOW_TEMPLATE, 'utf8') };
+  else if (!body.install && current !== null) workflow = { action: 'delete', current, text: null };
+  return { config: entry, workflow, version: readVersionFile(root) };
+}
+
+async function ciPreview(app, body) {
+  const plan = planCi(app, body);
+  const files = [];
+  const p = plan.config;
+  if (p.text !== p.current || p.errors.length || p.roundTrip) {
+    const errors = [...p.errors];
+    if (p.roundTrip) errors.push(p.roundTrip);
+    files.push({
+      kind: 'config',
+      text: p.text,
+      diff: await textDiff(app.repo.root, p.current ?? '', p.text),
+      removedComments: p.removedComments,
+      errors,
+    });
+  }
+  if (plan.workflow) {
+    files.push({
+      kind: 'ci',
+      text: plan.workflow.text,
+      diff: await textDiff(app.repo.root, plan.workflow.current ?? '', plan.workflow.text ?? ''),
+      removedComments: [],
+      errors: [],
+    });
+  }
+  return { files };
+}
+
+async function ciApply(app, body) {
+  app.repo.requireWritable();
+  const { root } = app.repo;
+  const plan = planCi(app, body);
+  const baseHashes = body.baseHashes;
+  if (!isObj(baseHashes)) throw badRequest('baseHashes is required');
+  for (const key of [CONFIG_REL, CI_WORKFLOW])
+    if (!(key in baseHashes)) throw badRequest(`baseHashes has no entry for ${key}`);
+
+  // Every hash, before the first write.
+  const changed = [];
+  if (fileHash(path.join(root, CI_WORKFLOW)) !== baseHashes[CI_WORKFLOW]) changed.push(CI_WORKFLOW);
+  if (fileHash(path.join(root, CONFIG_REL)) !== baseHashes[CONFIG_REL]) changed.push(CONFIG_REL);
+  if (typeof body.baseVersionHash === 'string' && plan.version.hash !== body.baseVersionHash)
+    changed.push(VERSION_FILE);
+  if (changed.length)
+    throw new HttpError(409, 'changed', 'A file changed on disk since it was loaded', {
+      paths: changed,
+    });
+
+  // config.yml first: it validates everything and writes nothing when there is an error.
+  const written = [];
+  const entry = { ...plan.config, baseHash: baseHashes[CONFIG_REL] };
+  written.push(...commit(app, [entry]).written);
+
+  const wf = plan.workflow;
+  if (wf) {
+    const abs = path.join(root, CI_WORKFLOW);
+    if (wf.action === 'delete') {
+      rmSync(abs, { force: true });
+      for (const dir of [path.dirname(abs), path.dirname(path.dirname(abs))]) {
+        try {
+          rmdirSync(dir); // only succeeds when empty
+        } catch {
+          break;
+        }
+      }
+    } else writeAtomic(abs, wf.text);
+    log('ci-workflow', {
+      action: wf.action,
+      hashBefore: wf.current === null ? null : sha256(wf.current),
+      hashAfter: wf.text === null ? null : sha256(wf.text),
+    });
+    written.push({ kind: 'ci', action: wf.action });
+    if (plan.version.data) {
+      const files = isObj(plan.version.data.files) ? { ...plan.version.data.files } : null;
+      if (files) {
+        if (wf.action === 'write') files[CI_WORKFLOW] = sha256(wf.text);
+        else delete files[CI_WORKFLOW];
+        const sorted = Object.fromEntries(
+          Object.keys(files)
+            .sort()
+            .map((k) => [k, files[k]]),
+        );
+        writeAtomic(
+          path.join(root, VERSION_FILE),
+          JSON.stringify({ ...plan.version.data, files: sorted }, null, 2) + '\n',
+        ); // last
+      }
+    }
+  }
+  return { written };
+}
+
 // ---------- GET /api/setup ----------
 
 function setup(app) {
@@ -731,6 +885,7 @@ function setup(app) {
       selected: cfg && Array.isArray(cfg.skills) ? cfg.skills : [],
     },
     versionHash: version.hash,
+    ci: ciSetup(app),
   };
 }
 
@@ -748,6 +903,14 @@ export function routes(app) {
         return url.searchParams.get('preview') === '1'
           ? agentsPreview(app, body)
           : agentsApply(app, body);
+      },
+    },
+    {
+      method: 'POST',
+      path: '/api/setup/ci',
+      handler: async ({ body, url }) => {
+        app.repo.requireWritable();
+        return url.searchParams.get('preview') === '1' ? ciPreview(app, body) : ciApply(app, body);
       },
     },
   ];

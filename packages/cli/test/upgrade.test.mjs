@@ -128,7 +128,7 @@ function readArtifactRoot(dir) {
 
 describe('refusals', () => {
   test('a repo newer than the CLI is refused and nothing changes', () => {
-    for (const v of [{ package: '9.9.9', interface: 3 }, { package: '1.0.0', interface: 99 }]) {
+    for (const v of [{ package: '9.9.9', interface: 5 }, { package: '1.0.0', interface: 99 }]) {
       const dir = makeRepo({ commitInit: true });
       dirs.push(dir);
       writeFileSync(path.join(dir, '.shipline', 'bin', 'VERSION'), JSON.stringify(v) + '\n');
@@ -317,7 +317,10 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
     assert.equal(r.code, 0, `${r.stdout}\n${r.stderr}`);
     const out = r.stdout;
     assert.match(out, new RegExp(`^Shipline upgrade for ${dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
-    assert.match(out, new RegExp(`repo: 0\\.6\\.0 \\(interface 2\\) -> ${PACKAGE_VERSION.replace(/\./g, '\\.')} \\(interface 3\\)`));
+    assert.match(out, new RegExp(`repo: 0\\.6\\.0 \\(interface 2\\) -> ${PACKAGE_VERSION.replace(/\./g, '\\.')} \\(interface 4\\)`));
+    // Trust plan, F: the recorder and the CI check script arrive with the upgrade; the CI workflow is never added.
+    for (const f of ['.shipline/bin/record-answer.mjs', '.shipline/bin/ci-check.mjs']) assert.ok(out.includes(`  + add      ${f}\n`), f);
+    assert.ok(!out.includes('.github/workflows/shipline.yml'), 'the CI workflow is opt-in, never added by upgrade');
     for (const f of ['.shipline/bin/guard.mjs', '.shipline/bin/lib.mjs', '.shipline/bin/stage.mjs', '.shipline/bin/session-start.mjs', '.claude/agents/planner.md', '.claude/skills/shipline-workflow/SKILL.md']) {
       assert.ok(out.includes(`  ~ replace  ${f}\n`), f);
     }
@@ -334,7 +337,7 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
     assert.match(out, /move \d+ item\(s\) from \.shipline\/\.state\/ \(session state, UI data\); the folder is then removed/);
     assert.match(out, /left in place \(not task folders\): docs\/shipline\/README\.md/);
     assert.ok(!out.includes('Warnings'), 'the aged sessions are not reported as running');
-    assert.ok(out.includes(`Upgraded to ${PACKAGE_VERSION} (interface 3). Moved 3 task(s) to ${store}.`));
+    assert.ok(out.includes(`Upgraded to ${PACKAGE_VERSION} (interface 4). Moved 3 task(s) to ${store}.`));
     assert.match(out, /review and commit the changes \(the removal of the old task folders is staged, not committed\)/);
     assert.match(out, /restart any running Claude Code sessions/);
   });
@@ -395,10 +398,10 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
     }
   });
 
-  test('VERSION is interface 3 with a files map of what is on disk; team files are not in it', () => {
+  test('VERSION is interface 4 with a files map of what is on disk; team files are not in it', () => {
     const v = version(dir);
     assert.equal(v.package, PACKAGE_VERSION);
-    assert.equal(v.interface, 3);
+    assert.equal(v.interface, 4);
     for (const [to, hash] of Object.entries(v.files)) {
       assert.ok(!/^\.shipline\/(config\.yml|workflows\/|rules\/)/.test(to), `${to} is team-owned`);
       if (to === 'CLAUDE.md#shipline' || to === '.claude/settings.json#shipline') continue;
@@ -484,7 +487,7 @@ describe('edited files', () => {
     // Everything else was replaced, and the edited files have no hash in VERSION.files.
     assert.equal(read(dir, '.shipline/bin/lib.mjs'), template('.shipline/bin/lib.mjs').toString());
     const v = version(dir);
-    assert.equal(v.interface, 3);
+    assert.equal(v.interface, 4);
     assert.ok(!('.shipline/bin/guard.mjs' in v.files));
     assert.ok(!('.claude/agents/planner.md' in v.files));
 
@@ -672,7 +675,7 @@ describe('running sessions', () => {
     assert.match(r.stdout, /Warnings\n {2}! Claude session s1 was active in the last 30 minutes; restart it after the upgrade/);
     assert.ok(!r.stdout.includes('Claude session s2 was active'));
     assert.match(r.stdout, /! a Shipline UI chat lock is held \(\.shipline\/\.state\/ui\/lock\.json\); stop the UI chat first/);
-    assert.equal(version(dir).interface, 3);
+    assert.equal(version(dir).interface, 4);
     assert.ok(existsSync(path.join(storeOf(dir), 'tasks', 'fix-crash')));
   });
 });
@@ -702,7 +705,7 @@ describe('other layouts', () => {
     const r = upgrade(dir, '--yes');
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /Task data -> .*\n {2}\(nothing to move\)/);
-    assert.match(r.stdout, /Upgraded to [\d.]+ \(interface 3\)\.\n/);
+    assert.match(r.stdout, /Upgraded to [\d.]+ \(interface 4\)\.\n/);
     assert.equal(git(dir, 'diff', '--cached', '--name-only'), '');
     assert.ok(!existsSync(path.join(storeOf(dir), 'tasks')) || readdirSync(path.join(storeOf(dir), 'tasks')).length === 0);
   });
@@ -724,7 +727,7 @@ describe('other layouts', () => {
     const r = upgrade(dir, '--yes');
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /repo: unknown \(interface 1\) -> /);
-    assert.equal(version(dir).interface, 3);
+    assert.equal(version(dir).interface, 4);
     assert.ok(existsSync(path.join(storeOf(dir), 'tasks', 'LL-12-add-export')));
   });
 });
@@ -791,5 +794,90 @@ describe('a failure before VERSION is written', () => {
     assert.ok(lstatSync(path.join(dir, '.shipline/bin/VERSION')).isDirectory());
     assert.match(git(dir, 'diff', '--cached', '--name-status'), /^D\tdocs\/shipline\/fix-crash\/manifest\.json$/m);
     assert.ok(existsSync(path.join(storeOf(dir), 'tasks', 'fix-crash', 'manifest.json')), 'the store copy exists before the folder was removed');
+  });
+});
+
+// Trust plan, F and Files to Touch: the optional CI workflow is updated only when the repo has it and it is
+// Shipline's unedited copy; upgrade never adds it.
+describe('the CI workflow (.github/workflows/shipline.yml)', () => {
+  const CI = '.github/workflows/shipline.yml';
+  const ciTemplate = () => readFileSync(path.join(TEMPLATES_ROOT, 'github', 'shipline.yml'));
+  const OLD = '# Shipline CI from an older release\nname: Shipline\non: pull_request\n';
+
+  // A fresh install that opted into the CI check, with `content` as the file and `recorded` as its VERSION hash.
+  function ciRepo(content, recorded) {
+    const dir = makeRepo({ commitInit: true });
+    dirs.push(dir);
+    mkdirSync(path.join(dir, '.github', 'workflows'), { recursive: true });
+    writeFileSync(path.join(dir, CI), content);
+    if (recorded !== undefined) {
+      const v = version(dir);
+      v.files[CI] = recorded;
+      writeFileSync(path.join(dir, '.shipline/bin/VERSION'), JSON.stringify(v, null, 2) + '\n');
+    }
+    return dir;
+  }
+
+  test('present and unedited (an older copy Shipline recorded): replaced, and VERSION.files gets the new hash', () => {
+    const dir = ciRepo(OLD, sha(OLD));
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.stdout.includes(`  ~ replace  ${CI}\n`), r.stdout);
+    assert.ok(readFileSync(path.join(dir, CI)).equals(ciTemplate()));
+    assert.equal(version(dir).files[CI], sha(ciTemplate()));
+    assert.equal(upgrade(dir, '--yes').stdout, 'Already up to date.\n');
+  });
+
+  test('present and already current: "Already up to date."', () => {
+    const dir = ciRepo(ciTemplate(), sha(ciTemplate()));
+    const before = snapshot(dir);
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.stdout, 'Already up to date.\n');
+    assert.deepEqual(snapshot(dir), before);
+  });
+
+  test('present and edited by the team: skipped, the recorded hash kept; --force replaces it', () => {
+    const edited = OLD + 'jobs: {}\n';
+    const dir = ciRepo(edited, sha(OLD));
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    // Nothing else to do, so the short form: "Already up to date." plus the skipped file.
+    assert.equal(r.stdout, `Already up to date.\nSkipped (edited by your team; use --force to replace): ${CI}\n`);
+    assert.equal(read(dir, CI), edited);
+    assert.equal(version(dir).files[CI], sha(OLD), 'the previous hash is kept, so the edit is seen again next time');
+    const forced = upgrade(dir, '--yes', '--force');
+    assert.equal(forced.code, 0, forced.stderr);
+    assert.ok(readFileSync(path.join(dir, CI)).equals(ciTemplate()));
+    assert.equal(version(dir).files[CI], sha(ciTemplate()));
+  });
+
+  test('absent: never added, even with --force', () => {
+    const dir = makeRepo({ commitInit: true });
+    dirs.push(dir);
+    const old = '// stage.mjs from an older release\n';
+    writeFileSync(path.join(dir, '.shipline/bin/stage.mjs'), old);
+    const v = version(dir);
+    v.files['.shipline/bin/stage.mjs'] = sha(old);
+    writeFileSync(path.join(dir, '.shipline/bin/VERSION'), JSON.stringify(v, null, 2) + '\n');
+    for (const flags of [['--yes'], ['--yes', '--force']]) {
+      const r = upgrade(dir, ...flags);
+      assert.equal(r.code, 0, r.stderr);
+      assert.ok(!r.stdout.includes(CI), r.stdout);
+    }
+    assert.ok(!existsSync(path.join(dir, '.github')));
+    assert.ok(!(CI in version(dir).files));
+  });
+
+  test('the team\'s own file with that name (not recorded, not a known Shipline copy) is left alone, even with --force', () => {
+    const own = 'name: Our own shipline job\non: push\n';
+    const dir = ciRepo(own);
+    for (const flags of [['--yes'], ['--yes', '--force']]) {
+      const r = upgrade(dir, ...flags);
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(r.stdout, 'Already up to date.\n', flags.join(' '));
+    }
+    assert.equal(read(dir, CI), own);
+    assert.ok(!(CI in version(dir).files));
   });
 });

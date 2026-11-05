@@ -11,7 +11,7 @@ import { EnforcementBadge, STATUS_LABEL, StageDot } from '@/components/stage-dot
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
 import { findStage } from '@/lib/stages';
-import type { Block, Change, StageModel, Task } from '@/lib/types';
+import type { Block, Change, StageModel, Task, TaskChecks } from '@/lib/types';
 
 /** The files in the task folder; clicking one opens it read-only. */
 export function ArtifactList({ task }: { task: Task }) {
@@ -104,6 +104,67 @@ function StageFacts({ task, stage }: { task: Task; stage: Task['stages'][number]
   );
 }
 
+/** The latest check run under a `checks` stage: one row per command, its output tail on click. */
+function ChecksRows({ checks }: { checks: TaskChecks | null }) {
+  const [open, setOpen] = useState<string | null>(null);
+  if (!checks) return <p className="mt-2 text-xs text-muted-foreground">No check run yet.</p>;
+  if (checks.results.length === 0)
+    return <p className="mt-2 text-xs text-muted-foreground">No commands are configured.</p>;
+  return (
+    <div className="mt-2 flex flex-col gap-1 text-xs">
+      {checks.stale && (
+        <div>
+          <Badge variant="outline" className="text-enf-warn">
+            Out of date
+          </Badge>
+          <span className="ml-2 text-muted-foreground">The code changed since this run.</span>
+        </div>
+      )}
+      <ul className="flex flex-col gap-1">
+        {checks.results.map((r) => {
+          const ok = r.exit === 0;
+          const expanded = open === r.name;
+          const Chevron = expanded ? ChevronDownIcon : ChevronRightIcon;
+          return (
+            <li key={r.name}>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 text-left"
+                aria-expanded={expanded}
+                onClick={() => setOpen(expanded ? null : r.name)}
+              >
+                <Chevron className="size-3 shrink-0 text-muted-foreground" />
+                <span className="font-mono">{r.name}</span>
+                <span
+                  className={ok ? 'text-stage-done' : 'text-destructive'}
+                  role="img"
+                  aria-label={ok ? 'Passed' : 'Failed'}
+                >
+                  {ok ? '✓' : '✗'}
+                </span>
+                <span className="text-muted-foreground">
+                  {r.exit === null
+                    ? 'did not run'
+                    : ok
+                      ? `${(r.duration_ms / 1000).toFixed(1)}s`
+                      : `exit ${r.exit}`}
+                </span>
+                {r.accepted && <Badge variant="secondary">accepted</Badge>}
+              </button>
+              {expanded && (
+                <pre className="mt-1 max-h-60 overflow-auto rounded-md border bg-muted p-2 font-mono text-xs whitespace-pre-wrap">
+                  {r.command ? `$ ${r.command}\n` : ''}
+                  {r.tail || '(no output)'}
+                </pre>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 /**
  * Vertical stage timeline, read-only. The current stage (the first one not done or skipped) is
  * expanded with its Now/Next facts; every other stage is one line.
@@ -143,6 +204,9 @@ export function StageTimeline({ task }: { task: Task }) {
                       />
                     </div>
                     <StageFacts task={task} stage={s} />
+                    {findStage(wf?.stages, s.id)?.checks === true && (
+                      <ChecksRows checks={task.checks} />
+                    )}
                   </>
                 ) : (
                   <>
@@ -159,6 +223,9 @@ export function StageTimeline({ task }: { task: Task }) {
                         ? `Skipped: ${s.reason}`
                         : STATUS_LABEL[s.status]}
                     </span>
+                    {findStage(wf?.stages, s.id)?.checks === true && s.status !== 'pending' && (
+                      <ChecksRows checks={task.checks} />
+                    )}
                   </>
                 )}
               </div>

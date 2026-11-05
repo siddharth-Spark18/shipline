@@ -11,11 +11,11 @@ export const KNOWN_FIELDS = {
   config: {
     top: ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup'],
     commands: ['test', 'lint', 'build'],
-    ci: ['missing_block', 'skip_label'],
+    ci: ['missing_block', 'skip_label', 'stale_checks'],
   },
   workflow: {
     top: ['id', 'name', 'description', 'branch_type', 'stages'],
-    stage: ['id', 'name', 'artifact', 'description', 'optional', 'confirm_to_advance', 'condition', 'agent', 'enforcement', 'blocks'],
+    stage: ['id', 'name', 'artifact', 'description', 'optional', 'confirm_to_advance', 'condition', 'agent', 'enforcement', 'blocks', 'checks', 'sections'],
     block: ['tools', 'allow_paths', 'bash'],
   },
 };
@@ -25,7 +25,8 @@ const CONTROL_RE = /[\u0000-\u001f\u007f]/;
 const PATTERN_VARS = new Set(['key', 'slug', 'type']);
 const ENFORCEMENT = ['guide', 'warn', 'block'];
 export const CI_MISSING_BLOCK = ['fail-unless-label', 'warn', 'fail'];
-export const DEFAULT_CI = { missing_block: 'fail-unless-label', skip_label: 'shipline:skip' };
+export const CI_STALE_CHECKS = ['warn', 'fail'];
+export const DEFAULT_CI = { missing_block: 'fail-unless-label', skip_label: 'shipline:skip', stale_checks: 'warn' };
 const SKIP_LABEL_MAX = 50;
 export const TRACKERS = ['jira', 'github'];
 
@@ -86,6 +87,10 @@ export function validateConfig(model, { skills = null } = {}) {
       if (mb !== undefined && mb !== null && !CI_MISSING_BLOCK.includes(mb)) {
         out.push(err('ci.missing_block', `must be one of ${CI_MISSING_BLOCK.join(', ')}`));
       }
+      const sc = ci.stale_checks;
+      if (sc !== undefined && sc !== null && !CI_STALE_CHECKS.includes(sc)) {
+        out.push(err('ci.stale_checks', `must be one of ${CI_STALE_CHECKS.join(', ')}`));
+      }
       const sl = ci.skip_label;
       if (sl !== undefined && sl !== null) {
         if (typeof sl !== 'string' || sl.trim() === '') out.push(err('ci.skip_label', 'must be a non-empty label name'));
@@ -143,8 +148,16 @@ export function validateWorkflow(model, { id, agents = [], existingStageIds = []
         if (typeof s.artifact !== 'string') out.push(err(`${p}.artifact`, 'must be a file name'));
         else if (s.artifact.includes('/')) out.push(err(`${p}.artifact`, 'must be a file name, not a path (no /)'));
       }
-      for (const k of ['optional', 'confirm_to_advance']) {
+      for (const k of ['optional', 'confirm_to_advance', 'checks']) {
         if (s[k] !== undefined && s[k] !== null && typeof s[k] !== 'boolean') out.push(err(`${p}.${k}`, 'must be true or false'));
+      }
+      if (s.sections !== undefined && s.sections !== null) {
+        if (!Array.isArray(s.sections)) out.push(err(`${p}.sections`, 'must be a list of headings'));
+        else {
+          s.sections.forEach((h, j) => {
+            if (typeof h !== 'string' || h.trim() === '') out.push(err(`${p}.sections[${j}]`, 'must be a non-empty heading'));
+          });
+        }
       }
       if (s.condition !== undefined && s.condition !== null && s.condition !== 'ui_only') {
         out.push(err(`${p}.condition`, 'must be empty or ui_only'));

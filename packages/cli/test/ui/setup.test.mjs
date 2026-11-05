@@ -9,6 +9,7 @@ import { CLI_ROOT, makeRepo, removeDir, runInit, stage, storeOf } from '../helpe
 import { api, openEvents, startUi } from './helpers.mjs';
 import { headerFor } from '../../src/setup-schema.mjs';
 import { INTERFACE } from '../../src/interface.mjs';
+import { parseYaml } from '../../templates/shipline/bin/lib.mjs';
 
 const sha256 = (t) => crypto.createHash('sha256').update(t).digest('hex');
 const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -179,7 +180,7 @@ describe('saving', () => {
     assert.equal(s3.config.model.team_owner, 'platform');
     assert.equal(s3.config.model.commands.typecheck, 'pnpm tsc');
     // The template ends with the comment documenting `setup` (Teams Phase 1, E); unknown keys follow it.
-    assert.match(read('.shipline/config.yml'), /\n {2}typecheck: pnpm tsc\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n\n# Set to `done`[^\n]*\n# Until then[^\n]*\n\nteam_owner: platform\n$/);
+    assert.match(read('.shipline/config.yml'), /\n {2}typecheck: pnpm tsc\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\n# stale_checks:[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n {2}stale_checks: warn\n\n# Set to `done`[^\n]*\n# Until then[^\n]*\n\nteam_owner: platform\n$/);
   });
 
   test('a file changed on disk gives 409, and in a two-file save nothing is written', async () => {
@@ -585,7 +586,7 @@ describe('agents and skills (prepublish plan, Setup -> Agents & skills)', () => 
     assert.deepEqual(v.excluded, [AGENT('researcher'), AGENT('reviewer')]);
     assert.ok(!(AGENT('researcher') in v.files));
     assert.equal(v.interface, INTERFACE);
-    assert.equal(INTERFACE, 4);
+    assert.equal(INTERFACE, 5);
     let s = await getSetup(x.ui);
     assert.deepEqual(s.agents.shipline.find((a) => a.name === 'researcher'), { name: 'researcher', installed: false, excluded: true, hash: null });
     assert.equal(s.versionHash, sha256(xread(x, '.shipline/bin/VERSION')));
@@ -932,7 +933,8 @@ describe('CI check (Trust plan)', () => {
     assert.equal(xread(x, CONFIG), p.json.files[0].text);
     const s = await getSetup(x.ui);
     assert.deepEqual(s.ci, { installed: false, missing_block: 'warn', skip_label: 'no-ci', workflowHash: null });
-    assert.deepEqual(s.config.model.ci, { missing_block: 'warn', skip_label: 'no-ci' });
+    // stale_checks (shipped as warn, Teams Phase 2) isn't on this screen and is kept as it was.
+    assert.deepEqual(s.config.model.ci, { missing_block: 'warn', skip_label: 'no-ci', stale_checks: 'warn' });
     assert.ok(!xexists(x, CI));
   });
 
@@ -1050,5 +1052,93 @@ describe('tracker and setup (Teams Phase 1)', () => {
     const text = xread(x, '.shipline/config.yml');
     assert.match(text, /^setup: done$/m);
     assert.match(text, /^ {2}missing_block: warn$/m);
+  });
+});
+
+// Teams Phase 2, G: the stage fields `checks` and `sections` and config.yml's ci.stale_checks go through the
+// Setup save pipeline (validated, saved, kept by later saves), and the CI check screen keeps stale_checks.
+describe('checks, sections and ci.stale_checks (Teams Phase 2)', () => {
+  const CONFIG = '.shipline/config.yml';
+  const xread = (x, rel) => readFileSync(path.join(x.dir, rel), 'utf8');
+
+  test('GET /api/setup: the shipped verify stage has checks: true and sections; config has stale_checks: warn', async () => {
+    const x = await scratchRepo();
+    const s = await getSetup(x.ui);
+    const verify = wfEntry(s, 'feature').model.stages.find((st) => st.id === 'verify');
+    assert.equal(verify.checks, true);
+    assert.deepEqual(verify.sections, ['Checklist']);
+    assert.equal(s.config.model.ci.stale_checks, 'warn');
+  });
+
+  test('bad values are refused by preview and save, naming the field', async () => {
+    const x = await scratchRepo();
+    const s = await getSetup(x.ui);
+    const model = clone(wfEntry(s, 'feature').model);
+    const verify = model.stages.find((st) => st.id === 'verify');
+    verify.checks = 'yes';
+    verify.sections = ['Checklist', ''];
+    const i = model.stages.indexOf(verify);
+    const p = await preview([{ kind: 'workflow', id: 'feature', model, baseHash: wfEntry(s, 'feature').hash }], x.ui);
+    assert.equal(p.status, 200, p.text);
+    assert.deepEqual(p.json.files[0].errors.map((e) => e.path).sort(), [`stages[${i}].checks`, `stages[${i}].sections[1]`]);
+    const cfg = clone(s.config.model);
+    cfg.ci.stale_checks = 'sometimes';
+    const pc = await preview([{ kind: 'config', model: cfg, baseHash: s.config.hash }], x.ui);
+    assert.deepEqual(pc.json.files[0].errors.map((e) => e.path), ['ci.stale_checks']);
+    const r = await save([{ kind: 'config', model: cfg, baseHash: s.config.hash }], x.ui);
+    assert.notEqual(r.status, 200, r.text);
+    assert.match(xread(x, CONFIG), /^ {2}stale_checks: warn$/m, 'nothing written');
+  });
+
+  test('changed values are saved, and survive a later save of another field', async () => {
+    const x = await scratchRepo();
+    let s = await getSetup(x.ui);
+    const model = clone(wfEntry(s, 'feature').model);
+    const verify = model.stages.find((st) => st.id === 'verify');
+    verify.checks = false;
+    verify.sections = ['Checklist', 'Risks'];
+    model.stages.find((st) => st.id === 'implement').sections = ['Notes'];
+    const cfg = clone(s.config.model);
+    cfg.ci.stale_checks = 'fail';
+    const r = await save([
+      { kind: 'workflow', id: 'feature', model, baseHash: wfEntry(s, 'feature').hash },
+      { kind: 'config', model: cfg, baseHash: s.config.hash },
+    ], x.ui);
+    assert.equal(r.status, 200, r.text);
+    const onDisk = parseYaml(xread(x, '.shipline/workflows/feature.yml'));
+    assert.equal(onDisk.stages.find((st) => st.id === 'verify').checks, false);
+    assert.deepEqual(onDisk.stages.find((st) => st.id === 'verify').sections, ['Checklist', 'Risks']);
+    assert.deepEqual(onDisk.stages.find((st) => st.id === 'implement').sections, ['Notes']);
+    assert.match(xread(x, CONFIG), /^ {2}stale_checks: fail$/m);
+    // A later save from a fresh load that changes something else keeps them.
+    s = await getSetup(x.ui);
+    const m2 = clone(wfEntry(s, 'feature').model);
+    m2.description = 'changed';
+    const c2 = clone(s.config.model);
+    c2.tracker = 'github';
+    assert.equal((await save([
+      { kind: 'workflow', id: 'feature', model: m2, baseHash: wfEntry(s, 'feature').hash },
+      { kind: 'config', model: c2, baseHash: s.config.hash },
+    ], x.ui)).status, 200);
+    s = await getSetup(x.ui);
+    const v2 = wfEntry(s, 'feature').model.stages.find((st) => st.id === 'verify');
+    assert.equal(v2.checks, false);
+    assert.deepEqual(v2.sections, ['Checklist', 'Risks']);
+    assert.equal(s.config.model.ci.stale_checks, 'fail');
+  });
+
+  test('the CI check screen keeps ci.stale_checks when it saves missing_block and skip_label', async () => {
+    const x = await scratchRepo((d) => {
+      const f = path.join(d, '.shipline', 'config.yml');
+      writeFileSync(f, readFileSync(f, 'utf8').replace('  stale_checks: warn\n', '  stale_checks: fail\n'));
+    });
+    let s = await getSetup(x.ui);
+    assert.equal(s.config.model.ci.stale_checks, 'fail');
+    const bases = { baseHashes: { [CONFIG]: s.config.hash, '.github/workflows/shipline.yml': s.ci.workflowHash }, baseVersionHash: s.versionHash };
+    const r = await api(x.ui, 'POST', '/api/setup/ci', { body: { install: false, missing_block: 'warn', skip_label: 'no-ci', ...bases } });
+    assert.equal(r.status, 200, r.text);
+    s = await getSetup(x.ui);
+    assert.deepEqual(s.config.model.ci, { missing_block: 'warn', skip_label: 'no-ci', stale_checks: 'fail' });
+    assert.match(xread(x, CONFIG), /^ {2}stale_checks: fail$/m);
   });
 });

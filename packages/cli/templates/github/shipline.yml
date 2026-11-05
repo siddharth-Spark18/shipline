@@ -15,4 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The PR's own code, not the merge commit, so its git tree matches the one `stage.mjs check` recorded.
+          ref: ${{ github.event.pull_request.head.sha }}
       - run: node .shipline/bin/ci-check.mjs

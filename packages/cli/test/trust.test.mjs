@@ -624,8 +624,9 @@ describe('stage.mjs pr-summary', () => {
     assert.equal(stage(dir, ['skip'], session).code, 0); // docs (answer); ui skipped (not UI work); ship is current
     const r = stage(dir, ['pr-summary'], session);
     assert.equal(r.code, 0, r.stderr);
+    // v 2 since Teams Phase 2; this workflow has no `checks: true` stage, so there is no Checks line or checks key.
     const json = {
-      v: 1,
+      v: 2,
       workflow: 'trust',
       task: slug,
       stages: [

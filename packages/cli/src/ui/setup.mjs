@@ -762,7 +762,12 @@ function planCi(app, body) {
   const hadCi = Object.prototype.hasOwnProperty.call(model, 'ci') && model.ci !== null;
   const isDefault =
     want.missing_block === DEFAULT_CI.missing_block && want.skip_label === DEFAULT_CI.skip_label;
-  if (hadCi || !isDefault) model.ci = want;
+  // stale_checks isn't edited on this screen (the config form owns it); it is kept as it is.
+  const keep =
+    hadCi && isObj(model.ci) && model.ci.stale_checks !== undefined
+      ? { stale_checks: model.ci.stale_checks }
+      : {};
+  if (hadCi || !isDefault) model.ci = { ...want, ...keep };
   const entry = prepare(app, { kind: 'config', model, baseHash: config.hash });
 
   const abs = path.join(root, CI_WORKFLOW);

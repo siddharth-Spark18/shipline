@@ -455,3 +455,51 @@ describe('an interface-2 repo (not upgraded yet)', () => {
     }
   });
 });
+
+// Teams Phase 2, F: the task shape gains `checks` ({ ran_at, stale, results } or null). `stale` compares the
+// recorded fingerprint with the current code's (cached for 5 s per repo, so this test orders its steps to match).
+describe('checks on the task shape (Teams Phase 2)', () => {
+  test('null before a run; then the results with accepted flags, and stale while the code differs from the run', async () => {
+    const d = makeRepo({ commitInit: true });
+    const scripts = tmpDir('shipline-tasks-scripts-');
+    let u;
+    try {
+      writeFileSync(path.join(scripts, 'pass.js'), "console.log('ok');\n");
+      writeFileSync(path.join(scripts, 'fail.js'), "console.log('lint says no');\nprocess.exit(2);\n");
+      const cmd = (f) => `'"${process.execPath}" "${path.join(scripts, f)}"'`;
+      const cfg = path.join(d, '.shipline', 'config.yml');
+      writeFileSync(cfg, readFileSync(cfg, 'utf8').replace('  test: ""\n  lint: ""\n', `  test: ${cmd('pass.js')}\n  lint: ${cmd('fail.js')}\n`));
+      assert.equal(stage(d, ['start', '--workflow', 'small', '--title', 'Checked'], 'c1').code, 0);
+      u = await startUi(d);
+      const task = async () => (await api(u, 'GET', '/api/tasks')).json.tasks.find((t) => t.slug === 'checked');
+      assert.equal((await task()).checks, null, 'no run yet');
+
+      assert.equal(stage(d, ['check'], 'c1').code, 1);
+      const mf = path.join(storeOf(d), 'tasks', 'checked', 'manifest.json');
+      const m = JSON.parse(readFileSync(mf, 'utf8'));
+      // The developer accepted the lint failure for this run (as `advance` stores it on the stage).
+      m.stages.find((s) => s.id === 'verify').accepted = { names: ['lint'], fingerprint: m.checks.fingerprint, ran_at: m.checks.ran_at };
+      writeFileSync(mf, JSON.stringify(m, null, 2));
+      // The code changes after the run, before the server first computes the current fingerprint.
+      writeFileSync(path.join(d, 'src', 'a.js'), 'export const a = 5;\n');
+      let t = await task();
+      assert.deepEqual(Object.keys(t.checks).sort(), ['ran_at', 'results', 'stale']);
+      assert.equal(t.checks.ran_at, m.checks.ran_at);
+      assert.equal(t.checks.stale, true);
+      assert.deepEqual(t.checks.results.map((r) => Object.keys(r).sort()), [0, 1].map(() => ['accepted', 'command', 'duration_ms', 'exit', 'name', 'tail']));
+      assert.deepEqual(t.checks.results.map((r) => [r.name, r.exit, r.accepted, r.tail]), [['test', 0, false, 'ok'], ['lint', 2, true, 'lint says no']]);
+      assert.equal(t.checks.results[0].command, m.checks.results[0].command);
+      assert.equal(typeof t.checks.results[0].duration_ms, 'number');
+
+      // A new run on the current (changed) code: not stale, and the old acceptance no longer applies.
+      assert.equal(stage(d, ['check'], 'c1').code, 1);
+      t = await task();
+      assert.equal(t.checks.stale, false);
+      assert.deepEqual(t.checks.results.map((r) => [r.name, r.accepted]), [['test', false], ['lint', false]]);
+    } finally {
+      if (u) await u.close();
+      removeDir(d);
+      removeDir(scripts);
+    }
+  });
+});

@@ -281,7 +281,15 @@ function planShared(root, version, force) {
 }
 
 // config.yml loses artifact_root and folder_pattern and gets its empty commands filled in; workflows lose
-// {artifact_root} allow_paths entries and have their `jira` stage renamed `ticket`.
+// {artifact_root} allow_paths entries, have their `jira` stage renamed `ticket`, and (0.11) get `checks: true` on
+// their verify stage and the default `sections` on plan, verify, root_cause and feasibility stages that set none.
+const DEFAULT_SECTIONS = {
+  plan: ['Scope', 'Files to touch', 'Verification'],
+  verify: ['Checklist'],
+  root_cause: ['Cause', 'Evidence'],
+  feasibility: ['Risks'],
+};
+
 function planConfig(root) {
   const out = { config: null, workflows: [], artifactRoot: null, warnings: [] };
   const cfgFile = path.join(root, '.shipline', 'config.yml');
@@ -323,17 +331,17 @@ function planConfig(root) {
     for (const name of readdirSync(wfDir).filter((n) => n.endsWith('.yml')).sort()) {
       const wfRaw = readFileSync(path.join(wfDir, name), 'utf8');
       const hasRoot = wfRaw.includes('{artifact_root}');
-      if (!hasRoot && !/\bjira\b/.test(wfRaw)) continue;
       let model;
       try {
         model = parseYaml(wfRaw);
       } catch (e) {
         if (hasRoot) throw new Error(`.shipline/workflows/${name} could not be parsed (${e.message}). Fix it first; nothing was changed.`);
-        out.warnings.push(`.shipline/workflows/${name} could not be parsed (${e.message}), so its jira stage was not checked`);
+        out.warnings.push(`.shipline/workflows/${name} could not be parsed (${e.message}), so it was not checked for upgrades`);
         continue;
       }
       let changed = 0;
       let renamed = false;
+      const added = [];
       const stages = model && Array.isArray(model.stages) ? model.stages : [];
       for (const stage of stages) {
         if (!stage || !Array.isArray(stage.blocks)) continue;
@@ -357,9 +365,20 @@ function planConfig(root) {
           renamed = true;
         }
       }
-      if (!changed && !renamed) continue;
+      for (const stage of stages) {
+        if (!stage || typeof stage !== 'object' || Array.isArray(stage)) continue;
+        if (stage.id === 'verify' && !Object.prototype.hasOwnProperty.call(stage, 'checks')) {
+          stage.checks = true;
+          added.push(`checks on ${stage.id}`);
+        }
+        if (DEFAULT_SECTIONS[stage.id] && !Object.prototype.hasOwnProperty.call(stage, 'sections')) {
+          stage.sections = [...DEFAULT_SECTIONS[stage.id]];
+          added.push(`sections on ${stage.id}`);
+        }
+      }
+      if (!changed && !renamed && !added.length) continue;
       const text = emitWorkflow(model, { header: leadingHeader(wfRaw), raw: wfRaw });
-      out.workflows.push({ file: `.shipline/workflows/${name}`, entries: changed, renamed, text, diff: lineDiff(wfRaw, text) });
+      out.workflows.push({ file: `.shipline/workflows/${name}`, entries: changed, renamed, added, text, diff: lineDiff(wfRaw, text) });
     }
   }
   return out;
@@ -675,6 +694,7 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     const what = [];
     if (w.entries) what.push(`remove ${w.entries} {artifact_root} allow_paths entr${w.entries === 1 ? 'y' : 'ies'}`);
     if (w.renamed) what.push('rename stage jira to ticket');
+    if (w.added.length) what.push(`add ${w.added.join(', ')}`);
     out.push(`  ~ ${w.file}: ${what.join('; ')}`);
     out.push(...w.diff);
   }

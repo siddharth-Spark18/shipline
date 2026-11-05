@@ -20,6 +20,10 @@ const TRACKERS = [
   { value: 'github', label: 'GitHub Issues' },
 ];
 const COMMAND_KEYS = ['test', 'lint', 'build'];
+const STALE_CHECKS = [
+  { value: 'warn', label: 'Warn' },
+  { value: 'fail', label: 'Fail' },
+];
 
 function patternError(v: string | null | undefined): string | null {
   if (!v) return null;
@@ -101,7 +105,11 @@ export function ConfigForm({
   const setCommand = (key: string, value: string) =>
     onChange({ ...model, commands: { ...(model.commands ?? {}), [key]: value } });
 
+  const setStaleChecks = (value: string) =>
+    onChange({ ...model, ci: { ...(model.ci ?? {}), stale_checks: value } });
+
   const tracker = model.tracker || 'jira';
+  const staleChecks = model.ci?.stale_checks || 'warn';
   const supported = TRACKERS.some((t) => t.value === tracker);
 
   return (
@@ -154,6 +162,26 @@ export function ConfigForm({
           ))}
         </div>
         {model.commands && <OtherFields value={model.commands} known={COMMAND_KEYS} />}
+      </div>
+
+      <div className="flex flex-col gap-1.5 sm:max-w-xs">
+        <Label htmlFor="cfg-stale-checks">When the PR's code differs from the checked code</Label>
+        <Select value={staleChecks} onValueChange={setStaleChecks}>
+          <SelectTrigger id="cfg-stale-checks" className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {STALE_CHECKS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          The pull-request check compares the code in the PR with the code{' '}
+          <span className="font-mono">stage.mjs check</span> ran on (ci.stale_checks).
+        </p>
       </div>
 
       <OtherFields value={model} known={TOP_KEYS} />

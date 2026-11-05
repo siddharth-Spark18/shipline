@@ -10,7 +10,7 @@ The author's sequencing is **friction first**. Each phase gets its own detailed 
 | Phase | Scope | Detailed plan |
 | --- | --- | --- |
 | 1 | **Fit any repo on day one.** `init` and `upgrade` detect test, lint and build commands (Node, Python, Go, Rust, Make). Every stage ships with real default rules instead of empty stubs. A "run `/shipline-setup`" nudge shows until setup has run. Choice of tracker (Jira or GitHub Issues), with the `jira` stage renamed to `ticket`. **Chat-first tasks:** a chat lists every task it worked on; the Tasks page and the sidebar's task grouping are removed; unfinished tasks with no chat show on the new-chat screen. | `shipline-teams-phase1.md` |
-| 2 | **Trust.** Verify runs the configured commands, and `stage.mjs` records exit codes and output tails. Artifacts must contain their required sections. The PR summary carries the plan scope, the verification checklist and the command results. The CI check matches the summary to the task. | later |
+| 2 | **Trust.** Verify runs the configured commands, and `stage.mjs` records exit codes and output tails. Artifacts must contain their required sections. The PR summary carries the plan scope, the verification checklist and the command results. The CI check matches the summary to the task. | `shipline-teams-phase2.md` |
 | 3 | **Harder rails and monorepos.** Built-in protected actions (commit, push, force-push, PR, deploy, migration) that understand git's argument forms. Protected paths that need a confirmation in any stage. A few always-on rails. Per-path command and rule overrides for monorepos. | later |
 
 **Decided against for now:**

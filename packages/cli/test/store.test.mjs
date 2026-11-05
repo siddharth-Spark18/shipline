@@ -187,7 +187,7 @@ describe('success criterion 2: a fresh install leaves the repo clean', () => {
     // Stage 1 (jira) and stage 2 (feasibility): write each artifact where stage.mjs says, then advance.
     writeFileSync(path.join(taskDir, 'ticket.md'), '# LL-12\n');
     assert.equal(stage(repo, ['advance'], 's1').code, 0);
-    writeFileSync(path.join(taskDir, 'feasibility.md'), 'ok\n');
+    writeFileSync(path.join(taskDir, 'feasibility.md'), '## Risks\nNone: a contained, additive change behind a flag.\n');
     const adv = stage(repo, ['advance'], 's1');
     assert.equal(adv.code, 0, adv.stderr);
     const m = JSON.parse(readFileSync(path.join(taskDir, 'manifest.json'), 'utf8'));

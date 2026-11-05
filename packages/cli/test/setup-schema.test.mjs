@@ -55,7 +55,7 @@ describe('config.yml checks', () => {
   test('a line break in a command is rejected', () => bad({ commands: { test: 'a\nb' } }, 'commands.test', /line breaks are not allowed here/));
   // Trust plan, Config: ci.missing_block is an enum, ci.skip_label non-empty and at most 50 characters; ci is optional.
   test('the shipped config.yml has the ci section with its defaults', () => {
-    assert.deepEqual(baseConfig().ci, { missing_block: 'fail-unless-label', skip_label: 'shipline:skip' });
+    assert.deepEqual(baseConfig().ci, { missing_block: 'fail-unless-label', skip_label: 'shipline:skip', stale_checks: 'warn' });
   });
   test('ci is optional, and each mode and a 50-character label are accepted', () => {
     const { ci: _ci, ...noCi } = baseConfig();
@@ -265,9 +265,9 @@ describe('known fields, header and layout', () => {
     // `setup` is known (so not listed under "other fields") but the form doesn't edit it (Teams Phase 1, E).
     assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup']);
     assert.deepEqual(KNOWN_FIELDS.config.commands, ['test', 'lint', 'build']);
-    assert.deepEqual(KNOWN_FIELDS.config.ci, ['missing_block', 'skip_label']);
+    assert.deepEqual(KNOWN_FIELDS.config.ci, ['missing_block', 'skip_label', 'stale_checks']);
     for (const f of ['id', 'name', 'description', 'branch_type', 'stages']) assert.ok(KNOWN_FIELDS.workflow.top.includes(f), f);
-    for (const f of ['id', 'name', 'artifact', 'description', 'optional', 'confirm_to_advance', 'condition', 'agent', 'enforcement', 'blocks']) {
+    for (const f of ['id', 'name', 'artifact', 'description', 'optional', 'confirm_to_advance', 'condition', 'agent', 'enforcement', 'blocks', 'checks', 'sections']) {
       assert.ok(KNOWN_FIELDS.workflow.stage.includes(f), f);
     }
   });
@@ -286,5 +286,59 @@ describe('known fields, header and layout', () => {
 
   test('configLayout is the shipped config.yml', () => {
     assert.equal(configLayout(), readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8'));
+  });
+});
+
+// Teams Phase 2, G: the stage fields `checks` (a boolean) and `sections` (a list of non-empty headings), and
+// config.yml's ci.stale_checks (warn | fail).
+describe('checks, sections and ci.stale_checks (Teams Phase 2)', () => {
+  test('the shipped workflows set checks: true on verify and the default sections', () => {
+    for (const id of ['feature', 'bugfix', 'hotfix', 'small']) {
+      const v = template(id).stages.find((s) => s.id === 'verify');
+      assert.equal(v.checks, true, id);
+      assert.deepEqual(v.sections, ['Checklist'], id);
+    }
+    assert.deepEqual(template('feature').stages.find((s) => s.id === 'plan').sections, ['Scope', 'Files to touch', 'Verification']);
+    assert.deepEqual(template('feature').stages.find((s) => s.id === 'feasibility').sections, ['Risks']);
+    assert.deepEqual(template('bugfix').stages.find((s) => s.id === 'root_cause').sections, ['Cause', 'Evidence']);
+  });
+
+  test('checks must be a boolean; absent or null is fine', () => {
+    for (const checks of [true, false, null, undefined]) assert.deepEqual(validateWorkflow(wf([stage({ checks })]), { id: 'w' }), [], String(checks));
+    for (const checks of ['yes', 1, []]) {
+      const issues = validateWorkflow(wf([stage({ checks })]), { id: 'w' });
+      assert.deepEqual(paths(issues), ['stages[0].checks'], JSON.stringify(checks));
+      assert.match(issues[0].message, /true or false/);
+    }
+  });
+
+  test('sections must be a list of non-empty strings; an empty list is fine', () => {
+    for (const sections of [[], ['Scope'], ['Scope', 'Files to touch'], null]) {
+      assert.deepEqual(validateWorkflow(wf([stage({ sections })]), { id: 'w' }), [], JSON.stringify(sections));
+    }
+    assert.deepEqual(paths(validateWorkflow(wf([stage({ sections: 'Scope' })]), { id: 'w' })), ['stages[0].sections']);
+    assert.deepEqual(paths(validateWorkflow(wf([stage({ sections: ['Scope', '  ', 3] })]), { id: 'w' })), ['stages[0].sections[1]', 'stages[0].sections[2]']);
+  });
+
+  test('ci.stale_checks is warn or fail; absent is fine', () => {
+    for (const stale_checks of ['warn', 'fail', undefined, null]) {
+      assert.deepEqual(validateConfig({ ...baseConfig(), ci: { ...baseConfig().ci, stale_checks } }), [], String(stale_checks));
+    }
+    const issues = validateConfig({ ...baseConfig(), ci: { stale_checks: 'ignore' } });
+    assert.deepEqual(paths(issues), ['ci.stale_checks']);
+    assert.match(issues[0].message, /warn, fail/);
+  });
+
+  test('both stage fields and stale_checks survive a write in the layout', () => {
+    const raw = readFileSync(path.join(TEMPLATES, 'workflows', 'feature.yml'), 'utf8');
+    const model = parseYaml(raw);
+    const verify = model.stages.find((s) => s.id === 'verify');
+    verify.checks = false;
+    verify.sections = ['Checklist', 'Risks: accepted'];
+    const out = parseYaml(emitWorkflow(model, { header: headerFor('feature'), raw }));
+    assert.equal(out.stages.find((s) => s.id === 'verify').checks, false);
+    assert.deepEqual(out.stages.find((s) => s.id === 'verify').sections, ['Checklist', 'Risks: accepted']);
+    const cfg = { ...baseConfig(), ci: { ...baseConfig().ci, stale_checks: 'fail' } };
+    assert.equal(parseYaml(emitConfig(cfg, { layout: configLayout() })).ci.stale_checks, 'fail');
   });
 });

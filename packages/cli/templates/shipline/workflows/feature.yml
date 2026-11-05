@@ -2,7 +2,10 @@
 #   id, name, artifact (file in the task folder that must exist to finish the stage),
 #   optional (may be skipped), condition: ui_only (runs only when the task is flagged as UI work),
 #   agent (suggested subagent), confirm_to_advance (ask the developer before moving on),
-#   enforcement: guide | warn | block, blocks (what is held back until THIS stage is done).
+#   enforcement: guide | warn | block, blocks (what is held back until THIS stage is done),
+#   sections (headings the artifact must contain, each with some text under it, before the stage can finish),
+#   checks: true (the stage can't finish until `stage.mjs check` has run the test, lint and build commands on the
+#   current code and they passed, or the developer accepted the failures).
 # A "blocks" entry is either { tools: 'Edit|Write', allow_paths: [globs] } or { bash: 'regex' }.
 # Task files (manifest and artifacts) live outside the repo, so file blocks never apply to them.
 id: feature
@@ -19,6 +22,7 @@ stages:
     name: Feasibility
     artifact: feasibility.md
     agent: researcher
+    sections: [Risks]
     enforcement: guide
     confirm_to_advance: false
   - id: questions
@@ -30,6 +34,7 @@ stages:
     name: Plan
     artifact: plan.md
     agent: planner
+    sections: [Scope, Files to touch, Verification]
     enforcement: block
     confirm_to_advance: true
     blocks:
@@ -51,6 +56,8 @@ stages:
     name: Verify
     artifact: verification.md
     agent: qa-bug-hunter
+    checks: true
+    sections: [Checklist]
     enforcement: block
     confirm_to_advance: true
     blocks:

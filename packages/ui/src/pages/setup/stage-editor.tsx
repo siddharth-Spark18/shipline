@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 import { BlocksEditor } from '@/pages/setup/blocks-editor';
 import { OtherFields } from '@/pages/setup/other-fields';
 import { RulesEditor } from '@/pages/setup/rules-editor';
@@ -28,6 +29,8 @@ const STAGE_KEYS = [
   'agent',
   'enforcement',
   'blocks',
+  'checks',
+  'sections',
 ];
 
 export interface StageEditorProps {
@@ -228,7 +231,36 @@ export function StageEditor({
             />
             <Label htmlFor={`${base}-confirm`}>Confirm to advance</Label>
           </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              id={`${base}-checks`}
+              checked={stage.checks === true}
+              onCheckedChange={(v) => setField('checks', v)}
+            />
+            <Label htmlFor={`${base}-checks`}>Run checks before finishing</Label>
+          </div>
         </div>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={`${base}-sections`}>Required sections (headings, one per line)</Label>
+        {/* Uncontrolled, so a trailing newline survives while typing. */}
+        <Textarea
+          id={`${base}-sections`}
+          className="min-h-16 text-xs"
+          defaultValue={(stage.sections ?? []).join('\n')}
+          placeholder="Scope"
+          onChange={(e) =>
+            setField(
+              'sections',
+              e.target.value.split('\n').filter((l) => l.trim() !== ''),
+            )
+          }
+        />
+        <p className="text-xs text-muted-foreground">
+          The artifact must have each as a Markdown heading with some text under it before the stage
+          can finish.
+        </p>
       </div>
 
       <BlocksEditor

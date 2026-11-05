@@ -28,7 +28,7 @@ before(() => {
   tasks = path.join(storeOf(dir), 'tasks');
   assert.equal(stage(dir, ['start', '--workflow', 'feature', '--title', 'Add export', '--ticket', 'll-12'], 's1').code, 0);
   assert.equal(stage(dir, ['skip', '--reason', 'no ticket'], 's1').code, 0);
-  writeFileSync(path.join(tasks, 'LL-12-add-export/feasibility.md'), 'ok\n');
+  writeFileSync(path.join(tasks, 'LL-12-add-export/feasibility.md'), '## Risks\nNone: a contained, additive change behind a flag.\n'); // feasibility requires a Risks section (Phase 2)
   const adv = stage(dir, ['advance'], 's1');
   assert.equal(adv.code, 0, adv.stderr);
   assert.equal(stage(dir, ['start', '--workflow', 'bugfix', '--title', 'Fix crash'], 's2').code, 0);

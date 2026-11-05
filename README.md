@@ -98,6 +98,7 @@ node .shipline/bin/stage.mjs start --workflow feature --title "Add export" [--ti
 node .shipline/bin/stage.mjs status                    # where am I
 node .shipline/bin/stage.mjs advance                   # finish the stage (asks you first where the stage needs your OK)
 node .shipline/bin/stage.mjs skip --reason "no ticket" # optional stages
+node .shipline/bin/stage.mjs check                      # run the test, lint and build commands and record the results
 node .shipline/bin/stage.mjs pr-summary                # the summary to paste into the PR description
 node .shipline/bin/stage.mjs reopen <stage>            # go back
 node .shipline/bin/stage.mjs resume <task folder>      # pick up an unfinished task
@@ -157,7 +158,18 @@ setup: done                             # written by /shipline-setup; stops the 
 | `agent` | Suggested subagent |
 | `confirm_to_advance` | Ask the developer before moving on |
 | `enforcement` | `guide`, `warn` or `block` |
+| `sections` | Headings the artifact must contain, each with some text under it, before the stage can finish (the defaults: Plan needs `Scope`, `Files to touch`, `Verification`; Verify needs `Checklist`; Root cause needs `Cause`, `Evidence`; Feasibility needs `Risks`) |
+| `checks: true` | The stage (Verify, by default) can't finish until `stage.mjs check` has run the test, lint and build commands on the current code and they passed, or you accepted the failures |
 | `blocks` | What is held back until this stage is done: `{ tools: 'Edit\|Write', allow_paths: [globs] }` or `{ bash: 'regex' }` |
+
+**Checks and PR evidence.** `stage.mjs check` runs `commands.test`, `commands.lint` and `commands.build` itself, records each
+exit code, duration and output tail in the task, and fingerprints the code it ran on (a git tree id that includes
+uncommitted files; your real index is never touched). On a `checks: true` stage, `advance` refuses a missing run or a run
+on code that has since changed. When a command failed, it asks you whether to finish anyway. `pr-summary` then shows a
+Checks line plus the plan's scope and the verification checklist in collapsed sections. The CI check compares the
+summary's fingerprint with the PR's git tree. With `ci.stale_checks` in `config.yml` set to `warn` (the default) it warns
+when they differ, with `fail` it fails. A command that failed and wasn't accepted fails the check either way. A hand-edited
+summary can still lie: this is evidence for reviewers, not a signature.
 
 **Rules files** (`.shipline/rules/<stage>.md`): plain Markdown that Claude reads before each stage. They ship
 with default guidance; `upgrade` replaces a rules file only while it is still an untouched shipped version.

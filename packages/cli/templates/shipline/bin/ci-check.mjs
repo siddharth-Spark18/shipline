@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 // The Shipline pull-request check (run by .github/workflows/shipline.yml). Reads the PR description and labels
 // from $GITHUB_EVENT_PATH, plus .shipline/config.yml and .shipline/workflows/<workflow>.yml from the checkout.
+// With a v2 summary it also compares the code the checks ran on (summary.checks.fingerprint, a git tree id) with
+// this checkout's `git rev-parse HEAD^{tree}`; a mismatch warns or fails per `ci.stale_checks`.
 // Exit 0 = pass, 1 = fail. Writes GitHub annotations and, when it has a summary, a table to $GITHUB_STEP_SUMMARY.
 // Node 18+, no dependencies. It needs no secrets, so it also works on PRs from forks.
 import { appendFileSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { findRoot, findStage, loadConfig, loadWorkflow, stageEnforcement } from './lib.mjs';
 
 // Annotation text may not contain raw line breaks or percent signs.
@@ -74,6 +77,9 @@ try {
 if (!data || typeof data !== 'object' || !Array.isArray(data.stages)) {
   fail('The Shipline summary in the description has no stage list. Paste the output of `stage.mjs pr-summary` again, unchanged.');
 }
+if (data.v !== undefined && data.v !== 1 && data.v !== 2) {
+  fail(`The Shipline summary is version ${esc(data.v)}, which this check doesn't know. Upgrade Shipline in this repo (\`npx @forgeyard/shipline upgrade\`).`);
+}
 
 let wf;
 try {
@@ -85,6 +91,8 @@ try {
 // The summary and the workflow may name the ticket stage differently (`jira` before 0.10.0, `ticket` after).
 const ranStages = data.stages.filter((s) => s && typeof s === 'object');
 const problems = [];
+const STALE_TEXT =
+  'The checks in the Shipline summary ran on different code than this PR (code changed after `stage.mjs check`, or the summary is from another task). Rerun `stage.mjs check` and paste `pr-summary` again.';
 for (const sc of wf.stages) {
   const s = findStage(ranStages, sc.id);
   const finished = s && (s.status === 'done' || (s.status === 'skipped' && (s.confirmed === 'answer' || s.confirmed === 'auto')));
@@ -96,6 +104,45 @@ for (const sc of wf.stages) {
   }
 }
 
+// ---------- checks (v2 summaries) ----------
+const checks = data.checks && typeof data.checks === 'object' && Array.isArray(data.checks.results) ? data.checks : null;
+const hasChecksStage = wf.stages.some((s) => s && s.checks === true);
+const secs = (ms) => (typeof ms === 'number' ? `${(ms / 1000).toFixed(1)}s` : '');
+let checksCell = null;
+if (checks) {
+  const results = checks.results.filter((r) => r && typeof r === 'object');
+  checksCell = results.length
+    ? results
+        .map((r) => (r.exit === 0 ? `${r.name} \u2713 ${secs(r.duration_ms)}`.trim() : `${r.name} \u2717 (${r.accepted ? 'accepted' : r.exit === null ? 'did not run' : `exit ${r.exit}`})`))
+        .join(' \u00b7 ')
+    : 'no commands configured';
+  for (const r of results) {
+    if (r.exit !== 0 && !r.accepted) problems.push(`The ${r.name} command failed (${r.exit === null ? 'it did not run' : `exit ${r.exit}`}) and the developer did not accept the failure.`);
+  }
+}
+
+// Were the checks run on exactly this code? Never a failure when it can't be told, or for a v1 summary.
+let staleMessage = null;
+if (data.v === 1 || data.v === undefined) {
+  if (hasChecksStage) notice("This summary is from an older Shipline (v1) and doesn't record where the checks ran, so their freshness can't be checked.");
+} else if (!checks) {
+  if (hasChecksStage) staleMessage = STALE_TEXT;
+} else if (!checks.fingerprint) {
+  notice("The summary's checks have no code fingerprint (not a git repo, or git failed), so their freshness can't be checked.");
+} else {
+  let head = null;
+  try {
+    head = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  } catch {
+    // Handled below.
+  }
+  if (!head) notice("Couldn't read this checkout's git tree, so the freshness of the checks can't be checked.");
+  else if (head === checks.fingerprint) notice('Checks ran on this exact code.');
+  else staleMessage = STALE_TEXT;
+}
+if (staleMessage && cfg.ci.stale_checks === 'fail') problems.push(staleMessage);
+else if (staleMessage) warning(staleMessage);
+
 const label = { answer: 'your answer', auto: 'auto' };
 const cell = (v) => String(v === undefined || v === null ? '' : v).replace(/[|\r\n]/g, ' ');
 summaryOut(
@@ -104,6 +151,7 @@ summaryOut(
     '| Stage | Status | Confirmed |',
     '| --- | --- | --- |',
     ...data.stages.map((s) => `| ${cell(s && s.id)} | ${cell(s && s.status)} | ${label[s && s.confirmed] || '—'} |`),
+    ...(checksCell !== null ? [`| Checks | ${cell(checksCell)} | \u2014 |`] : []),
     ...(problems.length ? ['', ...problems.map((p) => `- ${p}`)] : []),
   ].join('\n'),
 );

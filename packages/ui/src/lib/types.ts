@@ -77,6 +77,10 @@ export interface StageModel {
   agent?: string | null;
   enforcement?: Enforcement | null;
   blocks?: Block[] | null;
+  /** The stage can't finish until `stage.mjs check` has run the configured commands on the current code. */
+  checks?: boolean | null;
+  /** Headings the artifact must contain, each with some text under it. */
+  sections?: string[] | null;
   [key: string]: unknown;
 }
 
@@ -101,7 +105,12 @@ export interface ConfigModel {
   /** Names of the repo's own `.claude/skills/<name>`; edited in the Agents & skills section. */
   skills?: string[] | null;
   /** The pull-request check settings; edited in the CI check section. */
-  ci?: { missing_block?: string | null; skip_label?: string | null; [key: string]: unknown } | null;
+  ci?: {
+    missing_block?: string | null;
+    skip_label?: string | null;
+    stale_checks?: string | null;
+    [key: string]: unknown;
+  } | null;
   /** `done` once /shipline-setup has run; not an editable field. */
   setup?: string | null;
   [key: string]: unknown;
@@ -270,6 +279,26 @@ export interface TaskFile {
   mtime: number | string;
 }
 
+/** One command of the latest `stage.mjs check` run. `exit` is null when the command didn't start. */
+export interface TaskCheckResult {
+  name: string;
+  command: string;
+  exit: number | null;
+  duration_ms: number;
+  /** The last lines of the output (at most 40 lines or 4 KB). */
+  tail: string;
+  /** A failure the developer chose to live with. */
+  accepted: boolean;
+}
+
+/** The latest check run recorded in the task, or null before the first run. */
+export interface TaskChecks {
+  ran_at: string | null;
+  /** True when the code changed since the run. */
+  stale: boolean;
+  results: TaskCheckResult[];
+}
+
 export interface Task {
   /** Task folder: the absolute path of its store folder. Treat it as an opaque id. */
   dir: string;
@@ -279,6 +308,7 @@ export interface Task {
   branch: string;
   stages: TaskStage[];
   files: TaskFile[];
+  checks: TaskChecks | null;
 }
 
 export type ChangeStatus = 'added' | 'modified' | 'deleted' | 'renamed';

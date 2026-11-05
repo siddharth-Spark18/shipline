@@ -8,16 +8,20 @@
 //   node .shipline/bin/stage.mjs skip [--reason "..."]
 //   node .shipline/bin/stage.mjs reopen <stage>
 //   node .shipline/bin/stage.mjs flag ui true|false
+//   node .shipline/bin/stage.mjs check
 //   node .shipline/bin/stage.mjs pr-summary
 // A confirm_to_advance stage (and skipping a non-optional stage) needs the developer's own answer to the
 // question that `advance` / `skip` prints; there are no override flags.
+// `check` runs the test, lint and build commands from config.yml and records the results in the manifest; a stage
+// with `checks: true` (verify) can't finish without a passing run on the current code, unless the developer accepts.
 // Session: $SHIPLINE_SESSION (set by the SessionStart hook) or --session <id>. Task override: --task <folder>.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import {
   findRoot, loadConfig, loadWorkflow, listWorkflows, readManifest, manifestPath, readSession, statePath,
   tasksDir, writeJson, isDone, currentStage, slugify, stageEnforcement, confirmQuestion, readApprovals,
-  consumeApproval, CONFIRM_OPTIONS, sameStage, findStage,
+  consumeApproval, CONFIRM_OPTIONS, sameStage, findStage, fingerprint, findSection, sectionProblems,
 } from './lib.mjs';
 
 function die(msg) {
@@ -134,6 +138,11 @@ function trackerLine(manifest) {
   return `Tracker: "${tracker}" is not supported; skip this stage with \`stage.mjs skip --reason "Tracker not supported"\`.`;
 }
 
+// The stage's required section headings: non-empty strings only.
+function sections(sc) {
+  return Array.isArray(sc.sections) ? sc.sections.filter((h) => typeof h === 'string' && h.trim()) : [];
+}
+
 function describeCurrent(taskDir, manifest, wf) {
   const cur = currentStage(manifest);
   if (!cur) return 'All stages are done. The task is complete.';
@@ -142,6 +151,8 @@ function describeCurrent(taskDir, manifest, wf) {
     `Current stage: ${sc.name || cur.id} [${cur.id}]`,
     sc.artifact ? `Artifact to produce: ${taskDir}/${sc.artifact}` : 'No required artifact.',
     sc.agent ? `Suggested agent: ${sc.agent}` : null,
+    sections(sc).length ? `Required sections in the artifact (each needs real text under its heading): ${sections(sc).join(', ')}` : null,
+    sc.checks === true ? 'Checks: run `node .shipline/bin/stage.mjs check` (Bash timeout 600000 ms, or in the background for slow suites) before advancing; rerun it after any code change.' : null,
     `Enforcement: ${stageEnforcement(sc)}. Confirm with the developer before advancing: ${sc.confirm_to_advance ? 'YES (`advance` prints the question to ask them; it only goes through after they answer it)' : 'no (auto-advance)'}`,
   ].filter(Boolean);
   if (Array.isArray(cfg.skills) && cfg.skills.length) lines.push(`Repo skills you can use: ${cfg.skills.join(', ')}`);
@@ -173,10 +184,10 @@ function questionText(q) {
 
 // The developer's own answer for advancing past / skipping the current stage. Returns the approval it used
 // (and clears pending_confirm), or ends the process after printing the question to ask.
-function requireAnswer(kind, stageId, taskDir, manifest) {
-  const verb = kind === 'advance' ? 'confirm advancing' : 'confirm skipping';
+function requireAnswer(kind, stageId, taskDir, manifest, extra) {
+  const verb = kind === 'advance' ? 'confirm advancing' : kind === 'accept' ? 'decide whether to finish with failed checks' : 'confirm skipping';
   if (!sessionId) die(`no session id; confirmations need the session that asked the question. Pass --session <id> or set SHIPLINE_SESSION.`);
-  const q = confirmQuestion(stageId, kind, manifest.task.slug);
+  const q = confirmQuestion(stageId, kind, manifest.task.slug, extra);
   const st = readSession(root, sessionId) || { session_id: sessionId };
   const pend = st.pending_confirm;
   // Re-running keeps the original issued_at, so an answer already given stays valid.
@@ -310,7 +321,9 @@ switch (cmd) {
       const st = sessionId ? readSession(root, sessionId) : null;
       const pend = st && st.pending_confirm;
       if (cur && pend && pend.stage === cur.id && pend.task_dir === taskDir) {
-        console.log(`\nA confirmation is still open (run \`${pend.kind}\` after the developer answers).\n${questionText(confirmQuestion(cur.id, pend.kind, manifest.task.slug))}`);
+        // An accept question carries the run it is about, so it is shown as it was issued.
+        const q = pend.kind === 'accept' ? { header: 'Shipline', question: pend.question, options: [CONFIRM_OPTIONS.accept.yes, CONFIRM_OPTIONS.accept.no] } : confirmQuestion(cur.id, pend.kind, manifest.task.slug);
+        console.log(`\nA confirmation is still open (run \`${pend.kind === 'accept' ? 'advance' : pend.kind}\` after the developer answers).\n${questionText(q)}`);
       }
     }
     break;
@@ -327,6 +340,14 @@ switch (cmd) {
       if (sc.artifact && !existsSync(path.join(taskDir, sc.artifact))) {
         die(`stage "${cur.id}" is not finished: ${taskDir}/${sc.artifact} does not exist yet.`);
       }
+      if (sc.artifact) {
+        const wanted = sections(sc);
+        if (wanted.length) {
+          const problems = sectionProblems(readFileSync(path.join(taskDir, sc.artifact), 'utf8'), wanted);
+          if (problems.length) die(`${sc.artifact} is missing: ${problems.join(', ')}.`);
+        }
+      }
+      if (sc.checks === true) gateChecks(taskDir, manifest, cur);
       if (sc.confirm_to_advance) {
         const a = requireAnswer('advance', cur.id, taskDir, manifest);
         cur.confirmed = { via: 'answer', at: a.at };
@@ -363,12 +384,14 @@ switch (cmd) {
         delete s.reason;
         delete s.confirmed;
         delete s.skipped;
+        delete s.accepted;
       }
     });
     manifest.stages[idx].status = 'in_progress';
     delete manifest.stages[idx].reason;
     delete manifest.stages[idx].confirmed;
     delete manifest.stages[idx].skipped;
+    delete manifest.stages[idx].accepted;
     manifest.complete = false;
     save(taskDir, manifest);
     clearPending();
@@ -386,16 +409,43 @@ switch (cmd) {
     break;
   }
 
+  case 'check': {
+    const taskDir = activeTaskDir();
+    const { manifest } = load(taskDir);
+    const commands = configuredCommands();
+    if (!commands.length) {
+      manifest.checks = { fingerprint: fingerprint(root), ran_at: now(), results: [] };
+      save(taskDir, manifest);
+      console.log('No test, lint or build commands are configured in .shipline/config.yml.');
+      break;
+    }
+    // The fingerprint is taken before the commands run: it is the code they saw.
+    const fp = fingerprint(root);
+    if (fp === null) console.log('Note: this is not a git repository (or git failed), so the checks cannot be tied to a version of the code.');
+    const results = commands.map(([name, command]) => {
+      console.log(`Running ${name}: ${command}`);
+      return runCommand(name, command);
+    });
+    manifest.checks = { fingerprint: fp, ran_at: now(), results };
+    save(taskDir, manifest);
+    const failed = results.filter((r) => r.exit !== 0);
+    console.log(`\n${checksLine(results)}`);
+    for (const r of failed) console.log(`\n--- ${r.name} (${r.exit === null ? 'did not run' : `exit ${r.exit}`}) last output ---\n${r.tail}`);
+    console.log(`\nFingerprint: ${fp ? fp.slice(0, 12) : 'none'}`);
+    if (failed.length) process.exit(1);
+    break;
+  }
+
   case 'pr-summary': {
     const taskDir = activeTaskDir();
     const { manifest, wf } = load(taskDir);
     const closes = cfg.tracker === 'github' && Number.isInteger(manifest.task.issue) ? `Closes #${manifest.task.issue}\n` : '';
-    console.log(closes + prSummary(manifest, wf));
+    console.log(closes + prSummary(taskDir, manifest, wf));
     break;
   }
 
   default:
-    console.log('usage: stage.mjs workflows | start | resume <task> | status | advance | skip | reopen <stage> | flag ui true|false | pr-summary');
+    console.log('usage: stage.mjs workflows | start | resume <task> | status | advance | skip | reopen <stage> | flag ui true|false | check | pr-summary');
     process.exit(cmd ? 1 : 0);
 }
 
@@ -412,8 +462,91 @@ function provenance(ms, sc) {
   return null;
 }
 
+// ---------- checks ----------
+
+// [[name, command]] for the configured, non-empty commands, in the order test, lint, build.
+function configuredCommands() {
+  const c = cfg.commands && typeof cfg.commands === 'object' ? cfg.commands : {};
+  return ['test', 'lint', 'build'].filter((n) => typeof c[n] === 'string' && c[n].trim()).map((n) => [n, c[n].trim()]);
+}
+
+// The last 40 lines of the output, at most 4 KB.
+function tailOf(text) {
+  let t = String(text).replace(/\r\n/g, '\n').replace(/\s+$/, '').split('\n').slice(-40).join('\n');
+  const buf = Buffer.from(t, 'utf8');
+  if (buf.length > 4096) t = buf.subarray(buf.length - 4096).toString('utf8').replace(/^�+/, '');
+  return t;
+}
+
+// Runs one command through the system shell in the repo root. exit is null when it did not start (or was killed).
+function runCommand(name, command) {
+  const t0 = Date.now();
+  const r = spawnSync(command, { shell: true, cwd: root, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, env: process.env });
+  const duration_ms = Date.now() - t0;
+  const output = `${r.stdout || ''}${r.stderr || ''}`;
+  if (r.error) return { name, command, exit: null, duration_ms, tail: tailOf(output || r.error.message) };
+  return { name, command, exit: typeof r.status === 'number' ? r.status : null, duration_ms, tail: tailOf(output || (r.signal ? `killed by ${r.signal}` : '')) };
+}
+
+function seconds(ms) {
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+// `test ✓ 41.9s · lint ✗ (exit 1) · build ✓ 12.0s`. accepted: names whose failure the developer accepted.
+function checksLine(results, accepted = []) {
+  return results
+    .map((r) => {
+      if (r.exit === 0) return `${r.name} ✓ ${seconds(r.duration_ms)}`;
+      if (accepted.includes(r.name)) return `${r.name} ✗ (accepted)`;
+      return `${r.name} ✗ (${r.exit === null ? 'did not run' : `exit ${r.exit}`})`;
+    })
+    .join(' · ');
+}
+
+// Names of the failed commands whose failure the stage's stored acceptance covers (it holds only for that run).
+function acceptedNames(checks, stage) {
+  const a = stage && stage.accepted;
+  if (!checks || !a || a.fingerprint !== checks.fingerprint || a.ran_at !== checks.ran_at || !Array.isArray(a.names)) return [];
+  return a.names;
+}
+
+// The gate on a `checks: true` stage: a recorded run, on the current code, with every result passed or accepted.
+function gateChecks(taskDir, manifest, cur) {
+  if (!configuredCommands().length) return; // nothing to run: finishes as it always did
+  const ch = manifest.checks;
+  if (!ch || !Array.isArray(ch.results) || !ch.results.length) die(`stage "${cur.id}" needs a check run. Run \`node .shipline/bin/stage.mjs check\` first.`);
+  if (ch.fingerprint) {
+    const current = fingerprint(root);
+    if (current && current !== ch.fingerprint) die('The code changed since the last check run. Run `stage.mjs check` again.');
+  }
+  const failed = ch.results.filter((r) => r.exit !== 0).map((r) => r.name);
+  if (!failed.length || acceptedNames(ch, cur).length) return;
+  // Accepting comes before any other question: a session has one pending confirmation at a time.
+  requireAnswer('accept', cur.id, taskDir, manifest, { names: failed, fingerprint: ch.fingerprint, ran_at: ch.ran_at });
+  cur.accepted = { names: failed, fingerprint: ch.fingerprint, ran_at: ch.ran_at };
+  // Saved now: if the advance question follows, the acceptance has to survive until the developer answers it.
+  save(taskDir, manifest);
+}
+
 // The PR description block: a visible table, then the hidden data that .shipline/bin/ci-check.mjs reads.
-function prSummary(manifest, wf) {
+// The text under `heading` in the artifact of the stage whose `sections` include it, or null.
+function sectionBlock(taskDir, wf, heading) {
+  const limit = 3000;
+  const want = heading.toLowerCase();
+  const sc = wf.stages.find((st) => sections(st).some((h) => h.trim().replace(/:+$/, '').trim().toLowerCase() === want) && st.artifact);
+  if (!sc) return null;
+  let md;
+  try {
+    md = readFileSync(path.join(taskDir, sc.artifact), 'utf8');
+  } catch {
+    return null;
+  }
+  const sec = findSection(md, heading);
+  if (!sec.found || !sec.text) return null;
+  return sec.text.length > limit ? `${sec.text.slice(0, limit)}\n\n…(truncated)` : sec.text;
+}
+
+function prSummary(taskDir, manifest, wf) {
   const label = { answer: 'your answer', auto: 'auto' };
   const rows = [];
   const data = [];
@@ -421,9 +554,38 @@ function prSummary(manifest, wf) {
     const sc = stageCfg(wf, ms.id);
     const status = ms.status === 'done' || ms.status === 'skipped' ? ms.status : 'pending';
     const confirmed = provenance(ms, sc);
-    rows.push(`| ${ms.id} | ${status} | ${label[confirmed] || '\u2014'} |`);
+    rows.push(`| ${ms.id} | ${status} | ${label[confirmed] || '—'} |`);
     data.push({ id: ms.id, status, enforcement: stageEnforcement(sc), confirmed });
   }
-  const json = JSON.stringify({ v: 1, workflow: wf.id, task: manifest.task.slug, stages: data });
-  return ['### Shipline', '| Stage | Status | Confirmed |', '| --- | --- | --- |', ...rows, `<!-- shipline:summary ${json} -->`].join('\n');
+  const out = ['### Shipline', '| Stage | Status | Confirmed |', '| --- | --- | --- |', ...rows];
+  const json = { v: 2, workflow: wf.id, task: manifest.task.slug, stages: data };
+
+  const checkStage = wf.stages.find((st) => st.checks === true);
+  if (checkStage) {
+    const ms = manifest.stages.find((m) => sameStage(m.id, checkStage.id));
+    const ch = manifest.checks && Array.isArray(manifest.checks.results) ? manifest.checks : null;
+    const accepted = ch ? acceptedNames(ch, ms) : [];
+    if (ch && ch.results.length) {
+      // Out of date only when both fingerprints are known and differ (as in the gate and the UI).
+      const current = ch.fingerprint ? fingerprint(root) : null;
+      const stale = Boolean(ch.fingerprint && current && current !== ch.fingerprint);
+      out.push('', `**Checks:** ${checksLine(ch.results, accepted)}${stale ? ' (out of date)' : ''}`);
+      json.checks = {
+        fingerprint: ch.fingerprint || null,
+        results: ch.results.map((r) => ({ name: r.name, exit: r.exit, duration_ms: r.duration_ms, accepted: r.exit !== 0 && accepted.includes(r.name) })),
+      };
+    } else if (!configuredCommands().length) {
+      out.push('', '**Checks:** no commands configured');
+      json.checks = { fingerprint: null, results: [] };
+    } else {
+      out.push('', '**Checks:** not run');
+    }
+  }
+
+  for (const [heading, title] of [['Scope', 'Plan scope'], ['Checklist', 'Verification checklist']]) {
+    const text = sectionBlock(taskDir, wf, heading);
+    if (text) out.push('', `<details><summary>${title}</summary>`, '', text, '', '</details>');
+  }
+  out.push(`<!-- shipline:summary ${JSON.stringify(json)} -->`);
+  return out.join('\n');
 }

@@ -1,5 +1,5 @@
 // PostToolUse hook (matcher AskUserQuestion): records the developer's own answer to a confirmation question
-// that stage.mjs issued, so `advance` / `skip` can tell a real answer from Claude's say-so.
+// that stage.mjs issued (advance, skip, or accepting failed checks), so `advance` / `skip` can tell a real answer from Claude's say-so.
 // Only the exact pending question counts, and only its fixed options are stored. Every other question is
 // ignored. Fails open with a visible message. Node 18+, no dependencies.
 import { appendFileSync, mkdirSync } from 'node:fs';

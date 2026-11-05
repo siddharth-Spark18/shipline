@@ -117,9 +117,9 @@ describe('fixtures (item 14)', () => {
     const model = parseYaml(readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8'));
     model.commands = {};
     const out = emitConfig(model, { layout: configLayout() });
-    // The shipped config has `skills: []` after the commands block, then the ci block (Trust plan), then the comment
+    // The shipped config has `skills: []` after the commands block, then the ci block (Trust plan; stale_checks since Teams Phase 2), then the comment
     // documenting `setup` (Teams Phase 1), which has no key until /shipline-setup writes `setup: done`.
-    assert.match(out, /\ncommands:\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n\n# Set to `done`[^\n]*\n# Until then[^\n]*\n$/);
+    assert.match(out, /\ncommands:\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\n# stale_checks:[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n {2}stale_checks: warn\n\n# Set to `done`[^\n]*\n# Until then[^\n]*\n$/);
     assert.equal(parseYaml(out).commands, null);
   });
 

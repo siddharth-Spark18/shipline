@@ -18,10 +18,12 @@ skills: []
 
 # Optional. The pull-request check (.github/workflows/shipline.yml, added from `init` or Setup, CI check) reads this.
 # missing_block: what happens when the PR description has no Shipline summary: fail-unless-label | warn | fail
+# stale_checks: what happens when the checks in the summary ran on different code than the PR's: warn | fail
 ci:
   missing_block: fail-unless-label
   # The PR label that lets a PR without a summary pass (with fail-unless-label).
   skip_label: shipline:skip
+  stale_checks: warn
 
 # Set to `done` by /shipline-setup (a top-level key `setup: done`) once the rules have been tailored to this repo.
 # Until then Shipline reminds you that it is using its default rules.

@@ -5,7 +5,7 @@ import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
+import { git, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
 
 let dir;
 let scratch;
@@ -340,6 +340,150 @@ describe('the jira/ticket alias and the Closes line', () => {
       rmSync(task, { recursive: true });
     } finally {
       writeFileSync(cfg, saved);
+    }
+  });
+});
+
+// ---------- Teams Phase 2, E: the checks in a v2 summary ----------
+
+describe('v2 summaries: did the checks run on this code, and did they pass?', () => {
+  const STALE =
+    'The checks in the Shipline summary ran on different code than this PR (code changed after `stage.mjs check`, or the summary is from another task). Rerun `stage.mjs check` and paste `pr-summary` again.';
+  const notices = (r) => r.stdout.split('\n').filter((l) => l.startsWith('::notice title=Shipline::'));
+  const warnings = (r) => r.stdout.split('\n').filter((l) => l.startsWith('::warning title=Shipline::'));
+  const esc = (m) => m.replace(/%/g, '%25');
+  let head; // this checkout's HEAD^{tree}
+  const result = (name, exit, accepted = false) => ({ name, exit, duration_ms: 1200, accepted });
+  const v2 = (checks) => featureSummary({}, { v: 2, ...(checks === undefined ? {} : { checks }) });
+  const noChecksWf = () => path.join(dir, '.shipline', 'workflows', 'nochecks.yml');
+
+  before(() => {
+    head = git(dir, 'rev-parse', 'HEAD^{tree}');
+    writeFileSync(noChecksWf(), 'id: nochecks\nname: No checks\nstages:\n  - id: build\n    enforcement: block\n');
+  });
+  after(() => {
+    rmSync(noChecksWf(), { force: true });
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip' });
+  });
+
+  test('a v1 summary still passes, with a notice that freshness can\'t be checked (the workflow has a checks stage)', () => {
+    for (const stale of ['warn', 'fail']) {
+      setCi({ missing_block: 'fail', skip_label: 'shipline:skip', stale_checks: stale });
+      const r = check(body(featureSummary()));
+      assert.equal(r.code, 0, r.stdout);
+      assert.deepEqual(errors(r), []);
+      assert.ok(notices(r).some((l) => /older Shipline \(v1\).*can't be checked/.test(l)), r.stdout);
+    }
+  });
+
+  test('a fingerprint equal to HEAD^{tree}: "Checks ran on this exact code." and a Checks row in the job summary', () => {
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip', stale_checks: 'fail' });
+    const r = check(body(v2({ fingerprint: head, results: [result('test', 0), result('lint', 0)] })));
+    assert.equal(r.code, 0, r.stdout);
+    assert.deepEqual(errors(r), []);
+    assert.deepEqual(warnings(r), []);
+    assert.ok(notices(r).includes('::notice title=Shipline::Checks ran on this exact code.'), r.stdout);
+    assert.match(r.summary, /^\| pr \| done \| auto \|\n\| Checks \| test ✓ 1\.2s · lint ✓ 1\.2s \| — \|\n$/m);
+  });
+
+  test('a different fingerprint: a warning by default (passes), a failure with stale_checks: fail', () => {
+    const data = v2({ fingerprint: 'f'.repeat(40), results: [result('test', 0)] });
+    for (const ci of [{ missing_block: 'fail', skip_label: 'shipline:skip' }, { missing_block: 'fail', skip_label: 'shipline:skip', stale_checks: 'warn' }]) {
+      setCi(ci);
+      const r = check(body(data));
+      assert.equal(r.code, 0, r.stdout);
+      assert.deepEqual(errors(r), []);
+      assert.deepEqual(warnings(r), [`::warning title=Shipline::${esc(STALE)}`]);
+    }
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip', stale_checks: 'fail' });
+    const r = check(body(data));
+    assert.equal(r.code, 1, r.stdout);
+    assert.deepEqual(errors(r), [`::error title=Shipline::${esc(STALE)}`]);
+    assert.ok(r.summary.includes(`- ${STALE}`));
+  });
+
+  test('a failed command the developer didn\'t accept fails, whatever stale_checks says; an accepted one passes', () => {
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip', stale_checks: 'warn' });
+    const failed = check(body(v2({ fingerprint: head, results: [result('test', 0), result('lint', 2)] })));
+    assert.equal(failed.code, 1, failed.stdout);
+    assert.deepEqual(errors(failed), ['::error title=Shipline::The lint command failed (exit 2) and the developer did not accept the failure.']);
+    assert.match(failed.summary, /^\| Checks \| test ✓ 1\.2s · lint ✗ \(exit 2\) \| — \|$/m);
+    const notRun = check(body(v2({ fingerprint: head, results: [result('build', null)] })));
+    assert.equal(notRun.code, 1);
+    assert.deepEqual(errors(notRun), ['::error title=Shipline::The build command failed (it did not run) and the developer did not accept the failure.']);
+    const accepted = check(body(v2({ fingerprint: head, results: [result('test', 0), result('lint', 2, true)] })));
+    assert.equal(accepted.code, 0, accepted.stdout);
+    assert.deepEqual(errors(accepted), []);
+    assert.match(accepted.summary, /^\| Checks \| test ✓ 1\.2s · lint ✗ \(accepted\) \| — \|$/m);
+  });
+
+  test('a null fingerprint: a notice, never a failure', () => {
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip', stale_checks: 'fail' });
+    const r = check(body(v2({ fingerprint: null, results: [result('test', 0)] })));
+    assert.equal(r.code, 0, r.stdout);
+    assert.deepEqual(errors(r), []);
+    assert.deepEqual(warnings(r), []);
+    assert.ok(notices(r).some((l) => /no code fingerprint/.test(l)), r.stdout);
+  });
+
+  test('no commands configured (an empty run) passes, with "no commands configured" in the job summary', () => {
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip', stale_checks: 'fail' });
+    const r = check(body(v2({ fingerprint: null, results: [] })));
+    assert.equal(r.code, 0, r.stdout);
+    assert.match(r.summary, /^\| Checks \| no commands configured \| — \|$/m);
+  });
+
+  test('a v2 summary without checks: stale behaviour when the workflow has a checks stage; fine when it has none', () => {
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip' });
+    const warn = check(body(v2()));
+    assert.equal(warn.code, 0, warn.stdout);
+    assert.deepEqual(warnings(warn), [`::warning title=Shipline::${esc(STALE)}`]);
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip', stale_checks: 'fail' });
+    const fail = check(body(v2()));
+    assert.equal(fail.code, 1, fail.stdout);
+    assert.deepEqual(errors(fail), [`::error title=Shipline::${esc(STALE)}`]);
+    const none = check(body({ v: 2, workflow: 'nochecks', task: 't', stages: [{ id: 'build', status: 'done', enforcement: 'block', confirmed: 'auto' }] }));
+    assert.equal(none.code, 0, none.stdout);
+    assert.deepEqual(errors(none), []);
+    assert.deepEqual(warnings(none), []);
+    assert.equal(none.summary.includes('| Checks |'), false);
+  });
+
+  test('an unknown summary version fails', () => {
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip' });
+    const r = check(body(featureSummary({}, { v: 3 })));
+    assert.equal(r.code, 1);
+    assert.match(errors(r)[0], /The Shipline summary is version 3, which this check doesn't know\./);
+  });
+
+  test('end to end: `check` on committed code, then pr-summary pasted into the PR: "Checks ran on this exact code."', () => {
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip', stale_checks: 'fail' });
+    const wf = path.join(dir, '.shipline', 'workflows', 'ck.yml');
+    const cfg = path.join(dir, '.shipline', 'config.yml');
+    const savedCfg = readFileSync(cfg, 'utf8');
+    writeFileSync(wf, 'id: ck\nname: Ck\nstages:\n  - id: verify\n    checks: true\n    enforcement: block\n');
+    writeFileSync(cfg, savedCfg.replace(/\n {2}test: ""\n/, `\n  test: '"${process.execPath}" -e ""'\n`));
+    try {
+      // The PR's code is what is committed: the workflow and config edits are part of it.
+      git(dir, 'add', '-A');
+      git(dir, 'commit', '-q', '-m', 'ck');
+      const s = 'ci-ck';
+      assert.equal(stage(dir, ['start', '--workflow', 'ck', '--title', 'Ck'], s).code, 0);
+      const c = stage(dir, ['check'], s);
+      assert.equal(c.code, 0, c.stdout + c.stderr);
+      assert.equal(stage(dir, ['advance'], s).code, 0);
+      const r = check(`Change.\n\n${stage(dir, ['pr-summary'], s).stdout}`);
+      assert.equal(r.code, 0, r.stdout);
+      assert.ok(notices(r).includes('::notice title=Shipline::Checks ran on this exact code.'), r.stdout);
+      // Another commit after the run: the PR's tree is no longer the one the checks saw.
+      writeFileSync(path.join(dir, 'src', 'a.js'), 'export const a = 99;\n');
+      git(dir, 'commit', '-q', '-am', 'later');
+      const stale = check(`Change.\n\n${stage(dir, ['pr-summary'], s).stdout}`);
+      assert.equal(stale.code, 1, stale.stdout);
+      assert.deepEqual(errors(stale), [`::error title=Shipline::${esc(STALE)}`]);
+    } finally {
+      rmSync(wf, { force: true });
+      writeFileSync(cfg, savedCfg);
     }
   });
 });

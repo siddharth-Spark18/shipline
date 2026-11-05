@@ -10,14 +10,16 @@ import path from 'node:path';
 // folder_pattern are gone from config.yml, and VERSION carries the `files` hash map.
 // 4 = Trust: answer-based confirmations (record-answer.mjs, the PostToolUse hook, no --confirmed/--force),
 // the store guard, `stage.mjs pr-summary` and the optional CI check.
-export const INTERFACE = 4;
+// 5 = Trust, phase 2: `stage.mjs check`, the `checks` and `sections` stage fields, the `accept` confirmation, the
+// v2 PR summary and `ci.stale_checks`.
+export const INTERFACE = 5;
 
 // The first interface whose tasks and session state live in the store (interface 3). Below it, `upgrade` moves
 // the data out of the repo, and the UI chat stays disabled until then.
 export const STORE_INTERFACE = 3;
 
 // What interface-1 repos lack. Used only for banner text.
-export const MISSING_BEFORE = ['the lost-task warning', 'visible warn reminders', 'task storage outside the repo (the store)', 'Trust: answer-based confirmations and the CI check'];
+export const MISSING_BEFORE = ['the lost-task warning', 'visible warn reminders', 'task storage outside the repo (the store)', 'Trust: answer-based confirmations and the CI check', 'Trust: real check runs, required sections and PR evidence'];
 
 // Returns { package, interface, files, excluded }, or { legacy: true, interface: 1 } when the file is missing or unreadable.
 export function readRepoVersion(root) {

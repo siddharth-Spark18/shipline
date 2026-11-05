@@ -9,6 +9,7 @@ import { BIN, CLI_ROOT, cleanEnv, homeFor, makeRepo, removeDir, storeOf, tmpDir 
 import { api, rawRequest, startUi } from './helpers.mjs';
 import { safeEqual } from '../../src/ui/auth.mjs';
 import { redact } from '../../src/ui/log.mjs';
+import { INTERFACE } from '../../src/interface.mjs';
 import { parseUiArgs } from '../../src/ui/server.mjs';
 
 let dir;
@@ -59,7 +60,7 @@ describe('status and diagnostics', () => {
     assert.ok(files && Object.keys(files).length > 0);
     assert.deepEqual(status.json, {
       uiVersion: pkg,
-      repoVersion: { package: pkg, interface: 4, files, excluded: [] },
+      repoVersion: { package: pkg, interface: INTERFACE, files, excluded: [] },
       versionState: 'same',
       root: dir,
       storeDir: storeOf(dir),
@@ -68,7 +69,7 @@ describe('status and diagnostics', () => {
     const d = await api(ui, 'GET', '/api/diagnostics');
     assert.equal(d.status, 200);
     assert.equal(d.json.root, dir);
-    assert.equal(d.json.uiInterface, 4);
+    assert.equal(d.json.uiInterface, 5);
     assert.equal(d.json.storeDir, storeOf(dir));
     assert.equal(d.json.needsUpgrade, false);
     assert.equal(d.json.port, ui.port);

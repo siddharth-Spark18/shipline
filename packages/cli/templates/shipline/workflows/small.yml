@@ -19,6 +19,8 @@ stages:
     name: Verify
     artifact: verification.md
     agent: qa-bug-hunter
+    checks: true
+    sections: [Checklist]
     enforcement: block
     confirm_to_advance: true
     blocks:

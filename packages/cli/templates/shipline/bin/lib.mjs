@@ -1,6 +1,6 @@
 // Shared helpers for the Shipline hook and stage scripts. Node 18+, no dependencies.
 // Vendored into .shipline/bin/ by `shipline init`; teams may edit it.
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync, renameSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -156,7 +156,9 @@ const DEFAULT_CONFIG = {
 
 // CI check settings (config.yml `ci:`); the section is optional and these apply when it is absent.
 export const CI_MISSING_BLOCK = ['fail-unless-label', 'warn', 'fail'];
-export const DEFAULT_CI = { missing_block: 'fail-unless-label', skip_label: 'shipline:skip' };
+// stale_checks: what ci-check does when the checks in the summary ran on different code than the PR's.
+export const CI_STALE_CHECKS = ['warn', 'fail'];
+export const DEFAULT_CI = { missing_block: 'fail-unless-label', skip_label: 'shipline:skip', stale_checks: 'warn' };
 
 export function readYamlFile(file) {
   try {
@@ -179,6 +181,7 @@ export function loadConfig(root) {
   cfg.ci = {
     missing_block: CI_MISSING_BLOCK.includes(ci.missing_block) ? ci.missing_block : DEFAULT_CI.missing_block,
     skip_label: typeof ci.skip_label === 'string' && ci.skip_label.trim() ? ci.skip_label.trim() : DEFAULT_CI.skip_label,
+    stale_checks: CI_STALE_CHECKS.includes(ci.stale_checks) ? ci.stale_checks : DEFAULT_CI.stale_checks,
   };
   return cfg;
 }
@@ -352,17 +355,23 @@ export function readSession(root, sessionId) {
 export const CONFIRM_OPTIONS = {
   advance: { yes: 'Advance', no: 'Not yet' },
   skip: { yes: 'Skip', no: "Don't skip" },
+  accept: { yes: 'Finish anyway', no: 'Not yet' },
 };
 
-// The single source of the exact AskUserQuestion text. kind is 'advance' or 'skip'.
-export function confirmQuestion(stage, kind, slug) {
+// The single source of the exact AskUserQuestion text. kind is 'advance', 'skip' or 'accept'.
+// For 'accept', extra is { names: [failed command names], fingerprint, ran_at } of the check run in question.
+export function confirmQuestion(stage, kind, slug, extra = {}) {
   const o = CONFIRM_OPTIONS[kind];
   if (!o) throw new Error(`unknown confirmation kind "${kind}"`);
-  return {
-    header: 'Shipline',
-    question: kind === 'advance' ? `Advance past "${stage}" in task ${slug}?` : `Skip "${stage}" in task ${slug}?`,
-    options: [o.yes, o.no],
-  };
+  let question;
+  if (kind === 'advance') question = `Advance past "${stage}" in task ${slug}?`;
+  else if (kind === 'skip') question = `Skip "${stage}" in task ${slug}?`;
+  else {
+    const names = Array.isArray(extra.names) ? extra.names.join(', ') : '';
+    const run = extra.fingerprint ? String(extra.fingerprint).slice(0, 8) : extra.ran_at || '';
+    question = `Finish "${stage}" in task ${slug} with failed checks: ${names} (run ${run})?`;
+  }
+  return { header: 'Shipline', question, options: [o.yes, o.no] };
 }
 
 // Every recorded answer of a session, oldest first. Unreadable lines are skipped.
@@ -473,6 +482,90 @@ export function currentBranch(root) {
   } catch {
     return '';
   }
+}
+
+// ---------- code fingerprint ----------
+
+// The git tree id of the working tree (uncommitted and untracked files included, ignored files left out), computed
+// with a temporary index so the real index is never touched. After a commit of exactly this code,
+// `git rev-parse HEAD^{tree}` gives the same id. Returns null when this isn't a git repo or git fails.
+export function fingerprint(root) {
+  let dir = null;
+  try {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'shipline-idx-'));
+    const tmpIndex = path.join(dir, 'index');
+    const opts = { cwd: root, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 };
+    // Start from a copy of the real index: its stat cache lets `git add -A` rehash only the files that
+    // changed, instead of every file in the repo. The real index itself is never written.
+    try {
+      const real = path.resolve(root, execFileSync('git', ['rev-parse', '--git-path', 'index'], opts).toString().trim());
+      if (existsSync(real)) copyFileSync(real, tmpIndex);
+    } catch {
+      // No real index (fresh repo): start empty; the result is the same tree.
+    }
+    const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
+    const run = (args) => execFileSync('git', args, { ...opts, env }).toString().trim();
+    run(['add', '-A', '--', ':/']);
+    const id = run(['write-tree']);
+    return /^[0-9a-f]{40,64}$/.test(id) ? id : null;
+  } catch {
+    return null;
+  } finally {
+    if (dir) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // A leftover temp folder is harmless.
+      }
+    }
+  }
+}
+
+// ---------- required sections ----------
+
+const normHeading = (t) => String(t).trim().replace(/\s*:+\s*$/, '').trim().toLowerCase();
+
+// Markdown headings outside fenced code blocks: [{ line, level, title }].
+function headingsOf(lines) {
+  const out = [];
+  let fence = null;
+  lines.forEach((l, i) => {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(l);
+    if (f) {
+      if (!fence) fence = f[1][0];
+      else if (f[1][0] === fence) fence = null;
+      return;
+    }
+    if (fence) return;
+    const m = /^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/.exec(l);
+    if (m) out.push({ line: i, level: m[1].length, title: m[2] });
+  });
+  return out;
+}
+
+// The first heading that matches (case-insensitive, trailing ":" ignored) and the text under it, up to the next
+// heading of the same or a higher level. -> { found, text }
+export function findSection(markdown, heading) {
+  const lines = String(markdown).split(/\r?\n/);
+  const heads = headingsOf(lines);
+  const want = normHeading(heading);
+  const idx = heads.findIndex((h) => normHeading(h.title) === want);
+  if (idx < 0) return { found: false, text: '' };
+  const end = heads.slice(idx + 1).find((h) => h.level <= heads[idx].level);
+  return { found: true, text: lines.slice(heads[idx].line + 1, end ? end.line : lines.length).join('\n').trim() };
+}
+
+export const MIN_SECTION_CHARS = 20;
+
+// Problems with the required sections of an artifact: '<heading> (no heading)' or '<heading> (empty)', in order.
+export function sectionProblems(markdown, sections) {
+  const problems = [];
+  for (const h of Array.isArray(sections) ? sections : []) {
+    const sec = findSection(markdown, h);
+    if (!sec.found) problems.push(`${h} (no heading)`);
+    else if (sec.text.replace(/\s/g, '').length < MIN_SECTION_CHARS) problems.push(`${h} (empty)`);
+  }
+  return problems;
 }
 
 // ---------- misc ----------

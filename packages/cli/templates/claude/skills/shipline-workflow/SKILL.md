@@ -34,12 +34,12 @@ For the current stage: read its rules (printed by stage.mjs), delegate to the na
   - The stage is optional, so skipping needs no question to the developer. Workflows from before 0.10.0 may call this stage `jira`; it is the same stage.
 - **feasibility:** write `feasibility.md`. If the verdict is *not feasible*, STOP after writing it: present blockers and alternatives and let the developer decide. If *partly feasible or uncertain*, carry the blockers into the questions stage.
 - **plan:** state whether the work is UI-affecting, then run `stage.mjs flag ui true|false`. The wireframes stage runs only for UI work.
-- **verify:** build the requirement checklist in `verification.md` (each acceptance criterion with evidence). For UI work run the app and check it in a browser. Run the test, lint and build commands configured in `.shipline/config.yml` and record each result; skip any that are not set.
+- **verify:** build the requirement checklist in `verification.md` under a `## Checklist` heading (each acceptance criterion with evidence). For UI work run the app and check it in a browser. Then run `node .shipline/bin/stage.mjs check`: Shipline itself runs the test, lint and build commands configured in `.shipline/config.yml` and records the results (it skips any that are not set). Run it with the Bash tool's maximum timeout (`timeout: 600000`), or in the background for a slow suite. Rerun it after any change to the code; `advance` refuses a run on code that has since changed. If a command failed, fix it and rerun. If it can't be fixed (for example it needs a service or secret that isn't available here), report the failures to the developer first, then run `advance`: it prints a "Finish anyway" question, which you ask word for word like any other. Never edit the results by hand.
 - **pr:** use `git` and `gh` with the developer's own credentials; summarize the plan and the verification result in the PR body. Don't link task files; they're local. Run `node .shipline/bin/stage.mjs pr-summary` and paste its output unchanged at the end of the PR description (for a GitHub issue its first line is `Closes #<n>`; keep it, so merging closes the issue).
 
 ## 4. Advance
 
-When the stage's artifact exists, record progress:
+When the stage's artifact exists, record progress. Some stages list required sections (`stage.mjs` prints them when the stage starts, for example the plan needs `Scope`, `Files to touch` and `Verification`); write each as a Markdown heading with real text under it, or `advance` names what is missing.
 
 ```
 node .shipline/bin/stage.mjs advance

@@ -3,13 +3,59 @@ import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'n
 // git's own name for "no file" in --no-index mode; it works on every platform (see git.mjs).
 const GIT_NULL = '/dev/null';
 import path from 'node:path';
-import { findStage } from '../../templates/shipline/bin/lib.mjs';
+import { findStage, fingerprint } from '../../templates/shipline/bin/lib.mjs';
 import { isInside, tasksDir } from '../store.mjs';
 import { HttpError } from './http.mjs';
 import { fileDiff, gitOk, gitRun, looksBinary } from './git.mjs';
 import { log } from './log.mjs';
 
 const FILE_LIMIT = 1024 * 1024;
+
+const FINGERPRINT_TTL_MS = 5000;
+// The current code fingerprint per repo root, recomputed at most once per FINGERPRINT_TTL_MS (it runs git).
+const fingerprints = new Map();
+
+function currentFingerprint(root) {
+  const hit = fingerprints.get(root);
+  const t = Date.now();
+  if (hit && t - hit.at < FINGERPRINT_TTL_MS) return hit.value;
+  const value = fingerprint(root);
+  fingerprints.set(root, { at: t, value });
+  return value;
+}
+
+// manifest.checks -> { ran_at, stale, results } for the browser, or null before the first run. `stale` is true when
+// the code changed since the run; `accepted` marks failed commands the developer chose to live with.
+function checksView(root, manifest) {
+  const ch = manifest.checks;
+  if (!ch || typeof ch !== 'object' || !Array.isArray(ch.results)) return null;
+  const acc = manifest.stages
+    .map((s) => s.accepted)
+    .find(
+      (a) =>
+        a && a.fingerprint === ch.fingerprint && a.ran_at === ch.ran_at && Array.isArray(a.names),
+    );
+  const names = acc ? acc.names : [];
+  const stale =
+    typeof ch.fingerprint === 'string' &&
+    ch.fingerprint !== '' &&
+    (() => {
+      const now = currentFingerprint(root);
+      return now !== null && now !== ch.fingerprint;
+    })();
+  return {
+    ran_at: ch.ran_at ?? null,
+    stale,
+    results: ch.results.map((r) => ({
+      name: r.name,
+      command: r.command ?? '',
+      exit: typeof r.exit === 'number' ? r.exit : null,
+      duration_ms: typeof r.duration_ms === 'number' ? r.duration_ms : 0,
+      tail: typeof r.tail === 'string' ? r.tail : '',
+      accepted: r.exit !== 0 && names.includes(r.name),
+    })),
+  };
+}
 
 const isDone = (status) => status === 'done' || status === 'skipped';
 
@@ -278,6 +324,7 @@ function makeTaskView(app) {
         return stage;
       }),
       files: taskFiles(t.dir),
+      checks: checksView(root, t.manifest),
     };
   };
 }

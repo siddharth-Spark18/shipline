@@ -6,7 +6,9 @@
 #   sections (headings the artifact must contain, each with some text under it, before the stage can finish),
 #   checks: true (the stage can't finish until `stage.mjs check` has run the test, lint and build commands on the
 #   current code and they passed, or the developer accepted the failures).
-# A "blocks" entry is either { tools: 'Edit|Write', allow_paths: [globs] } or { bash: 'regex' }.
+# A "blocks" entry is { tools: 'Edit|Write', allow_paths: [globs] }, { bash: 'regex' } or { actions: [...] }.
+# actions names what to hold back, matched on the parsed command (so `git -c x commit`, `cd sub && git commit` and
+# `npm run release` are all caught): commit, push, pr, merge, release, deploy, migrate.
 # Task files (manifest and artifacts) live outside the repo, so file blocks never apply to them.
 id: feature
 name: Feature
@@ -61,7 +63,7 @@ stages:
     enforcement: block
     confirm_to_advance: true
     blocks:
-      - bash: '\bgit\s+commit\b|\bgh\s+pr\s+create\b'
+      - actions: [commit, pr]
   - id: pr
     name: Commit and PR
     artifact: pr.md

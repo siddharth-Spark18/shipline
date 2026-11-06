@@ -108,14 +108,20 @@ describe('stage.mjs check', () => {
     const r = check();
     assert.equal(r.code, 0, r.stderr);
     assert.deepEqual(manifest().checks.results.map((x) => x.name), ['test']);
-    assert.ok(!r.stdout.includes('lint'), r.stdout);
+    // Teams Phase 3, E: the Scope line mentions "lint" files; no lint command ran or was reported.
+    assert.ok(!/^Running lint|lint [✓✗]/m.test(r.stdout), r.stdout);
+    assert.match(r.stdout, /^test ✓ \d+\.\ds$/m);
   });
 
   test('no commands configured: says so, records an empty run, exit 0', () => {
     setCommands({});
     const r = check();
     assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.stdout, 'No test, lint or build commands are configured in .shipline/config.yml.\n');
+    // Teams Phase 3, E: the scope of the change is reported even with no commands (the small workflow has no plan).
+    assert.equal(
+      r.stdout,
+      'No test, lint or build commands are configured in .shipline/config.yml.\nScope: no test, lint or CI files touched (the plan lists no files, so changes outside it are not checked)\n',
+    );
     const { checks } = manifest();
     assert.deepEqual(checks.results, []);
     assert.equal(checks.fingerprint, fingerprint(dir));
@@ -147,7 +153,7 @@ describe('stage.mjs check', () => {
     setCommands({ build: script('pass.js') });
     assert.equal(check().code, 0);
     const second = manifest().checks;
-    assert.deepEqual(Object.keys(second).sort(), ['fingerprint', 'ran_at', 'results']);
+    assert.deepEqual(Object.keys(second).sort(), ['fingerprint', 'ran_at', 'results', 'scope']); // scope: Teams Phase 3, E
     assert.deepEqual(second.results.map((x) => [x.name, x.exit]), [['build', 0]]);
     assert.ok(Date.parse(second.ran_at) >= Date.parse(first.ran_at));
   });

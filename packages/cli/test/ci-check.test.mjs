@@ -487,3 +487,52 @@ describe('v2 summaries: did the checks run on this code, and did they pass?', ()
     }
   });
 });
+
+// ---------- Teams Phase 3, E: the scope in a v2 summary (information only) ----------
+
+describe('v2 summaries: the scope is shown, never a failure', () => {
+  const notices = (r) => r.stdout.split('\n').filter((l) => l.startsWith('::notice title=Shipline::'));
+  let head;
+  const result = (name, exit) => ({ name, exit, duration_ms: 1200, accepted: false });
+  const withScope = (scope) => featureSummary({}, { v: 2, checks: { fingerprint: head, results: [result('test', 0)] }, ...(scope === undefined ? {} : { scope }) });
+
+  before(() => {
+    head = git(dir, 'rev-parse', 'HEAD^{tree}');
+  });
+  after(() => setCi({ missing_block: 'fail', skip_label: 'shipline:skip' }));
+
+  test('edits to test/CI files and files outside the plan: a notice, a Scope row and the two lists; the check passes', () => {
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip', stale_checks: 'fail' });
+    const r = check(body(withScope({ sensitive: ['test/a.test.js', '.github/workflows/ci.yml'], outside_plan: ['src/x.js'], accepted: false })));
+    assert.equal(r.code, 0, r.stdout);
+    assert.deepEqual(errors(r), []);
+    assert.ok(notices(r).includes('::notice title=Shipline::Scope: edits 2 test, lint or CI files, 1 file outside the plan.'), r.stdout);
+    assert.match(r.summary, /^\| Scope \| edits 2 test, lint or CI files, 1 file outside the plan \| — \|$/m);
+    assert.ok(r.summary.includes('<details><summary>Test, lint and CI files edited</summary>\n\n- `test/a.test.js`\n- `.github/workflows/ci.yml`\n\n</details>'), r.summary);
+    assert.ok(r.summary.includes('<details><summary>Files outside the plan</summary>\n\n- `src/x.js`\n\n</details>'), r.summary);
+  });
+
+  test('accepted: "(accepted)"; nothing to report: a quiet row and no notice', () => {
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip' });
+    const a = check(body(withScope({ sensitive: ['test/a.test.js'], outside_plan: null, accepted: true })));
+    assert.equal(a.code, 0, a.stdout);
+    assert.match(a.summary, /^\| Scope \| edits 1 test, lint or CI file \(accepted\) \| — \|$/m);
+    assert.ok(!a.summary.includes('Files outside the plan'));
+    const q = check(body(withScope({ sensitive: [], outside_plan: [], accepted: false })));
+    assert.equal(q.code, 0, q.stdout);
+    assert.match(q.summary, /^\| Scope \| nothing sensitive, nothing outside the plan \| — \|$/m);
+    assert.ok(!notices(q).some((l) => l.includes('Scope:')), q.stdout);
+  });
+
+  test('no scope in the summary: no Scope row; a malformed scope never fails the check', () => {
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip' });
+    const none = check(body(withScope(undefined)));
+    assert.equal(none.code, 0, none.stdout);
+    assert.ok(!none.summary.includes('| Scope |'));
+    for (const scope of ['x', 42, { sensitive: 'a', outside_plan: 7 }, { sensitive: [1, null, 'ok.test.js'] }]) {
+      const r = check(body(withScope(scope)));
+      assert.equal(r.code, 0, `${JSON.stringify(scope)}\n${r.stdout}`);
+      assert.deepEqual(errors(r), []);
+    }
+  });
+});

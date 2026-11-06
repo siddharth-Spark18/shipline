@@ -11,6 +11,7 @@ import {
 import path from 'node:path';
 import { BIN, CLI_ROOT, FIXTURES, git, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
 import { SETTINGS_KEY, canonicalSettingsPart } from '../src/hashes.mjs';
+import { INTERFACE } from '../src/interface.mjs';
 import { parseYaml } from '../templates/shipline/bin/lib.mjs';
 
 const LEGACY = path.join(FIXTURES, 'legacy-0.6');
@@ -130,7 +131,8 @@ function readArtifactRoot(dir) {
 
 describe('refusals', () => {
   test('a repo newer than the CLI is refused and nothing changes', () => {
-    for (const v of [{ package: '9.9.9', interface: 5 }, { package: '1.0.0', interface: 99 }]) {
+    // Same interface as this CLI but a newer package, then a newer interface.
+    for (const v of [{ package: '9.9.9', interface: INTERFACE }, { package: '1.0.0', interface: 99 }]) {
       const dir = makeRepo({ commitInit: true });
       dirs.push(dir);
       writeFileSync(path.join(dir, '.shipline', 'bin', 'VERSION'), JSON.stringify(v) + '\n');
@@ -213,6 +215,7 @@ describe('the node-check hook wrappers (0.8.0 -> 0.9.0)', () => {
     PreToolUse: 'node "$CLAUDE_PROJECT_DIR/.shipline/bin/guard.mjs"',
   };
   const tplHooks = () => readJson(path.join(TEMPLATES_ROOT, 'settings-hooks.json')).hooks;
+  const OLD_PRETOOL_MATCHER = 'Edit|Write|MultiEdit|NotebookEdit|Bash';
   // A repo whose settings.json has the 0.8.0 hook commands; `record` says what VERSION.files records for it.
   function repoWith08Hooks({ record = 'old', edit } = {}) {
     const dir = makeRepo({ commitInit: true });
@@ -220,6 +223,7 @@ describe('the node-check hook wrappers (0.8.0 -> 0.9.0)', () => {
     const sf = path.join(dir, '.claude', 'settings.json');
     const s = readJson(sf);
     for (const [event, cmd] of Object.entries(OLD_COMMANDS)) s.hooks[event][0].hooks[0].command = cmd;
+    s.hooks.PreToolUse[0].matcher = OLD_PRETOOL_MATCHER; // 0.13.0 added Read
     // 0.8.0's allow rules (0.10.1 added the stage.mjs Bash rule).
     s.permissions.allow = s.permissions.allow.filter((r) => r !== 'Bash(node .shipline/bin/stage.mjs:*)');
     const oldHash = sha(canonicalSettingsPart(s));
@@ -388,7 +392,7 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
     assert.equal(r.code, 0, `${r.stdout}\n${r.stderr}`);
     const out = r.stdout;
     assert.match(out, new RegExp(`^Shipline upgrade for ${dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
-    assert.match(out, new RegExp(`repo: 0\\.6\\.0 \\(interface 2\\) -> ${PACKAGE_VERSION.replace(/\./g, '\\.')} \\(interface 5\\)`));
+    assert.match(out, new RegExp(`repo: 0\\.6\\.0 \\(interface 2\\) -> ${PACKAGE_VERSION.replace(/\./g, '\\.')} \\(interface 6\\)`));
     // Trust plan, F: the recorder and the CI check script arrive with the upgrade; the CI workflow is never added.
     for (const f of ['.shipline/bin/record-answer.mjs', '.shipline/bin/ci-check.mjs']) assert.ok(out.includes(`  + add      ${f}\n`), f);
     assert.ok(!out.includes('.github/workflows/shipline.yml'), 'the CI workflow is opt-in, never added by upgrade');
@@ -403,7 +407,11 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
     // Teams Phase 1, F: the `jira` stage of every workflow becomes `ticket`.
     assert.match(out, /~ \.shipline\/workflows\/feature\.yml: remove 1 \{artifact_root\} allow_paths entry; rename stage jira to ticket/);
     assert.match(out, /~ \.shipline\/workflows\/bugfix\.yml: remove 1 \{artifact_root\} allow_paths entry; rename stage jira to ticket/);
-    assert.match(out, /~ \.shipline\/workflows\/hotfix\.yml: rename stage jira to ticket; add checks on verify, sections on verify\n/);
+    // Teams Phase 3, D: the shipped commit/PR regex on verify becomes named actions.
+    assert.match(out, /~ \.shipline\/workflows\/hotfix\.yml: rename stage jira to ticket; add checks on verify, sections on verify; replace the commit\/PR regex with actions: \[commit, pr\]\n/);
+    // Teams Phase 3, G: an existing repo gets the guardrail keys with every rail off.
+    assert.match(out, /~ \.shipline\/config\.yml: remove artifact_root, folder_pattern; add rails, rails_commands, protected_paths, scope_check \(every rail off\)\n/);
+    assert.ok(out.includes('New: guardrails (off; see Setup → Guardrails)'));
     // Every 0.6.0 rules file is an unedited stub: each is replaced, and jira.md becomes the new ticket.md.
     assert.match(out, /~ \.shipline\/rules\/ticket\.md: new default \(jira\.md was unedited\)/);
     assert.match(out, /- remove {3}\.shipline\/rules\/jira\.md \(renamed to ticket\.md\)/);
@@ -415,7 +423,7 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
     assert.match(out, /move \d+ item\(s\) from \.shipline\/\.state\/ \(session state, UI data\); the folder is then removed/);
     assert.match(out, /left in place \(not task folders\): docs\/shipline\/README\.md/);
     assert.ok(!out.includes('Warnings'), 'the aged sessions are not reported as running');
-    assert.ok(out.includes(`Upgraded to ${PACKAGE_VERSION} (interface 5). Moved 3 task(s) to ${store}.`));
+    assert.ok(out.includes(`Upgraded to ${PACKAGE_VERSION} (interface 6). Moved 3 task(s) to ${store}.`));
     assert.match(out, /review and commit the changes \(the removal of the old task folders is staged, not committed\)/);
     assert.match(out, /restart any running Claude Code sessions/);
   });
@@ -476,10 +484,10 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
     }
   });
 
-  test('VERSION is interface 5 with a files map of what is on disk; team files are not in it', () => {
+  test('VERSION is interface 6 with a files map of what is on disk; team files are not in it', () => {
     const v = version(dir);
     assert.equal(v.package, PACKAGE_VERSION);
-    assert.equal(v.interface, 5);
+    assert.equal(v.interface, 6);
     for (const [to, hash] of Object.entries(v.files)) {
       assert.ok(!/^\.shipline\/(config\.yml|workflows\/|rules\/)/.test(to), `${to} is team-owned`);
       if (to === 'CLAUDE.md#shipline' || to === '.claude/settings.json#shipline') continue;
@@ -516,7 +524,8 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
       read(dir, '.shipline/workflows/hotfix.yml'),
       orig.hotfix
         .replace('  - id: jira\n    name: Jira ticket\n', '  - id: ticket\n    name: Ticket\n')
-        .replace(/(\n  - id: verify\n(?: {4}[^\n]*\n| {6}[^\n]*\n)*)/, '$1    checks: true\n    sections: [Checklist]\n'),
+        .replace(/(\n  - id: verify\n(?: {4}[^\n]*\n| {6}[^\n]*\n)*)/, '$1    checks: true\n    sections: [Checklist]\n')
+        .replace(/^ {6}- bash: '\\bgit\\s\+commit\\b\|\\bgh\\s\+pr\\s\+create\\b'$/m, '      - actions: [commit, pr]'),
     );
     for (const f of ['feature', 'bugfix', 'hotfix']) {
       const wf = read(dir, `.shipline/workflows/${f}.yml`);
@@ -580,7 +589,7 @@ describe('edited files', () => {
     // Everything else was replaced, and the edited files have no hash in VERSION.files.
     assert.equal(read(dir, '.shipline/bin/lib.mjs'), template('.shipline/bin/lib.mjs').toString());
     const v = version(dir);
-    assert.equal(v.interface, 5);
+    assert.equal(v.interface, 6);
     assert.ok(!('.shipline/bin/guard.mjs' in v.files));
     assert.ok(!('.claude/agents/planner.md' in v.files));
 
@@ -768,7 +777,7 @@ describe('running sessions', () => {
     assert.match(r.stdout, /Warnings\n {2}! Claude session s1 was active in the last 30 minutes; restart it after the upgrade/);
     assert.ok(!r.stdout.includes('Claude session s2 was active'));
     assert.match(r.stdout, /! a Shipline UI chat lock is held \(\.shipline\/\.state\/ui\/lock\.json\); stop the UI chat first/);
-    assert.equal(version(dir).interface, 5);
+    assert.equal(version(dir).interface, 6);
     assert.ok(existsSync(path.join(storeOf(dir), 'tasks', 'fix-crash')));
   });
 });
@@ -798,7 +807,7 @@ describe('other layouts', () => {
     const r = upgrade(dir, '--yes');
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /Task data -> .*\n {2}\(nothing to move\)/);
-    assert.match(r.stdout, /Upgraded to [\d.]+ \(interface 5\)\.\n/);
+    assert.match(r.stdout, /Upgraded to [\d.]+ \(interface 6\)\.\n/);
     assert.equal(git(dir, 'diff', '--cached', '--name-only'), '');
     assert.ok(!existsSync(path.join(storeOf(dir), 'tasks')) || readdirSync(path.join(storeOf(dir), 'tasks')).length === 0);
   });
@@ -820,7 +829,7 @@ describe('other layouts', () => {
     const r = upgrade(dir, '--yes');
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /repo: unknown \(interface 1\) -> /);
-    assert.equal(version(dir).interface, 5);
+    assert.equal(version(dir).interface, 6);
     assert.ok(existsSync(path.join(storeOf(dir), 'tasks', 'LL-12-add-export')));
   });
 });
@@ -1276,5 +1285,176 @@ describe('0.11.0: checks and sections on workflow stages, the CI checkout ref, a
     assert.ok(r.stdout.includes(`  ~ replace  ${CI}\n`), r.stdout);
     assert.match(read(dir, CI), /- uses: actions\/checkout@v4\n {8}with:\n(?: {10}#[^\n]*\n)? {10}ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}\n/);
     assert.equal(version(dir).files[CI], sha(readFileSync(path.join(TEMPLATES_ROOT, 'github', 'shipline.yml'))));
+  });
+});
+
+// Teams Phase 3, G and D: upgrading a 0.12.0 repo adds the guardrail keys with every rail off (keys already there
+// are kept), turns the shipped verify regex into `actions: [commit, pr]` (an edited regex is kept), gives the
+// settings hook entries the Read matcher when unedited, and warns when edited entries lack it.
+describe('guardrails (0.12.0 -> 0.13.0)', () => {
+  const SHIPPED_REGEX_LINE = "      - bash: '\\bgit\\s+commit\\b|\\bgh\\s+pr\\s+create\\b'";
+  const OFF_COMMENT = '# Guardrails are off for repos set up before 0.13.0. Turn them on here or in Setup → Guardrails.';
+  const NEW_LINE = 'New: guardrails (off; see Setup → Guardrails)';
+  const READ_WARNING =
+    'Your Shipline hook entries in .claude/settings.json were edited, so reading credential files (the read_credentials rail) is not guarded. Add Read to the PreToolUse matcher to enable it.';
+
+  // A current install turned back into what 0.12.0 wrote: no guardrail keys in config.yml, the commit/PR regex on
+  // every verify stage, no Read in the PreToolUse matcher. opts.config / opts.workflow / opts.settings edit further.
+  function repo012({ config, workflow, settings } = {}) {
+    const dir = makeRepo({ commitInit: true });
+    dirs.push(dir);
+    const cfgFile = path.join(dir, '.shipline', 'config.yml');
+    let cfg = read(dir, '.shipline/config.yml').replace(/\n# Guardrails:[\s\S]*?\n(?=# Set to `done`)/, '\n');
+    assert.ok(!/^(rails|rails_commands|protected_paths|scope_check):/m.test(cfg), cfg);
+    if (config) cfg = config(cfg);
+    writeFileSync(cfgFile, cfg);
+    for (const f of readdirSync(path.join(dir, '.shipline', 'workflows'))) {
+      const file = path.join(dir, '.shipline', 'workflows', f);
+      let text = readFileSync(file, 'utf8').replace('      - actions: [commit, pr]', SHIPPED_REGEX_LINE);
+      if (workflow) text = workflow(f, text);
+      writeFileSync(file, text);
+    }
+    const sf = path.join(dir, '.claude', 'settings.json');
+    const s = readJson(sf);
+    s.hooks.PreToolUse[0].matcher = 'Edit|Write|MultiEdit|NotebookEdit|Bash';
+    const v = version(dir);
+    v.package = '0.12.0';
+    v.interface = 5;
+    v.files[SETTINGS_KEY] = sha(canonicalSettingsPart(s)); // as 0.12.0 installed it
+    if (settings) settings(s);
+    writeFileSync(sf, JSON.stringify(s, null, 2) + '\n');
+    writeFileSync(path.join(dir, '.shipline', 'bin', 'VERSION'), JSON.stringify(v, null, 2) + '\n');
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'as installed by 0.12.0');
+    return dir;
+  }
+  const guard = (dir, command) => run(process.execPath, [path.join(dir, '.shipline', 'bin', 'guard.mjs')], { cwd: dir, input: JSON.stringify({ session_id: 'g', cwd: dir, tool_name: 'Bash', tool_input: { command } }) });
+
+  test('known-hashes.json knows the settings part without Read (shipped before 0.13.0)', () => {
+    const dir = repo012();
+    const known = readJson(path.join(CLI_ROOT, 'src', 'known-hashes.json'))[SETTINGS_KEY];
+    assert.ok(known[version(dir).files[SETTINGS_KEY]], 'a known pre-0.13.0 hash');
+  });
+
+  test('every rail off, empty protected_paths, rails_commands and scope_check (on) added; the shipped regex becomes actions', () => {
+    const dir = repo012();
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, `${r.stdout}\n${r.stderr}`);
+    assert.match(r.stdout, /^ {2}~ \.shipline\/config\.yml: add rails, rails_commands, protected_paths, scope_check \(every rail off\)$/m);
+    for (const f of ['feature', 'bugfix', 'hotfix', 'small']) {
+      assert.match(r.stdout, new RegExp(`^ {2}~ \\.shipline/workflows/${f}\\.yml: replace the commit/PR regex with actions: \\[commit, pr\\]$`, 'm'), f);
+    }
+    assert.ok(r.stdout.includes(`\n${NEW_LINE}\n`), r.stdout);
+    assert.ok(!r.stdout.includes(READ_WARNING));
+
+    const cfgText = read(dir, '.shipline/config.yml');
+    const cfg = parseYaml(cfgText);
+    assert.deepEqual(cfg.rails, {
+      force_push_default: 'off',
+      push_default: 'off',
+      pipe_to_shell: 'off',
+      print_credentials: 'off',
+      read_credentials: 'off',
+      deploy: 'off',
+      migrate: 'off',
+      agent_config: 'off',
+    });
+    assert.deepEqual(cfg.rails_commands, { deploy: [], migrate: [] });
+    assert.deepEqual(cfg.protected_paths, []);
+    assert.deepEqual(cfg.scope_check, { enabled: true, sensitive_extra: [] });
+    assert.ok(cfgText.includes(`${OFF_COMMENT}\nrails:\n`), cfgText);
+    assert.match(cfgText, /^protected_paths: \[\]$/m);
+
+    for (const f of ['feature', 'bugfix', 'hotfix', 'small']) {
+      const wf = parseYaml(read(dir, `.shipline/workflows/${f}.yml`));
+      assert.deepEqual(wf.stages.find((s) => s.id === 'verify').blocks, [{ actions: ['commit', 'pr'] }], f);
+    }
+    // The unedited hook entries are replaced, so the matcher gains Read.
+    assert.deepEqual(readJson(path.join(dir, '.claude', 'settings.json')).hooks, readJson(path.join(TEMPLATES_ROOT, 'settings-hooks.json')).hooks);
+
+    // The rails are really off: what a fresh install denies goes through.
+    assert.equal(guard(dir, 'cat .env').stdout, '');
+    assert.equal(guard(dir, 'git push --force origin main').stdout, '');
+    // A second run changes nothing.
+    assert.equal(upgrade(dir, '--yes').stdout, 'Already up to date.\n');
+  });
+
+  test('keys already present are never changed; only the missing ones are added', () => {
+    const dir = repo012({
+      config: (t) => t.replace(/\n# Set to `done`/, '\nrails:\n  deploy: deny\nprotected_paths: [infra/**]\n\n# Set to `done`'),
+    });
+    const before = read(dir, '.shipline/config.yml');
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /config\.yml: add rails_commands, scope_check \(every rail off\)$/m);
+    assert.ok(!r.stdout.includes(NEW_LINE), 'rails were already set: nothing new to announce');
+    const text = read(dir, '.shipline/config.yml');
+    const cfg = parseYaml(text);
+    assert.deepEqual(cfg.rails, { deploy: 'deny' });
+    assert.deepEqual(cfg.protected_paths, ['infra/**']);
+    assert.deepEqual(cfg.rails_commands, { deploy: [], migrate: [] });
+    assert.deepEqual(cfg.scope_check, { enabled: true, sensitive_extra: [] });
+    assert.ok(!text.includes(OFF_COMMENT));
+    assert.match(text, /^ {2}deploy: deny$/m);
+    assert.match(text, /^protected_paths: \[infra\/\*\*\]$/m);
+    assert.notEqual(text, before);
+    // A missing rail uses its default (deny/ask), the one set is kept.
+    assert.equal(run(process.execPath, [path.join(dir, '.shipline', 'bin', 'guard.mjs')], { cwd: dir, input: JSON.stringify({ session_id: 'g', cwd: dir, tool_name: 'Bash', tool_input: { command: 'fly deploy' } }) }).stdout.includes('"deny"'), true);
+  });
+
+  test('with every guardrail key present, config.yml is left alone', () => {
+    const dir = repo012({
+      config: (t) => t.replace(/\n# Set to `done`/, '\nrails:\n  deploy: ask\nrails_commands:\nprotected_paths: []\nscope_check:\n  enabled: false\n\n# Set to `done`'),
+    });
+    const before = read(dir, '.shipline/config.yml');
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.stdout.includes('.shipline/config.yml'), r.stdout);
+    assert.equal(read(dir, '.shipline/config.yml'), before);
+  });
+
+  test('an edited verify regex is kept; a regex block with other keys is kept', () => {
+    const dir = repo012({
+      workflow: (f, t) => {
+        if (f === 'feature.yml') return t.replace(SHIPPED_REGEX_LINE, "      - bash: '\\bgit\\s+commit\\b'");
+        if (f === 'bugfix.yml') return t.replace(SHIPPED_REGEX_LINE, `${SHIPPED_REGEX_LINE}\n        note: ours`);
+        return t;
+      },
+    });
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!/workflows\/feature\.yml: replace the commit\/PR regex/.test(r.stdout), r.stdout);
+    assert.ok(!/workflows\/bugfix\.yml: replace the commit\/PR regex/.test(r.stdout), r.stdout);
+    assert.match(r.stdout, /workflows\/hotfix\.yml: replace the commit\/PR regex with actions: \[commit, pr\]/);
+    const verify = (f) => parseYaml(read(dir, `.shipline/workflows/${f}.yml`)).stages.find((s) => s.id === 'verify').blocks;
+    assert.deepEqual(verify('feature'), [{ bash: '\\bgit\\s+commit\\b' }]);
+    assert.deepEqual(verify('bugfix'), [{ bash: '\\bgit\\s+commit\\b|\\bgh\\s+pr\\s+create\\b', note: 'ours' }]);
+    assert.deepEqual(verify('hotfix'), [{ actions: ['commit', 'pr'] }]);
+  });
+
+  test('edited hook entries without Read: left alone, with the read_credentials warning', () => {
+    const dir = repo012({ settings: (s) => (s.hooks.PreToolUse[0].matcher = 'Edit|Write|Bash') });
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /^ {2}! skip {5}\.claude\/settings\.json \(Shipline hook entries and allow rules\): edited by your team/m);
+    assert.ok(r.stdout.includes(`  ! ${READ_WARNING}`), r.stdout);
+    assert.equal(readJson(path.join(dir, '.claude', 'settings.json')).hooks.PreToolUse[0].matcher, 'Edit|Write|Bash');
+  });
+
+  test('edited hook entries that already include Read: no warning', () => {
+    const dir = repo012({ settings: (s) => (s.hooks.PreToolUse[0].matcher = 'Edit|Write|Bash|Read') });
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.stdout.includes(READ_WARNING), r.stdout);
+  });
+
+  test('--dry-run shows the guardrails and writes nothing', () => {
+    const dir = repo012();
+    const snap = snapshot(dir);
+    const r = upgrade(dir, '--dry-run');
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /add rails, rails_commands, protected_paths, scope_check \(every rail off\)/);
+    assert.ok(r.stdout.includes(`+ ${OFF_COMMENT}`), r.stdout);
+    assert.deepEqual(snapshot(dir), snap);
   });
 });

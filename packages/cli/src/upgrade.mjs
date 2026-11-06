@@ -10,7 +10,7 @@ import { createInterface } from 'node:readline/promises';
 import { detectEol, parseYaml, toEol } from '../templates/shipline/bin/lib.mjs';
 import {
   CI_WORKFLOW, CI_WORKFLOW_TEMPLATE, CLAUDE_MD_KEY, END, PACKAGE_VERSION, SETTINGS_KEY, START, TEMPLATES, VERSION_FILE,
-  canonicalSettingsPart, claudeMdBlock, claudeMdSection, ownedTemplateFiles, sha256, templateSettings,
+  canonicalSettingsPart, claudeMdBlock, claudeMdSection, isShiplineHookEntry, ownedTemplateFiles, sha256, templateSettings,
 } from './hashes.mjs';
 import { INTERFACE, STORE_INTERFACE, compareInterface, readRepoVersion } from './interface.mjs';
 import { mergeSettingsObject, parseSettings } from './init.mjs';
@@ -25,6 +25,10 @@ const KNOWN = require('./known-hashes.json');
 const RECENT_MS = 30 * 60 * 1000;
 const REMOVED_CONFIG_KEYS = ['artifact_root', 'folder_pattern'];
 const COMMAND_KEYS = ['test', 'lint', 'build'];
+// The verify block that every shipped workflow had before 0.13.0; an unedited one becomes `actions: [commit, pr]`.
+const SHIPPED_VERIFY_REGEX = '\\bgit\\s+commit\\b|\\bgh\\s+pr\\s+create\\b';
+const GUARDRAILS_OFF_COMMENT = '# Guardrails are off for repos set up before 0.13.0. Turn them on here or in Setup → Guardrails.';
+const RAIL_IDS = ['force_push_default', 'push_default', 'pipe_to_shell', 'print_credentials', 'read_credentials', 'deploy', 'migrate', 'agent_config'];
 // Appended to a team's edited rules/jira.md when it becomes rules/ticket.md.
 const TICKET_DEFAULTS_HEADING = '## Shipline defaults (0.10.0)';
 const TICKET_DEFAULTS = [
@@ -276,6 +280,9 @@ function planShared(root, version, force) {
   } else {
     shared.settings = { action: 'skip', diff: lineDiff(pretty(curPart), pretty(newPart)) };
     if (record && record[SETTINGS_KEY]) shared.hashes[SETTINGS_KEY] = record[SETTINGS_KEY];
+    // The read_credentials rail needs the PreToolUse matcher to include Read (added in 0.13.0).
+    const pre = settings && settings.hooks && Array.isArray(settings.hooks.PreToolUse) ? settings.hooks.PreToolUse.filter(isShiplineHookEntry) : [];
+    shared.readNotGuarded = !pre.some((e) => e && typeof e.matcher === 'string' && e.matcher.split('|').includes('Read'));
   }
   return shared;
 }
@@ -320,9 +327,31 @@ function planConfig(root) {
       for (const f of fills) model.commands[f.key] = f.command;
     }
 
-    if (present.length || fills.length) {
-      const text = emitConfig(model, { layout: configLayout(), raw });
-      out.config = { keys: present, fills, text, diff: lineDiff(raw, text) };
+    // Guardrails (0.13.0): an existing repo gets every rail off and no protected paths, so nothing it does today starts
+    // asking. Keys that are already there are never touched.
+    const has = (k) => Object.prototype.hasOwnProperty.call(model, k);
+    const guardrails = [];
+    if (!has('rails')) {
+      model.rails = Object.fromEntries(RAIL_IDS.map((id) => [id, 'off']));
+      guardrails.push('rails');
+    }
+    if (!has('rails_commands')) {
+      model.rails_commands = { deploy: [], migrate: [] };
+      guardrails.push('rails_commands');
+    }
+    if (!has('protected_paths')) {
+      model.protected_paths = [];
+      guardrails.push('protected_paths');
+    }
+    if (!has('scope_check')) {
+      model.scope_check = { enabled: true, sensitive_extra: [] };
+      guardrails.push('scope_check');
+    }
+
+    if (present.length || fills.length || guardrails.length) {
+      let text = emitConfig(model, { layout: configLayout(), raw });
+      if (guardrails.includes('rails')) text = text.replace(/^rails:/m, `${GUARDRAILS_OFF_COMMENT}${detectEol(raw) === '\r\n' ? '\r\n' : '\n'}rails:`);
+      out.config = { keys: present, fills, guardrails, text, diff: lineDiff(raw, text) };
     }
   }
 
@@ -341,11 +370,19 @@ function planConfig(root) {
       }
       let changed = 0;
       let renamed = false;
+      let rewritten = 0;
       const added = [];
       const stages = model && Array.isArray(model.stages) ? model.stages : [];
       for (const stage of stages) {
         if (!stage || !Array.isArray(stage.blocks)) continue;
         for (const b of stage.blocks) {
+          // The shipped commit/PR regex, unedited and alone in its block, becomes named actions.
+          if (b && typeof b === 'object' && Object.keys(b).length === 1 && b.bash === SHIPPED_VERIFY_REGEX) {
+            delete b.bash;
+            b.actions = ['commit', 'pr'];
+            rewritten++;
+            continue;
+          }
           if (!b || !Array.isArray(b.allow_paths)) continue;
           const kept = b.allow_paths.filter((g) => !String(g).includes('{artifact_root}'));
           if (kept.length !== b.allow_paths.length) {
@@ -376,9 +413,9 @@ function planConfig(root) {
           added.push(`sections on ${stage.id}`);
         }
       }
-      if (!changed && !renamed && !added.length) continue;
+      if (!changed && !renamed && !added.length && !rewritten) continue;
       const text = emitWorkflow(model, { header: leadingHeader(wfRaw), raw: wfRaw });
-      out.workflows.push({ file: `.shipline/workflows/${name}`, entries: changed, renamed, added, text, diff: lineDiff(wfRaw, text) });
+      out.workflows.push({ file: `.shipline/workflows/${name}`, entries: changed, renamed, added, rewritten, text, diff: lineDiff(wfRaw, text) });
     }
   }
   return out;
@@ -686,6 +723,7 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     const what = [];
     if (cfgPlan.config.keys.length) what.push(`remove ${cfgPlan.config.keys.join(', ')}`);
     if (cfgPlan.config.fills.length) what.push('fill empty commands');
+    if (cfgPlan.config.guardrails.length) what.push(`add ${cfgPlan.config.guardrails.join(', ')} (every rail off)`);
     out.push(`  ~ .shipline/config.yml: ${what.join('; ')}`);
     for (const f of cfgPlan.config.fills) out.push(`    commands: ${f.key} <- \`${f.command}\` (${f.source})`);
     out.push(...cfgPlan.config.diff);
@@ -695,6 +733,7 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     if (w.entries) what.push(`remove ${w.entries} {artifact_root} allow_paths entr${w.entries === 1 ? 'y' : 'ies'}`);
     if (w.renamed) what.push('rename stage jira to ticket');
     if (w.added.length) what.push(`add ${w.added.join(', ')}`);
+    if (w.rewritten) what.push('replace the commit/PR regex with actions: [commit, pr]');
     out.push(`  ~ ${w.file}: ${what.join('; ')}`);
     out.push(...w.diff);
   }
@@ -712,7 +751,11 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     if (mig.leftovers.length) out.push(`  left in place (not task folders): ${mig.leftovers.join(', ')}`);
     if (!hasGit && mig.tasks.length) out.push('  not a git repository: the old task folders are deleted from disk after the copies are verified, with no git rm');
   }
+  if (cfgPlan.config && cfgPlan.config.guardrails.includes('rails')) out.push('', 'New: guardrails (off; see Setup → Guardrails)');
   const warnings = [...cfgPlan.warnings, ...rulesPlan.warnings, ...mig.warnings];
+  if (shared.readNotGuarded) {
+    warnings.push('Your Shipline hook entries in .claude/settings.json were edited, so reading credential files (the read_credentials rail) is not guarded. Add Read to the PreToolUse matcher to enable it.');
+  }
   if (warnings.length) out.push('', 'Warnings', ...warnings.map((w) => `  ! ${w}`));
   if (mig.problems.length) out.push('', 'Cannot upgrade yet. Nothing was changed:', ...mig.problems.map((p) => `  - ${p}`));
   console.log(out.join('\n'));

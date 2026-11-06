@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // The Shipline pull-request check (run by .github/workflows/shipline.yml). Reads the PR description and labels
 // from $GITHUB_EVENT_PATH, plus .shipline/config.yml and .shipline/workflows/<workflow>.yml from the checkout.
+// A v2 summary may carry `scope` (test, lint and CI files edited, files outside the plan); it is shown, never a failure.
 // With a v2 summary it also compares the code the checks ran on (summary.checks.fingerprint, a git tree id) with
 // this checkout's `git rev-parse HEAD^{tree}`; a mismatch warns or fails per `ci.stale_checks`.
 // Exit 0 = pass, 1 = fail. Writes GitHub annotations and, when it has a summary, a table to $GITHUB_STEP_SUMMARY.
@@ -121,6 +122,20 @@ if (checks) {
   }
 }
 
+// ---------- scope (information only, never a failure) ----------
+const strs = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
+const scope = data.scope && typeof data.scope === 'object' ? data.scope : null;
+const scopeSensitive = scope ? strs(scope.sensitive) : [];
+const scopeOutside = scope && Array.isArray(scope.outside_plan) ? strs(scope.outside_plan) : null;
+let scopeCell = null;
+if (scope) {
+  const bits = [];
+  if (scopeSensitive.length) bits.push(`${scopeSensitive.length} test, lint or CI file${scopeSensitive.length === 1 ? '' : 's'}`);
+  if (scopeOutside && scopeOutside.length) bits.push(`${scopeOutside.length} file${scopeOutside.length === 1 ? '' : 's'} outside the plan`);
+  scopeCell = bits.length ? `edits ${bits.join(', ')}${scope.accepted ? ' (accepted)' : ''}` : 'nothing sensitive, nothing outside the plan';
+  if (bits.length) notice(`Scope: ${scopeCell}.`);
+}
+
 // Were the checks run on exactly this code? Never a failure when it can't be told, or for a v1 summary.
 let staleMessage = null;
 if (data.v === 1 || data.v === undefined) {
@@ -152,6 +167,9 @@ summaryOut(
     '| --- | --- | --- |',
     ...data.stages.map((s) => `| ${cell(s && s.id)} | ${cell(s && s.status)} | ${label[s && s.confirmed] || '—'} |`),
     ...(checksCell !== null ? [`| Checks | ${cell(checksCell)} | \u2014 |`] : []),
+    ...(scopeCell !== null ? [`| Scope | ${cell(scopeCell)} | \u2014 |`] : []),
+    ...(scopeSensitive.length ? ['', '<details><summary>Test, lint and CI files edited</summary>', '', ...scopeSensitive.map((f) => `- \`${cell(f)}\``), '', '</details>'] : []),
+    ...(scopeOutside && scopeOutside.length ? ['', '<details><summary>Files outside the plan</summary>', '', ...scopeOutside.map((f) => `- \`${cell(f)}\``), '', '</details>'] : []),
     ...(problems.length ? ['', ...problems.map((p) => `- ${p}`)] : []),
   ].join('\n'),
 );

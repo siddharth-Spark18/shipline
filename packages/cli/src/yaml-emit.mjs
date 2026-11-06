@@ -191,7 +191,7 @@ function needsQuote(s, inList) {
     s === 'null' ||
     s === '~' ||
     /^-?\d+(\.\d+)?$/.test(s) ||
-    /^["'\[\-#]/.test(s) ||
+    /^["'\[\-#*&!]/.test(s) || // * & ! start an alias, anchor or tag in YAML (globs like **/*.tf)
     s.includes(': ') ||
     s.includes(' #') ||
     s !== s.trim() ||
@@ -331,6 +331,7 @@ function parseLayout(layout) {
   for (const line of lines) {
     const top = /^([A-Za-z0-9_.-]+):/.exec(line);
     const child = /^ +([A-Za-z0-9_.-]+):/.exec(line);
+    if (/^ *- /.test(line)) continue; // a list item in the template: its values come from the model, not the layout
     if (top) {
       cur = { key: top[1], lead, children: [] };
       items.push(cur);

@@ -160,6 +160,9 @@ commands:                               # filled by init from the repo; the Veri
   build: "pnpm run build"
 skills: []                              # your own .claude/skills/<name> that Claude may use at any stage
 setup: done                             # written by /shipline-setup; stops the setup reminder
+rails: { ... }                          # always-on guardrails, deny | ask | off each (see Guardrails)
+protected_paths: [ ... ]                # globs that ask before an edit, in any stage
+scope_check: { enabled: true }          # Verify: flag edits to tests, lint and CI, and files outside the plan
 ```
 
 **Workflow files** (`.shipline/workflows/<id>.yml`): `id`, `name`, `description` and a list of `stages`. Stage fields:
@@ -175,7 +178,7 @@ setup: done                             # written by /shipline-setup; stops the 
 | `enforcement` | `guide`, `warn` or `block` |
 | `sections` | Headings the artifact must contain, each with some text under it, before the stage can finish (the defaults: Plan needs `Scope`, `Files to touch`, `Verification`; Verify needs `Checklist`; Root cause needs `Cause`, `Evidence`; Feasibility needs `Risks`) |
 | `checks: true` | The stage (Verify, by default) can't finish until `stage.mjs check` has run the test, lint and build commands on the current code and they passed, or you accepted the failures |
-| `blocks` | What is held back until this stage is done: `{ tools: 'Edit\|Write', allow_paths: [globs] }` or `{ bash: 'regex' }` |
+| `blocks` | What is held back until this stage is done: `{ tools: 'Edit\|Write', allow_paths: [globs] }`, `{ bash: 'regex' }` or `{ actions: [commit, pr] }` (see [Guardrails](#7-guardrails)) |
 
 **Checks and PR evidence.** `stage.mjs check` runs `commands.test`, `commands.lint` and `commands.build` itself, records each
 exit code, duration and output tail in the task, and fingerprints the code it ran on (a git tree id that includes
@@ -201,7 +204,76 @@ for artifact writes, because the allow rules cover `~/.shipline/**`.
 The config files are YAML read by a small built-in parser (a constrained subset) so hooks have no dependencies.
 Line endings are kept: a CRLF file stays CRLF when Shipline saves it.
 
-## 7. Upgrade and uninstall
+## 7. Guardrails
+
+Stage blocks only hold back what a stage says to hold back. Guardrails are on in every stage, with or without a
+task, and cover the actions teams most often forbid an AI agent. They are set in `.shipline/config.yml` or in the
+browser UI under Setup, Guardrails. Each rail is `deny` (the call is refused), `ask` (Claude Code's own permission
+prompt shows) or `off`; a rail left out of the file uses its default.
+
+| Rail | New installs | What it catches |
+| --- | --- | --- |
+| `force_push_default` | deny | `git push --force`, `-f`, `--force-with-lease` or a `+branch` refspec to the default branch, `git push --delete origin main`, `git branch -D main` |
+| `push_default` | ask | any `git push` whose target is the default branch (`main`, `HEAD:main`, or a bare `git push` while on it) |
+| `pipe_to_shell` | deny | `curl` or `wget` piped into `sh`, `bash`, `zsh`, `python`, `node`, `perl`, `ruby` and the like |
+| `print_credentials` | deny | `cat`, `grep`, `head`, `base64` and friends on credential files; `printenv`; `echo $GITHUB_TOKEN` |
+| `read_credentials` | ask | the Read tool on credential files |
+| `deploy` | ask | `kubectl apply`, `helm upgrade`, `terraform apply`, `fly deploy`, `vercel --prod`, `npm run deploy` and similar; add yours under `rails_commands.deploy` |
+| `migrate` | ask | `prisma migrate deploy`, `rails db:migrate`, `alembic upgrade`, `python manage.py migrate` and similar; add yours under `rails_commands.migrate` |
+| `agent_config` | ask | Edit or Write on `.claude/**`, `.shipline/**`, `CLAUDE.md` and `.mcp.json` |
+
+Credential files are `.env` and `.env.*` (not `.env.example`, `.sample` or `.template`), `*.pem`, `*.key`, `id_rsa*`,
+`id_ed25519*`, `.npmrc`, `.pypirc`, `~/.ssh/**`, `~/.aws/credentials`, `~/.config/gcloud/**` and `~/.kube/config`.
+The default branch comes from `origin/HEAD` (else `main`, else `master`) and is cached for ten minutes in the task
+store. If several rails match, the strictest wins: deny over ask over a stage `warn`.
+
+**Protected paths.** `protected_paths` is a list of globs relative to the repo root (new installs list migrations,
+infrastructure, Dockerfiles, CI config and lockfiles). Editing one asks first, in any stage, with or without a task,
+through the file tools and, best effort, through Bash (`>`, `>>`, `tee`, `sed -i`, `mv`, `cp`, `rm`).
+
+**Named actions.** A stage block can hold back `{ actions: [...] }` instead of a regex: `commit`, `push`, `pr`,
+`merge`, `release`, `deploy`, `migrate`. They match the parsed command, so `git -c user.name=x commit`,
+`cd sub && git commit`, `sudo git commit`, `bash -c 'git commit'` and `npm run release` are all caught. A package
+script counts when its name or its `package.json` body matches. `{ bash: 'regex' }` still works as before. Shipped
+verify stages use `actions: [commit, pr]`; `upgrade` rewrites the shipped regex to that when you haven't edited it.
+
+**Verify scope check.** `stage.mjs check` also compares the working tree with the commit the task started from
+(`base_commit`) and records which changed files are tests, lint config or CI config, and which are not listed in the
+plan's "Files to touch" (lockfiles, `.shipline/` and `.claude/` are ignored). If there are any, finishing the stage
+asks you an extra question, and `pr-summary` shows a Scope line and the two lists. The CI check shows it for
+information and never fails on it. Turn it off with `scope_check: { enabled: false }`; add globs with
+`scope_check.sensitive_extra`. A task started before 0.13.0 has no base commit, so nothing is checked for it.
+
+**Upgrading.** `upgrade` adds the guardrail keys with every rail `off` and `protected_paths: []`, so an existing repo
+doesn't start asking until you turn them on (the scope check is on). If you edited the Shipline hook entries in
+`.claude/settings.json`, add `Read` to the PreToolUse matcher yourself so `read_credentials` works.
+
+### Hooks are defence in depth
+
+Guardrails run in Claude Code's hooks and parse the command text. They stop mistakes, not a determined user or a
+determined agent. They do not see aliases, shell functions, `eval`, a script that is written and then run, another
+tool that pushes (an IDE, a git GUI), or anything beyond one level of `sh -c` or package-script indirection. Parsing is
+best effort and the deploy and migrate patterns will never be complete: extend them with `rails_commands`.
+
+For limits that hold, use Claude Code's own controls: its `sandbox` settings, and managed settings that users can't
+override. For example, deny rules in `.claude/settings.json` (or the managed file):
+
+```json
+{
+  "permissions": {
+    "deny": ["Bash(git push --force:*)", "Bash(curl:*)", "Read(./.env)", "Read(./.env.*)", "Read(~/.ssh/**)"]
+  }
+}
+```
+
+**Permission modes.** A rail set to `ask` returns Claude Code's `permissionDecision: "ask"`. In a check with
+Claude Code 2.1.318 in headless (`claude -p`) mode, a hook that asked kept the command from running in `manual`,
+`auto` and `bypassPermissions` modes alike, while the same command ran freely without the hook. So `ask` was not
+skipped in `auto` or `bypassPermissions`, but headless mode can't show a prompt, so what a person sees in an
+interactive `auto` or `bypassPermissions` session was not checked. If you must not rely on a prompt, set the rail
+to `deny`.
+
+## 8. Upgrade and uninstall
 
 ```bash
 npx @forgeyard/shipline upgrade [dir] [--yes] [--dry-run] [--force]
@@ -219,7 +291,7 @@ allow rules in `.claude/settings.json`. It asks separately whether to delete thi
 files only and never runs git: commit the removal yourself. It refuses while a Shipline UI chat holds the
 repo (stop the UI first).
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 - **A hook warning appears at session start or on a tool call.** Read it: it names the problem (a config
   that doesn't parse, a missing stage). A malformed config fails open, so work isn't blocked; fix the file
@@ -243,7 +315,7 @@ repo (stop the UI first).
   - Task data is in `%USERPROFILE%\.shipline`. A repo at `C:\Users\you\repo` is stored as `C--Users-you-repo`.
   - Existing CRLF files keep CRLF when Shipline saves them; new files use LF.
 
-## 9. Contributing
+## 10. Contributing
 
 The repo holds only the CLI product:
 

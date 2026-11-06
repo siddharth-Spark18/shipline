@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { CLI_ROOT, makeRepo, removeDir, runInitAll, stage, storeOf } from '../helpers.mjs';
+import { CLI_ROOT, makeRepo, removeDir, run, runInitAll, stage, storeOf } from '../helpers.mjs';
 import { api, openEvents, startUi } from './helpers.mjs';
 import { headerFor } from '../../src/setup-schema.mjs';
 import { INTERFACE } from '../../src/interface.mjs';
@@ -179,8 +179,9 @@ describe('saving', () => {
     assert.equal(wfEntry(s3, 'hotfix').model.stages[0].sla_hours, 4);
     assert.equal(s3.config.model.team_owner, 'platform');
     assert.equal(s3.config.model.commands.typecheck, 'pnpm tsc');
-    // The template ends with the comment documenting `setup` (Teams Phase 1, E); unknown keys follow it.
-    assert.match(read('.shipline/config.yml'), /\n {2}typecheck: pnpm tsc\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\n# stale_checks:[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n {2}stale_checks: warn\n\n# Set to `done`[^\n]*\n# Until then[^\n]*\n\nteam_owner: platform\n$/);
+    // The template ends with the comment documenting `setup` (Teams Phase 1, E); unknown keys follow it. The guardrail
+    // keys (Teams Phase 3) sit between ci and that comment, and the protected_paths block list is written back as is.
+    assert.match(read('.shipline/config.yml'), /\n {2}typecheck: pnpm tsc\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\n# stale_checks:[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n {2}stale_checks: warn\n\n# Guardrails:[^]*\nprotected_paths:\n {2}- migrations\/\*\*\n[^]*\n {2}- go\.sum\n\n# At Verify[^]*\nscope_check:\n {2}enabled: true\n {2}sensitive_extra: \[\]\n\n# Set to `done`[^\n]*\n# Until then[^\n]*\n\nteam_owner: platform\n$/);
   });
 
   test('a file changed on disk gives 409, and in a two-file save nothing is written', async () => {
@@ -586,7 +587,7 @@ describe('agents and skills (prepublish plan, Setup -> Agents & skills)', () => 
     assert.deepEqual(v.excluded, [AGENT('researcher'), AGENT('reviewer')]);
     assert.ok(!(AGENT('researcher') in v.files));
     assert.equal(v.interface, INTERFACE);
-    assert.equal(INTERFACE, 5);
+    assert.equal(INTERFACE, 6);
     let s = await getSetup(x.ui);
     assert.deepEqual(s.agents.shipline.find((a) => a.name === 'researcher'), { name: 'researcher', installed: false, excluded: true, hash: null });
     assert.equal(s.versionHash, sha256(xread(x, '.shipline/bin/VERSION')));
@@ -760,7 +761,7 @@ describe('interchangeability', () => {
     assert.deepEqual(m.labels, ['bug', 'triage']);
     assert.equal(m.stages.find((x) => x.id === 'reproduce').timeout_min, 30);
     assert.deepEqual(m.stages.map((x) => x.id), ['ticket', 'reproduce', 'root_cause', 'fix', 'verify', 'pr']);
-    assert.equal(m.stages.find((x) => x.id === 'verify').blocks[0].bash, '\\bgit\\s+commit\\b|\\bgh\\s+pr\\s+create\\b');
+    assert.deepEqual(m.stages.find((x) => x.id === 'verify').blocks[0], { actions: ['commit', 'pr'] }); // Teams Phase 3, D
     // The hooks still read it.
     assert.match(stage(dir, ['workflows']).stdout, /^bugfix: Bugfix \(team\)/m);
   });
@@ -1393,3 +1394,113 @@ describe('add a shipped workflow (setup wizard plan, G)', () => {
     assert.ok(!existsSync(path.join(x.dir, '.shipline/workflows/feature.yml')));
   });
 });
+
+// Teams Phase 3, F and D: the Guardrails section saves through the existing config save, and the Actions block
+// type through the workflow save. The hooks then read what was saved.
+describe('guardrails and actions blocks (Teams Phase 3)', () => {
+  let x;
+  const xread = (rel) => readFileSync(path.join(x.dir, rel), 'utf8');
+  const guard = (command) => {
+    const r = spawnGuard(x.dir, { session_id: 'gr', cwd: x.dir, tool_name: 'Bash', tool_input: { command } });
+    return r.stdout ? JSON.parse(r.stdout) : null;
+  };
+  before(async () => {
+    x = await scratchRepo();
+  });
+
+  test('GET /api/setup returns the guardrail keys in the config model', async () => {
+    const s = await getSetup(x.ui);
+    assert.equal(s.config.model.rails.force_push_default, 'deny');
+    assert.deepEqual(s.config.model.rails_commands, { deploy: [], migrate: [] });
+    assert.ok(s.config.model.protected_paths.includes('migrations/**'));
+    assert.deepEqual(s.config.model.scope_check, { enabled: true, sensitive_extra: [] });
+  });
+
+  test('rails, protected_paths, rails_commands and scope_check survive a save; comments and quoting are kept; the guard reads them', async () => {
+    const s = await getSetup(x.ui);
+    const cfg = clone(s.config.model);
+    cfg.rails.deploy = 'deny';
+    cfg.rails.print_credentials = 'off';
+    cfg.protected_paths = [...cfg.protected_paths, 'secrets/**'];
+    cfg.rails_commands.deploy = ['make ship'];
+    cfg.scope_check = { enabled: false, sensitive_extra: ['config/**'] };
+    const p = await preview([{ kind: 'config', model: cfg, baseHash: s.config.hash }], x.ui);
+    assert.equal(p.status, 200, p.text);
+    assert.deepEqual(p.json.files[0].errors, []);
+    const r = await save([{ kind: 'config', model: cfg, baseHash: s.config.hash }], x.ui);
+    assert.equal(r.status, 200, r.text);
+    const text = xread('.shipline/config.yml');
+    const back = parseYaml(text);
+    assert.deepEqual(back.rails, cfg.rails);
+    assert.deepEqual(back.protected_paths, cfg.protected_paths);
+    assert.deepEqual(back.rails_commands, cfg.rails_commands);
+    assert.deepEqual(back.scope_check, cfg.scope_check);
+    assert.match(text, /^ {2}# kubectl apply[^\n]*\n {2}deploy: deny$/m);
+    assert.match(text, /^ {2}- '\*\*\/\*\.tf'$/m);
+    assert.match(text, /^ {2}- secrets\/\*\*$/m);
+    // The hooks: deploy now denied, printing credentials allowed, make ship counts as a deploy.
+    assert.equal(guard('fly deploy').hookSpecificOutput.permissionDecision, 'deny');
+    assert.equal(guard('make ship').hookSpecificOutput.permissionDecision, 'deny');
+    assert.equal(guard('cat .env'), null);
+    // A no-edit save of the saved file gives its exact bytes.
+    const s2 = await getSetup(x.ui);
+    assert.equal((await save([{ kind: 'config', model: clone(s2.config.model), baseHash: s2.config.hash }], x.ui)).status, 200);
+    assert.equal(xread('.shipline/config.yml'), text);
+  });
+
+  test('invalid guardrail values are refused (400) and nothing is written; an unknown rail value only warns', async () => {
+    const s = await getSetup(x.ui);
+    const before = xread('.shipline/config.yml');
+    for (const [patch, p] of [
+      [{ rails: ['deploy'] }, 'rails'],
+      [{ protected_paths: ['ok/**', ''] }, 'protected_paths[1]'],
+      [{ scope_check: { enabled: 'yes', sensitive_extra: [] } }, 'scope_check.enabled'],
+      [{ rails_commands: { deploy: 'make ship', migrate: [] } }, 'rails_commands.deploy'],
+    ]) {
+      const r = await save([{ kind: 'config', model: { ...clone(s.config.model), ...patch }, baseHash: s.config.hash }], x.ui);
+      assert.equal(r.status, 400, `${JSON.stringify(patch)}: ${r.text}`);
+      assert.ok(r.json.error.details.some((d) => d.path === p), r.text);
+      assert.equal(xread('.shipline/config.yml'), before);
+    }
+    const cfg = clone(s.config.model);
+    cfg.rails.deploy = 'sometimes';
+    const p = await preview([{ kind: 'config', model: cfg, baseHash: s.config.hash }], x.ui);
+    assert.equal(p.status, 200, p.text);
+    assert.deepEqual(p.json.files[0].errors.filter((e) => e.severity !== 'warning'), []);
+  });
+
+  test('an Actions block saves, reads back, and the guard holds it back', async () => {
+    const s = await getSetup(x.ui);
+    const f = wfEntry(s, 'small');
+    const model = clone(f.model);
+    const verify = model.stages.find((st) => st.id === 'verify');
+    assert.deepEqual(verify.blocks, [{ actions: ['commit', 'pr'] }]);
+    verify.blocks = [{ actions: ['commit', 'pr', 'push'] }];
+    const r = await save([{ kind: 'workflow', id: 'small', model, baseHash: f.hash }], x.ui);
+    assert.equal(r.status, 200, r.text);
+    assert.match(xread('.shipline/workflows/small.yml'), /^ {6}- actions: \[commit, pr, push\]$/m);
+    const s2 = await getSetup(x.ui);
+    assert.deepEqual(wfEntry(s2, 'small').model.stages.find((st) => st.id === 'verify').blocks, [{ actions: ['commit', 'pr', 'push'] }]);
+    assert.equal(stage(x.dir, ['start', '--workflow', 'small', '--title', 'acts ui'], 'gr').code, 0);
+    assert.equal(guard('git -c a=b push origin feature/x').hookSpecificOutput.permissionDecision, 'deny');
+  });
+
+  test('an empty actions list is refused (400); an unknown action only warns', async () => {
+    const s = await getSetup(x.ui);
+    const f = wfEntry(s, 'small');
+    const model = clone(f.model);
+    model.stages.find((st) => st.id === 'verify').blocks = [{ actions: [] }];
+    const r = await save([{ kind: 'workflow', id: 'small', model, baseHash: f.hash }], x.ui);
+    assert.equal(r.status, 400, r.text);
+    assert.ok(r.json.error.details.some((d) => /blocks\[0\]\.actions$/.test(d.path)), r.text);
+    model.stages.find((st) => st.id === 'verify').blocks = [{ actions: ['commit', 'squash'] }];
+    const p = await preview([{ kind: 'workflow', id: 'small', model, baseHash: f.hash }], x.ui);
+    assert.equal(p.status, 200, p.text);
+    assert.deepEqual(p.json.files[0].errors.filter((e) => e.severity !== 'warning'), []);
+  });
+});
+
+// Runs the repo's vendored guard with a hook payload.
+function spawnGuard(root, payload) {
+  return run(process.execPath, [path.join(root, '.shipline', 'bin', 'guard.mjs')], { cwd: root, input: JSON.stringify(payload) });
+}

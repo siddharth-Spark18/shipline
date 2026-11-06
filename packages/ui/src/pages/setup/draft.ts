@@ -144,6 +144,13 @@ export function isBashBlock(b: Block): b is Extract<Block, { bash: string }> {
   return 'bash' in b;
 }
 
+/** The named actions a stage block can hold back. */
+export const BLOCK_ACTIONS = ['commit', 'push', 'pr', 'merge', 'release', 'deploy', 'migrate'];
+
+export function isActionsBlock(b: Block): b is Extract<Block, { actions: string[] }> {
+  return 'actions' in b;
+}
+
 /** Returns an error text when the pattern does not compile as a RegExp. */
 export function regexError(pattern: string): string | null {
   try {

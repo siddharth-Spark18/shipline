@@ -305,6 +305,8 @@ describe('stage.mjs pr-summary: Checks line, collapsed blocks, v2 JSON', () => {
         fingerprint: checks.fingerprint,
         results: checks.results.map((r) => ({ name: r.name, exit: r.exit, duration_ms: r.duration_ms, accepted: false })),
       },
+      // Teams Phase 3, E: nothing sensitive and nothing outside the plan (the changes are .shipline/ files).
+      scope: { sensitive: [], outside_plan: [], accepted: false },
     };
     assert.equal(
       text,
@@ -317,6 +319,8 @@ describe('stage.mjs pr-summary: Checks line, collapsed blocks, v2 JSON', () => {
         '| pr | pending | — |',
         '',
         `**Checks:** test ✓ ${d(0)}s · lint ✓ ${d(1)}s`,
+        '',
+        '**Scope:** no test, lint or CI files touched, nothing outside the plan',
         '',
         '<details><summary>Plan scope</summary>',
         '',

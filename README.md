@@ -470,8 +470,10 @@ bundle-size check on Node 20, on Ubuntu, macOS and Windows.
 **Releasing.** Bump the version in `packages/cli/package.json`, add a `## [<version>]` entry to
 `packages/cli/CHANGELOG.md`, run the hash script, commit, then push a tag `v<version>` (for example `v1.0.0`).
 `.github/workflows/publish.yml` checks that the tag matches the package version, that the CHANGELOG has the heading and
-that the hashes are recorded, and publishes `@forgeyard/shipline` to npm. It needs the `NPM_TOKEN` secret: a granular npm token with
-publish rights on the `@forgeyard` scope.
+that the hashes are recorded, and publishes `@forgeyard/shipline` to npm through **trusted publishing** (GitHub's OIDC
+identity, no npm token stored anywhere; the package's Settings → Trusted publishing on npmjs.com names this repo and
+`publish.yml`). A version that is already on npm is skipped. 1.0.0 was published by hand to create the package, since
+npm only accepts a trusted publisher for a package that already exists.
 
 Older design documents live in `docs/plans/`; those describing the v1 hub are marked historical.
 

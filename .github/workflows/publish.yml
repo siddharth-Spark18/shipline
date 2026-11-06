@@ -1,7 +1,8 @@
 name: publish
 
 # Publishes @forgeyard/shipline to npm when a v<major>.<minor>.<patch> tag is pushed.
-# Needs the NPM_TOKEN secret: a granular npm token with publish rights on the @forgeyard scope.
+# Uses npm trusted publishing (OIDC, no token): the package's Settings → Trusted publishing on npmjs.com must name this
+# repo and this workflow file (publish.yml). Trusted publishing needs npm 11.5.1+, so this job runs on Node 24.
 on:
   push:
     tags:
@@ -50,7 +51,7 @@ jobs:
       - uses: pnpm/action-setup@v6 # version from package.json "packageManager"
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           # No dependency cache in the release job: a poisoned cache must never reach what gets published.
           package-manager-cache: false
           registry-url: https://registry.npmjs.org
@@ -58,9 +59,19 @@ jobs:
       - run: pnpm --filter ./packages/cli test
       - run: pnpm --filter @shipline/ui typecheck
 
+      # A version already on npm (1.0.0 was published by hand to create the package) is not published again.
+      - name: Skip a version that is already published
+        id: published
+        working-directory: packages/cli
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "@forgeyard/shipline@${version}" version >/dev/null 2>&1; then
+            echo "@forgeyard/shipline@${version} is already on npm; nothing to publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # prepack builds ui-dist.
       - name: Publish
+        if: steps.published.outputs.skip != 'true'
         working-directory: packages/cli
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

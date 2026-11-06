@@ -288,7 +288,11 @@ describe('.github/workflows/publish.yml', () => {
     }
     assert.match(yml, /\$\{GITHUB_REF_NAME\}" != "v\$\{version\}"/);
     assert.match(yml, /working-directory: packages\/cli/);
-    assert.match(yml, /NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/);
+    // Trusted publishing (OIDC): no token secret, npm 11.5.1+ via Node 24, and an already-published version is skipped.
+    assert.doesNotMatch(yml, /NPM_TOKEN|NODE_AUTH_TOKEN/);
+    assert.match(yml, /node-version: 24/);
+    assert.ok(yml.indexOf('npm view "@forgeyard/shipline@${version}" version') < yml.indexOf('npm publish --access public --provenance'));
+    assert.match(yml, /if: steps\.published\.outputs\.skip != 'true'/);
   });
 
   test('fails when CHANGELOG.md has no heading for the version, before publishing', () => {

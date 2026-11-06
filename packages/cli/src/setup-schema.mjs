@@ -9,14 +9,17 @@ const TEMPLATES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 
 // Keys the form edits. Anything else in a file is shown as "other fields (kept)".
 export const KNOWN_FIELDS = {
   config: {
-    top: ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup'],
+    top: ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup', 'rails', 'rails_commands', 'protected_paths', 'scope_check'],
     commands: ['test', 'lint', 'build'],
     ci: ['missing_block', 'skip_label', 'stale_checks'],
+    rails: ['force_push_default', 'push_default', 'pipe_to_shell', 'print_credentials', 'read_credentials', 'deploy', 'migrate', 'agent_config'],
+    rails_commands: ['deploy', 'migrate'],
+    scope_check: ['enabled', 'sensitive_extra'],
   },
   workflow: {
     top: ['id', 'name', 'description', 'branch_type', 'stages'],
     stage: ['id', 'name', 'artifact', 'description', 'optional', 'confirm_to_advance', 'condition', 'agent', 'enforcement', 'blocks', 'checks', 'sections'],
-    block: ['tools', 'allow_paths', 'bash'],
+    block: ['tools', 'allow_paths', 'bash', 'actions'],
   },
 };
 
@@ -29,6 +32,9 @@ export const CI_STALE_CHECKS = ['warn', 'fail'];
 export const DEFAULT_CI = { missing_block: 'fail-unless-label', skip_label: 'shipline:skip', stale_checks: 'warn' };
 const SKIP_LABEL_MAX = 50;
 export const TRACKERS = ['jira', 'github'];
+export const RAIL_IDS = KNOWN_FIELDS.config.rails;
+export const RAIL_LEVELS = ['deny', 'ask', 'off'];
+export const ACTIONS = ['commit', 'push', 'pr', 'merge', 'release', 'deploy', 'migrate'];
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const err = (p, message) => ({ path: p, message });
@@ -98,8 +104,48 @@ export function validateConfig(model, { skills = null } = {}) {
       }
     }
   }
+  validateGuardrails(model, out);
   lineBreakErrors(model, '', out);
   return out;
+}
+
+// rails, rails_commands, protected_paths and scope_check. An unknown rail id or value is a warning (the default is used).
+function validateGuardrails(model, out) {
+  const stringList = (v, p) => {
+    if (v === undefined || v === null) return;
+    if (!Array.isArray(v)) return void out.push(err(p, 'must be a list'));
+    v.forEach((x, i) => {
+      if (typeof x !== 'string' || x.trim() === '') out.push(err(`${p}[${i}]`, 'must be non-empty text'));
+    });
+  };
+  const rails = model.rails;
+  if (rails !== undefined && rails !== null) {
+    if (!isObj(rails)) out.push(err('rails', 'must be a map of rail to deny, ask or off'));
+    else {
+      for (const [id, v] of Object.entries(rails)) {
+        if (!RAIL_IDS.includes(id)) out.push(warn(`rails.${id}`, 'not a known rail; it is ignored'));
+        else if (v !== undefined && v !== null && !RAIL_LEVELS.includes(v)) out.push(warn(`rails.${id}`, `must be one of ${RAIL_LEVELS.join(', ')}; the default is used`));
+      }
+    }
+  }
+  const rc = model.rails_commands;
+  if (rc !== undefined && rc !== null) {
+    if (!isObj(rc)) out.push(err('rails_commands', 'must be a map with deploy and migrate lists'));
+    else {
+      for (const k of Object.keys(rc)) if (!KNOWN_FIELDS.config.rails_commands.includes(k)) out.push(warn(`rails_commands.${k}`, 'not a known key; it is ignored'));
+      stringList(rc.deploy, 'rails_commands.deploy');
+      stringList(rc.migrate, 'rails_commands.migrate');
+    }
+  }
+  stringList(model.protected_paths, 'protected_paths');
+  const sc = model.scope_check;
+  if (sc !== undefined && sc !== null) {
+    if (!isObj(sc)) out.push(err('scope_check', 'must be a map'));
+    else {
+      if (sc.enabled !== undefined && sc.enabled !== null && typeof sc.enabled !== 'boolean') out.push(err('scope_check.enabled', 'must be true or false'));
+      stringList(sc.sensitive_extra, 'scope_check.sensitive_extra');
+    }
+  }
 }
 
 function compiles(src) {
@@ -178,7 +224,16 @@ export function validateWorkflow(model, { id, agents = [], existingStageIds = []
             if (!isObj(b)) return void out.push(err(bp, 'must be a map'));
             const hasTools = b.tools !== undefined && b.tools !== null;
             const hasBash = b.bash !== undefined && b.bash !== null;
-            if (!hasTools && !hasBash) out.push(err(bp, 'needs either tools (with allow_paths) or bash'));
+            const hasActions = b.actions !== undefined && b.actions !== null;
+            if (!hasTools && !hasBash && !hasActions) out.push(err(bp, 'needs tools (with allow_paths), bash or actions'));
+            if (hasActions) {
+              if (!Array.isArray(b.actions) || b.actions.length === 0) out.push(err(`${bp}.actions`, 'must be a list of actions'));
+              else {
+                b.actions.forEach((a, k) => {
+                  if (!ACTIONS.includes(a)) out.push(warn(`${bp}.actions[${k}]`, `not a known action (${ACTIONS.join(', ')}); it never matches`));
+                });
+              }
+            }
             if (hasTools && (typeof b.tools !== 'string' || !compiles(`^(?:${b.tools})$`))) {
               out.push(err(`${bp}.tools`, 'must be a valid regular expression of tool names'));
             }

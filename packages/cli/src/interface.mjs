@@ -12,14 +12,17 @@ import path from 'node:path';
 // the store guard, `stage.mjs pr-summary` and the optional CI check.
 // 5 = Trust, phase 2: `stage.mjs check`, the `checks` and `sections` stage fields, the `accept` confirmation, the
 // v2 PR summary and `ci.stale_checks`.
-export const INTERFACE = 5;
+// 6 = Guardrails: always-on rails and protected paths in the guard (the PreToolUse matcher gains Read), the
+// `actions` block type, `stage.mjs check` scope (`base_commit`, `checks.scope`, the `scope` confirmation) and the
+// optional `scope` in the PR summary.
+export const INTERFACE = 6;
 
 // The first interface whose tasks and session state live in the store (interface 3). Below it, `upgrade` moves
 // the data out of the repo, and the UI chat stays disabled until then.
 export const STORE_INTERFACE = 3;
 
 // What interface-1 repos lack. Used only for banner text.
-export const MISSING_BEFORE = ['the lost-task warning', 'visible warn reminders', 'task storage outside the repo (the store)', 'Trust: answer-based confirmations and the CI check', 'Trust: real check runs, required sections and PR evidence'];
+export const MISSING_BEFORE = ['the lost-task warning', 'visible warn reminders', 'task storage outside the repo (the store)', 'Trust: answer-based confirmations and the CI check', 'Trust: real check runs, required sections and PR evidence', 'Guardrails: always-on rails, protected paths, named actions and the Verify scope check'];
 
 // Returns { package, interface, files, excluded }, or { legacy: true, interface: 1 } when the file is missing or unreadable.
 export function readRepoVersion(root) {

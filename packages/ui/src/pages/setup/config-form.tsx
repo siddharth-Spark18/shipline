@@ -12,9 +12,21 @@ import { OtherFields } from '@/pages/setup/other-fields';
 import { setOptional } from '@/pages/setup/draft';
 import type { ConfigModel, SetupFile } from '@/lib/types';
 
-// `skills` is edited in the Agents & skills section and `ci` in the CI check section, so neither is listed
-// as an "other field" here. `setup` is written by /shipline-setup and not editable.
-const TOP_KEYS = ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup'];
+// `skills` is edited in the Agents & skills section, `ci` in the CI check section and the guardrail keys in the
+// Guardrails section, so none of them is listed as an "other field" here. `setup` is written by /shipline-setup
+// and not editable.
+const TOP_KEYS = [
+  'branch_pattern',
+  'tracker',
+  'commands',
+  'skills',
+  'ci',
+  'setup',
+  'rails',
+  'rails_commands',
+  'protected_paths',
+  'scope_check',
+];
 const TRACKERS = [
   { value: 'jira', label: 'Jira' },
   { value: 'github', label: 'GitHub Issues' },

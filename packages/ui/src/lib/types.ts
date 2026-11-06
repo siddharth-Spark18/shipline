@@ -67,7 +67,13 @@ export interface BashBlock {
   [key: string]: unknown;
 }
 
-export type Block = ToolsBlock | BashBlock;
+/** Named actions held back until the stage is done, matched on the parsed command. */
+export interface ActionsBlock {
+  actions: string[];
+  [key: string]: unknown;
+}
+
+export type Block = ToolsBlock | BashBlock | ActionsBlock;
 
 /** Unknown keys are kept in the object and shown read-only as "other fields (kept)". */
 export interface StageModel {
@@ -117,6 +123,22 @@ export interface ConfigModel {
   } | null;
   /** `done` once /shipline-setup has run; not an editable field. */
   setup?: string | null;
+  /** Always-on guardrails, rail id to deny | ask | off; edited in the Guardrails section. */
+  rails?: { [rail: string]: string | null | undefined } | null;
+  /** Extra commands that count as a deploy or a migration (plain prefixes). */
+  rails_commands?: {
+    deploy?: string[] | null;
+    migrate?: string[] | null;
+    [key: string]: unknown;
+  } | null;
+  /** Globs (relative to the repo root) that need a permission prompt to change. */
+  protected_paths?: string[] | null;
+  /** The Verify scope check: test, lint and CI files edited and files outside the plan. */
+  scope_check?: {
+    enabled?: boolean | null;
+    sensitive_extra?: string[] | null;
+    [key: string]: unknown;
+  } | null;
   [key: string]: unknown;
 }
 
@@ -313,6 +335,13 @@ export interface TaskChecks {
   /** True when the code changed since the run. */
   stale: boolean;
   results: TaskCheckResult[];
+  /** What the change touches (recorded by `stage.mjs check` when scope_check is on). */
+  scope?: {
+    changed: string[] | null;
+    sensitive: string[];
+    /** Null when unknown (the plan lists no files). */
+    outside_plan: string[] | null;
+  } | null;
 }
 
 export interface Task {

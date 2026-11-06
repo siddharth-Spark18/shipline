@@ -24,7 +24,7 @@ stages:
     enforcement: block
     confirm_to_advance: true
     blocks:
-      - bash: '\bgit\s+commit\b|\bgh\s+pr\s+create\b'
+      - actions: [commit, pr]
   - id: pr
     name: Commit and PR
     artifact: pr.md

@@ -1,15 +1,16 @@
 import { PlusIcon, Trash2Icon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { OtherFields } from '@/pages/setup/other-fields';
-import { isBashBlock, regexError } from '@/pages/setup/draft';
+import { BLOCK_ACTIONS, isActionsBlock, isBashBlock, regexError } from '@/pages/setup/draft';
 import type { Block, Enforcement } from '@/lib/types';
 
-const BLOCK_KEYS = ['tools', 'allow_paths', 'bash'];
+const BLOCK_KEYS = ['tools', 'allow_paths', 'bash', 'actions'];
 
-/** List editor for a stage's `blocks`: "tools + allow paths" entries and "bash regex" entries. */
+/** List editor for a stage's `blocks`: "tools + allow paths", "bash regex" and "actions" entries. */
 export function BlocksEditor({
   stageId,
   blocks,
@@ -39,6 +40,13 @@ export function BlocksEditor({
           <Button variant="outline" size="xs" onClick={() => onChange([...blocks, { bash: '' }])}>
             <PlusIcon /> Bash rule
           </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            onClick={() => onChange([...blocks, { actions: ['commit', 'pr'] }])}
+          >
+            <PlusIcon /> Actions
+          </Button>
         </div>
       </div>
 
@@ -49,6 +57,57 @@ export function BlocksEditor({
       )}
 
       {blocks.map((block, i) => {
+        if (isActionsBlock(block)) {
+          const idBase = `blocks-${stageId}-${i}`;
+          const chosen = Array.isArray(block.actions) ? block.actions : [];
+          // Names this editor doesn't offer are kept as written.
+          const unknown = chosen.filter((a) => !BLOCK_ACTIONS.includes(a));
+          const toggle = (action: string, on: boolean) =>
+            update(i, {
+              ...block,
+              actions: on ? [...chosen, action] : chosen.filter((a) => a !== action),
+            });
+          return (
+            <div key={i} className="flex flex-col gap-2 rounded-md border p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Named actions, matched on the parsed command
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Remove rule"
+                  onClick={() => remove(i)}
+                >
+                  <Trash2Icon />
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-2">
+                {BLOCK_ACTIONS.map((action) => (
+                  <div key={action} className="flex items-center gap-2">
+                    <Checkbox
+                      id={`${idBase}-${action}`}
+                      checked={chosen.includes(action)}
+                      onCheckedChange={(on) => toggle(action, on === true)}
+                    />
+                    <Label htmlFor={`${idBase}-${action}`} className="font-mono text-xs">
+                      {action}
+                    </Label>
+                  </div>
+                ))}
+              </div>
+              {unknown.length > 0 && (
+                <p className="text-xs text-enf-warn">
+                  Not a known action, so it never matches: {unknown.join(', ')}.
+                </p>
+              )}
+              {chosen.length === 0 && (
+                <p className="text-xs text-destructive">Choose at least one action.</p>
+              )}
+              <OtherFields value={block} known={BLOCK_KEYS} />
+            </div>
+          );
+        }
         const bash = isBashBlock(block);
         const pattern = bash ? block.bash : (block.tools as string);
         const err = pattern ? regexError(pattern) : null;

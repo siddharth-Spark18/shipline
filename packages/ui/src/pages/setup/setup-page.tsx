@@ -12,6 +12,7 @@ import { AddWorkflowDialog } from '@/pages/setup/add-workflow-dialog';
 import { AgentsSkills } from '@/pages/setup/agents-skills';
 import { CiCheck } from '@/pages/setup/ci-check';
 import { ConfigForm } from '@/pages/setup/config-form';
+import { GuardrailsSection } from '@/pages/setup/guardrails-section';
 import { NewWorkflowDialog } from '@/pages/setup/new-workflow-dialog';
 import { SaveDialog, fileLabel } from '@/pages/setup/save-dialog';
 import { WorkflowEditor } from '@/pages/setup/workflow-editor';
@@ -34,6 +35,8 @@ import type { ConfigModel, ValidationIssue, VersionState } from '@/lib/types';
 const AGENTS_KEY = ':agents';
 /** Nav key of the CI check section. */
 const CI_KEY = ':ci';
+/** Nav key of the Guardrails section. */
+const GUARDRAILS_KEY = ':guardrails';
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -118,6 +121,7 @@ export default function SetupPage({
     selected === 'config' ||
     selected === AGENTS_KEY ||
     selected === CI_KEY ||
+    selected === GUARDRAILS_KEY ||
     workflowIds.includes(selected)
       ? selected
       : 'config';
@@ -230,6 +234,13 @@ export default function SetupPage({
           >
             CI check
           </Button>
+          <Button
+            variant={current === GUARDRAILS_KEY ? 'secondary' : 'ghost'}
+            className="justify-start"
+            onClick={() => setSelected(GUARDRAILS_KEY)}
+          >
+            Guardrails
+          </Button>
           <p className="mt-2 hidden px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase md:block">
             Workflows
           </p>
@@ -283,6 +294,14 @@ export default function SetupPage({
               readOnly={readOnly}
               hasOtherEdits={entries.length > 0}
               onReload={() => void reload()}
+            />
+          )}
+          {current === GUARDRAILS_KEY && (
+            <GuardrailsSection
+              key={dataUpdatedAt}
+              model={drafts.config}
+              readOnly={readOnly}
+              onChange={(m: ConfigModel) => setDrafts({ ...drafts, config: m })}
             />
           )}
           {current === CI_KEY && (

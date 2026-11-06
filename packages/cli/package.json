@@ -1,6 +1,6 @@
 {
   "name": "@forgeyard/shipline",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Install a repo-committed Claude Code workflow (stages, rules, enforcement hooks, task artifacts stored outside the repo) with `npx @forgeyard/shipline init`.",
   "type": "module",
   "bin": {

@@ -14,14 +14,16 @@
 // question that `advance` / `skip` prints; there are no override flags.
 // `check` runs the test, lint and build commands from config.yml and records the results in the manifest; a stage
 // with `checks: true` (verify) can't finish without a passing run on the current code, unless the developer accepts.
+// `check` also records the scope of the change (test, lint and CI files it edits, files outside the plan); when
+// there is any, finishing that stage needs the developer's answer to a `scope` question too.
 // Session: $SHIPLINE_SESSION (set by the SessionStart hook) or --session <id>. Task override: --task <folder>.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import {
   findRoot, loadConfig, loadWorkflow, listWorkflows, readManifest, manifestPath, readSession, statePath,
   tasksDir, writeJson, isDone, currentStage, slugify, stageEnforcement, confirmQuestion, readApprovals,
-  consumeApproval, CONFIRM_OPTIONS, sameStage, findStage, fingerprint, findSection, sectionProblems,
+  consumeApproval, CONFIRM_OPTIONS, sameStage, findStage, fingerprint, findSection, sectionProblems, scopeOf, scopeText,
 } from './lib.mjs';
 
 function die(msg) {
@@ -109,6 +111,17 @@ function bind(taskDir, workflow) {
   writeJson(statePath(root, sessionId), { session_id: sessionId, workflow, task_dir: taskDir, started: now() });
 }
 
+// The commit the task starts from (`git rev-parse HEAD`), or null outside git or with no commits. The scope check
+// compares the working tree against it.
+function baseCommit() {
+  try {
+    const id = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    return /^[0-9a-f]{40,64}$/.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 function stageCfg(wf, id) {
   return findStage(wf.stages, id) || { id };
 }
@@ -185,7 +198,8 @@ function questionText(q) {
 // The developer's own answer for advancing past / skipping the current stage. Returns the approval it used
 // (and clears pending_confirm), or ends the process after printing the question to ask.
 function requireAnswer(kind, stageId, taskDir, manifest, extra) {
-  const verb = kind === 'advance' ? 'confirm advancing' : kind === 'accept' ? 'decide whether to finish with failed checks' : 'confirm skipping';
+  const verb =
+    kind === 'advance' ? 'confirm advancing' : kind === 'accept' ? 'decide whether to finish with failed checks' : kind === 'scope' ? 'decide whether to finish with edits to test, lint or CI files or files outside the plan' : 'confirm skipping';
   if (!sessionId) die(`no session id; confirmations need the session that asked the question. Pass --session <id> or set SHIPLINE_SESSION.`);
   const q = confirmQuestion(stageId, kind, manifest.task.slug, extra);
   const st = readSession(root, sessionId) || { session_id: sessionId };
@@ -288,6 +302,7 @@ switch (cmd) {
         branch: fill(cfg.branch_pattern, vars),
         created: now(),
         updated: now(),
+        base_commit: baseCommit(),
       },
       flags: { ui },
       complete: false,
@@ -321,9 +336,9 @@ switch (cmd) {
       const st = sessionId ? readSession(root, sessionId) : null;
       const pend = st && st.pending_confirm;
       if (cur && pend && pend.stage === cur.id && pend.task_dir === taskDir) {
-        // An accept question carries the run it is about, so it is shown as it was issued.
-        const q = pend.kind === 'accept' ? { header: 'Shipline', question: pend.question, options: [CONFIRM_OPTIONS.accept.yes, CONFIRM_OPTIONS.accept.no] } : confirmQuestion(cur.id, pend.kind, manifest.task.slug);
-        console.log(`\nA confirmation is still open (run \`${pend.kind === 'accept' ? 'advance' : pend.kind}\` after the developer answers).\n${questionText(q)}`);
+        // An accept or scope question carries the run it is about, so it is shown as it was issued.
+        const q = pend.kind === 'accept' || pend.kind === 'scope' ? { header: 'Shipline', question: pend.question, options: [CONFIRM_OPTIONS[pend.kind].yes, CONFIRM_OPTIONS[pend.kind].no] } : confirmQuestion(cur.id, pend.kind, manifest.task.slug);
+        console.log(`\nA confirmation is still open (run \`${pend.kind === 'accept' || pend.kind === 'scope' ? 'advance' : pend.kind}\` after the developer answers).\n${questionText(q)}`);
       }
     }
     break;
@@ -385,6 +400,7 @@ switch (cmd) {
         delete s.confirmed;
         delete s.skipped;
         delete s.accepted;
+        delete s.scope_accepted;
       }
     });
     manifest.stages[idx].status = 'in_progress';
@@ -392,6 +408,7 @@ switch (cmd) {
     delete manifest.stages[idx].confirmed;
     delete manifest.stages[idx].skipped;
     delete manifest.stages[idx].accepted;
+    delete manifest.stages[idx].scope_accepted;
     manifest.complete = false;
     save(taskDir, manifest);
     clearPending();
@@ -411,12 +428,14 @@ switch (cmd) {
 
   case 'check': {
     const taskDir = activeTaskDir();
-    const { manifest } = load(taskDir);
+    const { manifest, wf } = load(taskDir);
     const commands = configuredCommands();
     if (!commands.length) {
       manifest.checks = { fingerprint: fingerprint(root), ran_at: now(), results: [] };
+      recordScope(taskDir, manifest, wf);
       save(taskDir, manifest);
       console.log('No test, lint or build commands are configured in .shipline/config.yml.');
+      printScope(manifest.checks.scope);
       break;
     }
     // The fingerprint is taken before the commands run: it is the code they saw.
@@ -427,9 +446,11 @@ switch (cmd) {
       return runCommand(name, command);
     });
     manifest.checks = { fingerprint: fp, ran_at: now(), results };
+    recordScope(taskDir, manifest, wf);
     save(taskDir, manifest);
     const failed = results.filter((r) => r.exit !== 0);
     console.log(`\n${checksLine(results)}`);
+    printScope(manifest.checks.scope);
     for (const r of failed) console.log(`\n--- ${r.name} (${r.exit === null ? 'did not run' : `exit ${r.exit}`}) last output ---\n${r.tail}`);
     console.log(`\nFingerprint: ${fp ? fp.slice(0, 12) : 'none'}`);
     if (failed.length) process.exit(1);
@@ -510,22 +531,71 @@ function acceptedNames(checks, stage) {
   return a.names;
 }
 
-// The gate on a `checks: true` stage: a recorded run, on the current code, with every result passed or accepted.
+// The gate on a `checks: true` stage: a recorded run, on the current code, with every result passed or accepted,
+// and the scope of the change accepted when it edits test, lint or CI files or files outside the plan.
 function gateChecks(taskDir, manifest, cur) {
-  if (!configuredCommands().length) return; // nothing to run: finishes as it always did
   const ch = manifest.checks;
-  if (!ch || !Array.isArray(ch.results) || !ch.results.length) die(`stage "${cur.id}" needs a check run. Run \`node .shipline/bin/stage.mjs check\` first.`);
-  if (ch.fingerprint) {
-    const current = fingerprint(root);
-    if (current && current !== ch.fingerprint) die('The code changed since the last check run. Run `stage.mjs check` again.');
+  if (configuredCommands().length) {
+    if (!ch || !Array.isArray(ch.results) || !ch.results.length) die(`stage "${cur.id}" needs a check run. Run \`node .shipline/bin/stage.mjs check\` first.`);
+    if (ch.fingerprint) {
+      const current = fingerprint(root);
+      if (current && current !== ch.fingerprint) die('The code changed since the last check run. Run `stage.mjs check` again.');
+    }
+    const failed = ch.results.filter((r) => r.exit !== 0).map((r) => r.name);
+    if (failed.length && !acceptedNames(ch, cur).length) {
+      // Accepting comes before any other question: a session has one pending confirmation at a time.
+      requireAnswer('accept', cur.id, taskDir, manifest, { names: failed, fingerprint: ch.fingerprint, ran_at: ch.ran_at });
+      cur.accepted = { names: failed, fingerprint: ch.fingerprint, ran_at: ch.ran_at };
+      // Saved now: if another question follows, the acceptance has to survive until the developer answers it.
+      save(taskDir, manifest);
+    }
   }
-  const failed = ch.results.filter((r) => r.exit !== 0).map((r) => r.name);
-  if (!failed.length || acceptedNames(ch, cur).length) return;
-  // Accepting comes before any other question: a session has one pending confirmation at a time.
-  requireAnswer('accept', cur.id, taskDir, manifest, { names: failed, fingerprint: ch.fingerprint, ran_at: ch.ran_at });
-  cur.accepted = { names: failed, fingerprint: ch.fingerprint, ran_at: ch.ran_at };
-  // Saved now: if the advance question follows, the acceptance has to survive until the developer answers it.
-  save(taskDir, manifest);
+  // Then the scope, before the advance question.
+  const sc = ch && ch.scope;
+  if (cfg.scope_check.enabled && sc && sc.changed !== null && !scopeAccepted(ch, cur)) {
+    const sensitive = sc.sensitive.length;
+    const outside = sc.outside_plan ? sc.outside_plan.length : 0;
+    if (sensitive || outside) {
+      requireAnswer('scope', cur.id, taskDir, manifest, { sensitive, outside, fingerprint: ch.fingerprint, ran_at: ch.ran_at });
+      cur.scope_accepted = { fingerprint: ch.fingerprint, ran_at: ch.ran_at };
+      save(taskDir, manifest);
+    }
+  }
+}
+
+// Has the developer accepted the scope of the run in `checks`? The acceptance holds only for that run.
+function scopeAccepted(checks, stage) {
+  const a = stage && stage.scope_accepted;
+  return Boolean(checks && a && a.fingerprint === checks.fingerprint && a.ran_at === checks.ran_at);
+}
+
+// The text of the plan: the artifact of the stage whose `sections` include "Files to touch" (else the `plan` stage).
+function planText(taskDir, wf) {
+  const sc = wf.stages.find((st) => st.artifact && sections(st).some((h) => h.trim().replace(/:+$/, '').trim().toLowerCase() === 'files to touch')) || wf.stages.find((st) => st.id === 'plan' && st.artifact);
+  if (!sc) return null;
+  try {
+    return readFileSync(path.join(taskDir, sc.artifact), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+// Computes the scope of the change and stores it in manifest.checks.scope (nothing with scope_check.enabled: false).
+function recordScope(taskDir, manifest, wf) {
+  if (!cfg.scope_check.enabled) return;
+  try {
+    manifest.checks.scope = scopeOf(root, manifest, planText(taskDir, wf), cfg);
+  } catch (e) {
+    manifest.checks.scope = { changed: null, sensitive: [], outside_plan: null, note: `unknown (${e.message})` };
+  }
+}
+
+function printScope(sc) {
+  if (!sc) return;
+  console.log(`Scope: ${scopeText(sc, cfg)}`);
+  if (sc.changed === null) return;
+  if (sc.sensitive.length) console.log(`  Test, lint and CI files edited:\n${sc.sensitive.map((f) => `    ${f}`).join('\n')}`);
+  if (sc.outside_plan && sc.outside_plan.length) console.log(`  Files outside the plan's "Files to touch":\n${sc.outside_plan.map((f) => `    ${f}`).join('\n')}`);
 }
 
 // The PR description block: a visible table, then the hidden data that .shipline/bin/ci-check.mjs reads.
@@ -579,6 +649,15 @@ function prSummary(taskDir, manifest, wf) {
       json.checks = { fingerprint: null, results: [] };
     } else {
       out.push('', '**Checks:** not run');
+    }
+    const sc = cfg.scope_check.enabled && ch && ch.scope && Array.isArray(ch.scope.sensitive) ? ch.scope : null;
+    if (sc) {
+      const ok = scopeAccepted(ch, ms);
+      const any = sc.sensitive.length || (sc.outside_plan && sc.outside_plan.length);
+      out.push('', `**Scope:** ${any ? `edits ${scopeText(sc, cfg)}${ok ? ' (accepted)' : ''}` : scopeText(sc, cfg)}`);
+      if (sc.sensitive.length) out.push('', '<details><summary>Test, lint and CI files edited</summary>', '', ...sc.sensitive.map((f) => `- \`${f}\``), '', '</details>');
+      if (sc.outside_plan && sc.outside_plan.length) out.push('', '<details><summary>Files outside the plan</summary>', '', ...sc.outside_plan.map((f) => `- \`${f}\``), '', '</details>');
+      json.scope = { sensitive: sc.sensitive, outside_plan: sc.outside_plan, accepted: Boolean(any && ok) };
     }
   }
 

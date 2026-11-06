@@ -70,7 +70,7 @@ describe('status and diagnostics', () => {
     const d = await api(ui, 'GET', '/api/diagnostics');
     assert.equal(d.status, 200);
     assert.equal(d.json.root, dir);
-    assert.equal(d.json.uiInterface, 5);
+    assert.equal(d.json.uiInterface, 6);
     assert.equal(d.json.storeDir, storeOf(dir));
     assert.equal(d.json.needsUpgrade, false);
     assert.equal(d.json.port, ui.port);

@@ -25,5 +25,63 @@ ci:
   skip_label: shipline:skip
   stale_checks: warn
 
+# Guardrails: these run inside Claude Code's hooks, in every stage and with or without a task. They stop mistakes,
+# not a determined user; for hard limits use Claude Code's sandbox and managed settings (see the README, Guardrails).
+# Each rail is deny (the call is refused), ask (Claude Code's own permission prompt shows) or off. A rail left out
+# uses its default. Edit here or in Setup, Guardrails.
+rails:
+  # git push --force (or +branch, --delete) to the default branch, and git branch -D on it.
+  force_push_default: deny
+  # Any git push to the default branch (an explicit main, or a bare push while on it).
+  push_default: ask
+  # curl or wget piped into sh, bash, python, node and the like.
+  pipe_to_shell: deny
+  # cat, grep, printenv and friends on .env, keys, ~/.ssh, ~/.aws and other credential files, or echoing a token.
+  print_credentials: deny
+  # The Read tool on those same credential files.
+  read_credentials: ask
+  # kubectl apply, terraform apply, fly deploy, npm run deploy and the like.
+  deploy: ask
+  # prisma migrate deploy, rails db:migrate, alembic upgrade and the like.
+  migrate: ask
+  # Edits to .claude/**, .shipline/**, CLAUDE.md and .mcp.json.
+  agent_config: ask
+
+# Extra commands that count as a deploy or a migration (plain prefixes, for example "make ship").
+rails_commands:
+  deploy: []
+  migrate: []
+
+# Files that need a permission prompt to change, in any stage (globs relative to the repo root).
+protected_paths:
+  - migrations/**
+  - db/migrate/**
+  - prisma/migrations/**
+  - alembic/versions/**
+  - infra/**
+  - terraform/**
+  - '**/*.tf'
+  - k8s/**
+  - helm/**
+  - '**/Dockerfile*'
+  - '**/docker-compose*'
+  - .github/workflows/**
+  - .gitlab-ci.yml
+  - .circleci/**
+  - Jenkinsfile
+  - package-lock.json
+  - pnpm-lock.yaml
+  - yarn.lock
+  - poetry.lock
+  - Cargo.lock
+  - go.sum
+
+# At Verify, `stage.mjs check` lists the test, lint and CI files the change edits and the files outside the plan's
+# "Files to touch"; finishing the stage then needs the developer's answer, and the PR summary shows it.
+# sensitive_extra: more globs to treat like test, lint and CI files.
+scope_check:
+  enabled: true
+  sensitive_extra: []
+
 # Set to `done` by /shipline-setup (a top-level key `setup: done`) once the rules have been tailored to this repo.
 # Until then Shipline reminds you that it is using its default rules.

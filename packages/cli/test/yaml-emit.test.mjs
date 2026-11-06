@@ -69,7 +69,7 @@ describe('templates unchanged: a no-edit emit gives the exact bytes on disk', ()
     assert.match(out, /^name: Feature work$/m);
     assert.match(out, /^      - tools: 'Edit\|Write\|MultiEdit\|NotebookEdit'$/m);
     assert.doesNotMatch(out, /^\s+allow_paths:|\{artifact_root\}/m); // Phase 1: removed from the template
-    assert.match(out, /^      - bash: '\\bgit\\s\+commit\\b\|\\bgh\\s\+pr\\s\+create\\b'$/m);
+    assert.match(out, /^      - actions: \[commit, pr\]$/m); // Teams Phase 3, D: was the commit/PR regex
     assert.deepEqual(parseYaml(out), model);
   });
 
@@ -118,8 +118,9 @@ describe('fixtures (item 14)', () => {
     model.commands = {};
     const out = emitConfig(model, { layout: configLayout() });
     // The shipped config has `skills: []` after the commands block, then the ci block (Trust plan; stale_checks since Teams Phase 2), then the comment
-    // documenting `setup` (Teams Phase 1), which has no key until /shipline-setup writes `setup: done`.
-    assert.match(out, /\ncommands:\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\n# stale_checks:[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n {2}stale_checks: warn\n\n# Set to `done`[^\n]*\n# Until then[^\n]*\n$/);
+    // documenting `setup` (Teams Phase 1), which has no key until /shipline-setup writes `setup: done`. Teams Phase 3
+    // put the guardrail keys (rails, rails_commands, protected_paths, scope_check) between ci and that comment.
+    assert.match(out, /\ncommands:\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\n# stale_checks:[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n {2}stale_checks: warn\n\n# Guardrails:[^]*\nrails:\n[^]*\nscope_check:\n {2}enabled: true\n {2}sensitive_extra: \[\]\n\n# Set to `done`[^\n]*\n# Until then[^\n]*\n$/);
     assert.equal(parseYaml(out).commands, null);
   });
 
@@ -324,4 +325,53 @@ test('500 generated models round-trip (and re-emitting with raw is stable)', () 
     assert.deepEqual(norm(back), norm(model), `model #${i}\n${text}`);
     assert.equal(emitWorkflow(back, { raw: text }), text, `model #${i} re-emit with raw differs`);
   }
+});
+
+// Teams Phase 3: the shipped config.yml has its first block list (protected_paths). The layout reader skips list
+// items (their values come from the model), so configs without the guardrail keys are written as before.
+describe('the config layout with a block list (Teams Phase 3)', () => {
+  const layout = configLayout();
+  // The layout as it was before the guardrail keys: everything from "# Guardrails:" up to "# Set to `done`" removed.
+  const oldLayout = layout.replace(/\n# Guardrails:[\s\S]*?\n(?=# Set to `done`)/, '\n');
+  const fixtureConfigs = readdirSync(YAML_FIXTURES).filter((f) => isConfigFile(f));
+
+  test('the old layout really is the shipped one minus the guardrail keys', () => {
+    assert.notEqual(oldLayout, layout);
+    assert.ok(!/^(rails|rails_commands|protected_paths|scope_check):/m.test(oldLayout));
+    assert.ok(!/^ *- /m.test(oldLayout));
+  });
+
+  test('every config fixture (no guardrail keys) is written byte for byte as with the old layout', () => {
+    assert.ok(fixtureConfigs.length >= 5);
+    for (const f of fixtureConfigs) {
+      const text = readFileSync(path.join(YAML_FIXTURES, f), 'utf8');
+      const model = parseYaml(text);
+      assert.equal(emitConfig(model, { layout, raw: text }), emitConfig(model, { layout: oldLayout, raw: text }), f);
+      // And an edit, too.
+      const edited = { ...model, tracker: 'github' };
+      assert.equal(emitConfig(edited, { layout, raw: text }), emitConfig(edited, { layout: oldLayout, raw: text }), f);
+    }
+  });
+
+  test('list items in the layout never reach the output: with no protected_paths the default list is not written', () => {
+    const model = parseYaml(readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8'));
+    delete model.protected_paths;
+    const out = emitConfig(model, { layout });
+    assert.ok(!/^ *- /m.test(out), out);
+    assert.ok(!out.includes('migrations/**'));
+    assert.ok(!out.includes('# Files that need a permission prompt'), 'the comment above a missing key goes with it');
+    assert.deepEqual(norm(parseYaml(out)), norm(model));
+  });
+
+  test('protected_paths: a block list on disk stays a block list; a new list is written inline and reads back', () => {
+    const text = readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8');
+    const model = parseYaml(text);
+    model.protected_paths = ['infra/**', '**/*.tf'];
+    const out = emitConfig(model, { layout, raw: text });
+    assert.match(out, /\nprotected_paths:\n {2}- infra\/\*\*\n {2}- "\*\*\/\*\.tf"\n\n/);
+    assert.deepEqual(parseYaml(out).protected_paths, ['infra/**', '**/*.tf']);
+    const fresh = emitConfig(model, { layout });
+    assert.match(fresh, /^protected_paths: \[infra\/\*\*, "\*\*\/\*\.tf"\]$/m, 'a glob starting with * is quoted (YAML would read an alias)');
+    assert.deepEqual(parseYaml(fresh).protected_paths, ['infra/**', '**/*.tf']);
+  });
 });

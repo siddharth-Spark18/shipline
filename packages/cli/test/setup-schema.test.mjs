@@ -116,7 +116,7 @@ describe('the small.yml template (Small change workflow)', () => {
     const verify = m.stages.find((s) => s.id === 'verify');
     assert.equal(verify.enforcement, 'block');
     assert.equal(verify.confirm_to_advance, true);
-    assert.equal(verify.blocks[0].bash, '\\bgit\\s+commit\\b|\\bgh\\s+pr\\s+create\\b');
+    assert.deepEqual(verify.blocks, [{ actions: ['commit', 'pr'] }]); // Teams Phase 3, D: was the commit/PR regex
     for (const s of m.stages) assert.ok(AGENTS.includes(s.agent ?? 'builder'), s.id);
   });
 
@@ -263,7 +263,12 @@ describe('tracker and setup (Teams Phase 1, D and E)', () => {
 describe('known fields, header and layout', () => {
   test('KNOWN_FIELDS lists the form fields from the schema table', () => {
     // `setup` is known (so not listed under "other fields") but the form doesn't edit it (Teams Phase 1, E).
-    assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup']);
+    // Teams Phase 3, F: the Guardrails section edits rails, rails_commands, protected_paths and scope_check.
+    assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup', 'rails', 'rails_commands', 'protected_paths', 'scope_check']);
+    assert.deepEqual(KNOWN_FIELDS.config.rails, ['force_push_default', 'push_default', 'pipe_to_shell', 'print_credentials', 'read_credentials', 'deploy', 'migrate', 'agent_config']);
+    assert.deepEqual(KNOWN_FIELDS.config.rails_commands, ['deploy', 'migrate']);
+    assert.deepEqual(KNOWN_FIELDS.config.scope_check, ['enabled', 'sensitive_extra']);
+    assert.deepEqual(KNOWN_FIELDS.workflow.block, ['tools', 'allow_paths', 'bash', 'actions']);
     assert.deepEqual(KNOWN_FIELDS.config.commands, ['test', 'lint', 'build']);
     assert.deepEqual(KNOWN_FIELDS.config.ci, ['missing_block', 'skip_label', 'stale_checks']);
     for (const f of ['id', 'name', 'description', 'branch_type', 'stages']) assert.ok(KNOWN_FIELDS.workflow.top.includes(f), f);
@@ -340,5 +345,116 @@ describe('checks, sections and ci.stale_checks (Teams Phase 2)', () => {
     assert.deepEqual(out.stages.find((s) => s.id === 'verify').sections, ['Checklist', 'Risks: accepted']);
     const cfg = { ...baseConfig(), ci: { ...baseConfig().ci, stale_checks: 'fail' } };
     assert.equal(parseYaml(emitConfig(cfg, { layout: configLayout() })).ci.stale_checks, 'fail');
+  });
+});
+
+// Teams Phase 3, B, C, D, E and F: the guardrail keys in config.yml and the `actions` block type.
+describe('guardrails (Teams Phase 3)', () => {
+  const issuesOf = (patch) => validateConfig({ ...baseConfig(), ...patch });
+  const errorPaths = (patch) => paths(errorsOnly(issuesOf(patch)));
+  const warningPaths = (patch) => paths(issuesOf(patch).filter((i) => i.severity === 'warning'));
+
+  test('the shipped config.yml has every rail at its default, the protected paths, rails_commands and scope_check', () => {
+    const c = baseConfig();
+    assert.deepEqual(c.rails, {
+      force_push_default: 'deny',
+      push_default: 'ask',
+      pipe_to_shell: 'deny',
+      print_credentials: 'deny',
+      read_credentials: 'ask',
+      deploy: 'ask',
+      migrate: 'ask',
+      agent_config: 'ask',
+    });
+    assert.deepEqual(c.rails_commands, { deploy: [], migrate: [] });
+    assert.deepEqual(c.scope_check, { enabled: true, sensitive_extra: [] });
+    assert.deepEqual(c.protected_paths, [
+      'migrations/**', 'db/migrate/**', 'prisma/migrations/**', 'alembic/versions/**', 'infra/**', 'terraform/**', '**/*.tf', 'k8s/**', 'helm/**',
+      '**/Dockerfile*', '**/docker-compose*', '.github/workflows/**', '.gitlab-ci.yml', '.circleci/**', 'Jenkinsfile', 'package-lock.json',
+      'pnpm-lock.yaml', 'yarn.lock', 'poetry.lock', 'Cargo.lock', 'go.sum',
+    ]);
+  });
+
+  test('every key is optional, and empty values pass', () => {
+    const c = baseConfig();
+    for (const k of ['rails', 'rails_commands', 'protected_paths', 'scope_check']) delete c[k];
+    assert.deepEqual(validateConfig(c), []);
+    assert.deepEqual(validateConfig({ ...c, rails: null, rails_commands: null, protected_paths: [], scope_check: null }), []);
+    assert.deepEqual(validateConfig({ ...c, rails: { deploy: 'off' }, rails_commands: { deploy: ['make ship'] }, scope_check: { enabled: false } }), []);
+  });
+
+  test('rails: an unknown rail or level is a warning (the default is used); a non-map is an error', () => {
+    assert.deepEqual(warningPaths({ rails: { deploy: 'maybe', nuke: 'deny', migrate: 'off' } }), ['rails.deploy', 'rails.nuke']);
+    assert.deepEqual(errorPaths({ rails: { deploy: 'maybe', nuke: 'deny' } }), []);
+    assert.deepEqual(errorPaths({ rails: ['deploy'] }), ['rails']);
+    assert.deepEqual(errorPaths({ rails: 'deny' }), ['rails']);
+  });
+
+  test('rails_commands: lists of non-empty text; an unknown key warns', () => {
+    assert.deepEqual(errorPaths({ rails_commands: 'make ship' }), ['rails_commands']);
+    assert.deepEqual(errorPaths({ rails_commands: { deploy: 'make ship' } }), ['rails_commands.deploy']);
+    assert.deepEqual(errorPaths({ rails_commands: { migrate: ['ok', ''] } }), ['rails_commands.migrate[1]']);
+    assert.deepEqual(warningPaths({ rails_commands: { deploy: [], publish: [] } }), ['rails_commands.publish']);
+  });
+
+  test('protected_paths: a list of non-empty text', () => {
+    assert.deepEqual(errorPaths({ protected_paths: 'infra/**' }), ['protected_paths']);
+    assert.deepEqual(errorPaths({ protected_paths: ['infra/**', '  ', 3] }), ['protected_paths[1]', 'protected_paths[2]']);
+  });
+
+  test('scope_check: enabled is true or false, sensitive_extra a list', () => {
+    assert.deepEqual(errorPaths({ scope_check: true }), ['scope_check']);
+    assert.deepEqual(errorPaths({ scope_check: { enabled: 'yes' } }), ['scope_check.enabled']);
+    assert.deepEqual(errorPaths({ scope_check: { enabled: true, sensitive_extra: 'x' } }), ['scope_check.sensitive_extra']);
+  });
+
+  test('a line break in a guardrail value is rejected', () => {
+    assert.ok(errorPaths({ protected_paths: ['a\nb'] }).length > 0);
+  });
+
+  test('the new keys survive an emit in the layout, edits included, and the protected_paths block list stays a block list', () => {
+    const raw = readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8');
+    const model = baseConfig();
+    model.rails.deploy = 'deny';
+    model.rails.agent_config = 'off';
+    model.rails_commands.deploy = ['make ship'];
+    model.protected_paths.push('secrets/**');
+    model.scope_check = { enabled: false, sensitive_extra: ['config/**'] };
+    const out = emitConfig(model, { layout: configLayout(), raw });
+    const back = parseYaml(out);
+    assert.deepEqual(back.rails, model.rails);
+    assert.deepEqual(back.rails_commands, model.rails_commands);
+    assert.deepEqual(back.protected_paths, model.protected_paths);
+    assert.deepEqual(back.scope_check, model.scope_check);
+    assert.match(out, /^ {2}- '\*\*\/\*\.tf'$/m, 'unchanged items keep their quoting');
+    assert.match(out, /^ {2}- go\.sum\n {2}- secrets\/\*\*\n\n# At Verify/m);
+    assert.match(out, /^ {2}# Edits to \.claude[^\n]*\n {2}agent_config: off$/m, 'the comment above each rail is kept');
+    assert.deepEqual(validateConfig(back), []);
+  });
+});
+
+describe('the actions block type (Teams Phase 3, D)', () => {
+  const blockIssues = (blocks) => validateWorkflow(wf([stage({ enforcement: 'block', blocks })]), { id: 'w', agents: AGENTS, existingStageIds: ['s'] });
+  test('a block with only actions is valid, with every known action', () => {
+    assert.deepEqual(blockIssues([{ actions: ['commit', 'push', 'pr', 'merge', 'release', 'deploy', 'migrate'] }]), []);
+  });
+  test('an unknown action is a warning (it never matches), not an error', () => {
+    const issues = blockIssues([{ actions: ['commit', 'squash'] }]);
+    assert.deepEqual(issues.map((i) => [i.path, i.severity]), [['stages[0].blocks[0].actions[1]', 'warning']]);
+  });
+  test('an empty or non-list actions is an error', () => {
+    for (const actions of [[], 'commit', { commit: true }]) {
+      assert.deepEqual(paths(errorsOnly(blockIssues([{ actions }]))), ['stages[0].blocks[0].actions'], JSON.stringify(actions));
+    }
+  });
+  test('a block with none of tools, bash or actions is still an error that names all three', () => {
+    const issues = errorsOnly(blockIssues([{ allow_paths: ['x'] }]));
+    assert.ok(issues.some((i) => i.path === 'stages[0].blocks[0]' && /tools \(with allow_paths\), bash or actions/.test(i.message)), JSON.stringify(issues));
+  });
+  test('an actions block is written inline and reads back', () => {
+    const model = wf([stage({ enforcement: 'block', blocks: [{ actions: ['commit', 'pr'] }, { bash: 'x' }] })]);
+    const out = emitWorkflow(model, {});
+    assert.match(out, /^ {6}- actions: \[commit, pr\]$/m);
+    assert.deepEqual(parseYaml(out), model);
   });
 });

@@ -32,7 +32,7 @@ after(() => {
 const servers = [];
 async function startUiProcess(script) {
   fake.script(script);
-  const child = spawn(process.execPath, [BIN, 'ui', dir, '--no-open', '--port', '0'], {
+  const child = spawn(process.execPath, [BIN, 'ui', '--dir', dir, '--no-open', '--port', '0'], {
     env: cleanEnv({ SHIPLINE_HOME: homeFor(dir) }), // the repo's own store (lock.json, sessions.json)
     stdio: ['ignore', 'pipe', 'pipe'],
   });

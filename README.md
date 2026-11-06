@@ -4,6 +4,74 @@ Shipline installs one shared, guardrailed workflow into a git repo so that every
 works the same way: pick a workflow, move through stages, save an artifact for each stage, and let hooks
 stop the steps that shouldn't happen yet (editing source before the plan is done, committing before verify).
 
+[MIT license](LICENSE) · [Changelog](packages/cli/CHANGELOG.md)
+
+## Quickstart
+
+You need Node 18+, git and [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) signed in.
+
+**1. Install it in a repo.** From the repo's root:
+
+```bash
+npx @forgeyard/shipline init          # asks a few questions (Node 20.17+); add --dry-run to preview only
+npx @forgeyard/shipline init --yes    # or install the defaults without questions
+```
+
+`init` writes `.shipline/`, some `.claude/` files, hook entries in `.claude/settings.json` and a block in `CLAUDE.md`.
+It detects your test, lint and build commands, prints what it did, and warns (without stopping) if the folder
+isn't a git repo or a detected command isn't installed. Commit what it added so teammates get the same flow.
+
+Want to try it first? [`examples/todo-node`](examples/todo-node) is a tiny project made for this.
+
+**2. Open Claude Code in the repo and ask for a change:**
+
+```bash
+claude
+> Add a way to delete a todo
+```
+
+**3. What a session looks like.** Claude picks a workflow and says so. A typo or one-file fix is the Small change
+workflow: it announces that and starts. Anything else it asks about once ("This looks like a feature, so I'll follow
+the Feature workflow. OK?"). Then it works through the stages and keeps a list:
+
+```
+[-] ticket (No tracker)
+[x] feasibility
+[x] questions
+[>] plan
+[ ] implement
+[ ] verify
+[ ] pr
+```
+
+- **Open questions and Plan.** Claude writes `questions.md` and `plan.md` and stops to ask you ("Advance?" or "Not yet")
+  at the stages that need your OK. Source files can't be edited until the plan is done.
+- **Verify.** Claude runs your test, lint and build commands through `stage.mjs check` and lists the results
+  (`test ✓ 1.2s · lint ✓ 0.1s`). If a command fails, or the change edits tests or files the plan didn't list, it
+  tells you and asks before finishing.
+- **Commit and PR.** Claude opens the PR and ends the description with the summary from `stage.mjs pr-summary`:
+  the stage table, the checks line and the plan's scope.
+
+```
+### Shipline
+| Stage | Status | Confirmed |
+| --- | --- | --- |
+| plan | done | your answer |
+| verify | done | your answer |
+
+**Checks:** test ✓ 0.2s · lint ✓ 0.1s
+**Scope:** no test, lint or CI files touched, nothing outside the plan
+```
+
+While it works, hooks stop the dangerous steps: pushing to `main`, `curl ... | sh`, reading `.env`, and edits to
+Claude's own configuration (those ask you first). Task files live in `~/.shipline`, not in your repo.
+
+**4. Optional: the browser UI.** `npx @forgeyard/shipline ui` opens a local page where you can chat with Claude in
+the repo, watch each task's stages, and edit the setup. Tailor the default rules to the repo with `/shipline-setup`
+in Claude Code, or Setup, Set up with Claude, in the UI.
+
+**Something wrong?** [Troubleshooting](#10-troubleshooting). To remove it again: `npx @forgeyard/shipline uninstall`.
+
 ## 1. What Shipline is
 
 - **Workflows.** Feature, Bugfix, Hotfix and Small change. Each is a list of stages (for example Feasibility,
@@ -28,14 +96,18 @@ install beyond Node.
 
 ## 3. Install
 
-Run it from the root of the repo you want to set up:
+Run it from the root of the repo you want to set up, or point at a folder with `--dir <path>`:
 
 ```bash
 npx @forgeyard/shipline init          # interactive: choose workflows, agents and skills
-npx @forgeyard/shipline init --yes    # install the defaults, no questions
-npx @forgeyard/shipline init --dry-run  # preview only
+npx @forgeyard/shipline init --yes    # install the defaults, no questions (-y works too)
+npx @forgeyard/shipline init --dry-run  # preview only; without a terminal it previews what --yes would install
+npx @forgeyard/shipline init --dir ../other-repo
 npx @forgeyard/shipline ui            # in a repo without Shipline: the setup wizard in the browser (Node 20+)
 ```
+
+The command line is strict: `--help` (or `-h`) works globally and per command, `--version` (or `-v`) prints the
+version, the folder is only given with `--dir`, and an unknown option, command or bare argument exits with code 2.
 
 **Installing from the browser.** `shipline ui` in a folder without Shipline opens a short wizard (workflows and
 whether the repo has a UI, agents and skills, commands and tracker, the CI check, then a review of every file).
@@ -54,12 +126,12 @@ In a terminal, `init` asks which workflows, which Shipline agents and which of y
 and what to do when one of Shipline's agent names already exists in `.claude/agents/` (keep yours, use ours,
 or skip), and whether the repo has a UI. `--yes` installs every workflow, uses detection for "has a UI", installs
 only the agents those workflows use (no standalone agents) and keeps your own agent files on a clash. Without a terminal and
-without `--yes` it refuses. If any other file name collides, it aborts with nothing written. Running it again
+without `--yes` (or `--dry-run`) it refuses. If any other file name collides, it aborts with nothing written. Running it again
 reports "already initialized".
 
 `init` also detects your test, lint and build commands from the repo root (Node with npm, pnpm, yarn or bun;
 Python with pytest and ruff or flake8; Go; Rust; Make targets) and asks you to confirm them, and asks which
-tracker you use (GitHub Issues or Jira). Every stage ships with default rules; run `/shipline-setup` in Claude
+tracker you use (None, the default, GitHub Issues or Jira). With None the ticket stage is skipped. Every stage ships with default rules; run `/shipline-setup` in Claude
 Code (or **Setup → Set up with Claude** in the UI) to tailor them to the repo. Until you do, Shipline reminds
 you once per developer.
 
@@ -74,8 +146,6 @@ you once per developer.
 **What stays out of the repo.** Task data (each task's `manifest.json` and artifacts, session state and UI
 data) lives in `~/.shipline/projects/<repo path>/`, the way Claude Code keeps its chats. It is personal, not
 shared through git. A new session resumes your unfinished tasks from there.
-
-The old `/shipline:init` Claude Code plugin is gone; `npx @forgeyard/shipline init` replaces it.
 
 ## 4. Daily use
 
@@ -102,15 +172,16 @@ Open Claude Code in the repo and describe the work. Claude follows the `shipline
 - `block`: the tool call is denied until the stage that holds it back is done. By default, editing source is
   blocked until Plan is done, and `git commit` / `gh pr create` until Verify is done.
 
-A broken config fails open with a visible warning instead of locking you out. Hooks run inside Claude; they
-are not a server-side gate.
+A config.yml that can't be read doesn't lock you out or turn the guardrails off: the rails use their built-in
+defaults and every call carries a warning that says so. Other unexpected hook errors fail open with a visible
+warning. Hooks run inside Claude; they are not a server-side gate.
 
 **`stage.mjs`.** Claude records progress with it; you can run it too from the repo root:
 
 ```bash
 node .shipline/bin/stage.mjs workflows                 # list workflows
 node .shipline/bin/stage.mjs start --workflow feature --title "Add export" [--ticket PROJ-12 | --ticket 123]
-node .shipline/bin/stage.mjs status                    # where am I
+node .shipline/bin/stage.mjs status                    # where am I (--verbose adds the rules text and full paths)
 node .shipline/bin/stage.mjs advance                   # finish the stage (asks you first where the stage needs your OK)
 node .shipline/bin/stage.mjs skip --reason "no ticket" # optional stages
 node .shipline/bin/stage.mjs check                      # run the test, lint and build commands and record the results
@@ -119,10 +190,12 @@ node .shipline/bin/stage.mjs reopen <stage>            # go back
 node .shipline/bin/stage.mjs resume <task folder>      # pick up an unfinished task
 ```
 
+Outside a Claude Code session (no session id), `status` lists the unfinished tasks on the current branch.
+
 ## 5. The browser UI
 
 ```bash
-npx @forgeyard/shipline ui [dir] [--port <n>] [--no-open]
+npx @forgeyard/shipline ui [--dir <path>] [--port <n>] [--no-open]
 ```
 
 It starts a server on `127.0.0.1` (a random port unless `--port`) for the repo you run it in and opens
@@ -144,8 +217,7 @@ with or without it. It runs your own installed `claude` and never sees your Clau
   ![Setup: Agents & skills](docs/images/agents-skills.png)
 
 
-A repo installed by an older Shipline shows a banner with what its hook scripts lack. A repo set up by a newer
-Shipline is read-only in the UI and shows the `npx @forgeyard/shipline@<version> ui` command to run.
+A repo set up by a newer Shipline is read-only in the UI and shows the `npx @forgeyard/shipline@<version> ui` command to run.
 
 ## 6. Configuration reference
 
@@ -153,7 +225,7 @@ Shipline is read-only in the UI and shows the `npx @forgeyard/shipline@<version>
 
 ```yaml
 branch_pattern: "{type}/{key}-{slug}"   # {key} = PROJ-12 (Jira) or issue-123 (GitHub), dropped with no ticket
-tracker: jira                           # jira (Atlassian MCP) or github (the gh CLI); read-only either way
+tracker: none                           # none (skip the ticket stage), github (the gh CLI) or jira (Atlassian MCP); read-only
 commands:                               # filled by init from the repo; the Verify stage runs only these
   test: "pnpm test"
   lint: "pnpm run lint"
@@ -201,14 +273,13 @@ whole repo.
 
 In both modes Claude still asks before skipping a required stage, before finishing with failed checks, and when the
 Verify scope check flags something. The rule is shared by the hooks, the CI check and the UI, and a change takes effect
-on the next `advance`. Pick it in Setup, in the install wizard, or in `/shipline-setup`. `upgrade` adds
-`confirmations: standard` when the key is missing and never changes an existing value. A workflow file you edited
-doesn't get `checkpoint: true` from `upgrade`; add it to the stages that should ask in light mode.
+on the next `advance`. Pick it in Setup, in the install wizard, or in `/shipline-setup`.
 
 **Rules files** (`.shipline/rules/<stage>.md`): plain Markdown that Claude reads before each stage. They ship
 with default guidance; `upgrade` replaces a rules file only while it is still an untouched shipped version.
 
-With `tracker: github`, a task started from issue #123 gets the branch `feature/issue-123-…`, the ticket stage
+With `tracker: none` (the default) the ticket stage is skipped automatically, with no question; a `--ticket` given
+at start still goes into the branch name. With `tracker: github`, a task started from issue #123 gets the branch `feature/issue-123-…`, the ticket stage
 reads the issue with `gh issue view`, and `pr-summary` starts with `Closes #123`.
 
 **`.shipline/bin/VERSION`**: JSON recording the package version, the interface version, a hash of each
@@ -231,15 +302,26 @@ prompt shows) or `off`; a rail left out of the file uses its default.
 | --- | --- | --- |
 | `force_push_default` | deny | `git push --force`, `-f`, `--force-with-lease` or a `+branch` refspec to the default branch, `git push --delete origin main`, `git branch -D main` |
 | `push_default` | ask | any `git push` whose target is the default branch (`main`, `HEAD:main`, or a bare `git push` while on it) |
-| `pipe_to_shell` | deny | `curl` or `wget` piped into `sh`, `bash`, `zsh`, `python`, `node`, `perl`, `ruby` and the like |
-| `print_credentials` | deny | `cat`, `grep`, `head`, `base64` and friends on credential files; `printenv`; `echo $GITHUB_TOKEN` |
-| `read_credentials` | ask | the Read tool on credential files |
+| `pipe_to_shell` | deny | `curl` or `wget` piped into `sh`, `bash`, `zsh`, `python`, `node`, `perl`, `ruby` and the like, and the same through process substitution (`bash <(curl ...)`, `source <(wget ...)`) or command substitution (`sh -c "$(curl ...)"`) |
+| `print_credentials` | deny | any command that names a credential file, except ones that never print contents (see below); `git diff`, `git show`, `git log -p` and `git blame` on one; `printenv`; `echo $GITHUB_TOKEN` |
+| `read_credentials` | ask | the Read tool on credential files, and the Grep tool when its `path` is one or its `glob` matches one |
 | `deploy` | ask | `kubectl apply`, `helm upgrade`, `terraform apply`, `fly deploy`, `vercel --prod`, `npm run deploy` and similar; add yours under `rails_commands.deploy` |
 | `migrate` | ask | `prisma migrate deploy`, `rails db:migrate`, `alembic upgrade`, `python manage.py migrate` and similar; add yours under `rails_commands.migrate` |
 | `agent_config` | ask | Edit or Write on `.claude/**`, `.shipline/**`, `CLAUDE.md` and `.mcp.json` |
 
-Credential files are `.env` and `.env.*` (not `.env.example`, `.sample` or `.template`), `*.pem`, `*.key`, `id_rsa*`,
-`id_ed25519*`, `.npmrc`, `.pypirc`, `~/.ssh/**`, `~/.aws/credentials`, `~/.config/gcloud/**` and `~/.kube/config`.
+Credential files are `.env` and `.env.*` (not `.env.example`, `.sample` or `.template`), `.envrc`, `*.pem`, `*.key`,
+`*.p12`, `*.pfx`, `id_rsa*`, `id_ed25519*`, `credentials.json`, `.netrc`, `.git-credentials`, `.pgpass`, `.npmrc`,
+`.pypirc`, `.docker/config.json`, `~/.ssh/**`, `~/.aws/**`, `~/.docker/**`, `~/.config/gcloud/**` and `~/.kube/config`.
+Paths and globs match without regard to case (`.ENV`, `.CLAUDE/settings.json`).
+
+**`print_credentials` names the file, not the command.** After the command is split at `&&`, `;` and `|`, any
+non-flag argument that is a credential file (or a `< file` redirection) is denied, whatever the command: `cat`, `tac`,
+`sort`, `jq . .env`. Commands that never print contents are allowed: `ls`, `stat`, `test`, `[`, `touch`, `rm`, `mv`,
+`cp`, `chmod`, `chown`, `file`, `wc`, `du` (plus `cd` and `tee`), and `git add`, `git rm`, `git mv`, `git status`. So
+`ls -la .env` and `cp .env .env.bak` pass, `ls .env && cat .env` is denied because of the `cat`, and `cp .env /dev/stdout`
+is denied because the destination prints. Writing into a credential file (`> .env`) isn't printing; the write rules
+cover it.
+
 The default branch comes from `origin/HEAD` (else `main`, else `master`) and is cached for ten minutes in the task
 store. If several rails match, the strictest wins: deny over ask over a stage `warn`.
 
@@ -251,18 +333,18 @@ through the file tools and, best effort, through Bash (`>`, `>>`, `tee`, `sed -i
 `merge`, `release`, `deploy`, `migrate`. They match the parsed command, so `git -c user.name=x commit`,
 `cd sub && git commit`, `sudo git commit`, `bash -c 'git commit'` and `npm run release` are all caught. A package
 script counts when its name or its `package.json` body matches. `{ bash: 'regex' }` still works as before. Shipped
-verify stages use `actions: [commit, pr]`; `upgrade` rewrites the shipped regex to that when you haven't edited it.
+verify stages use `actions: [commit, pr]`.
 
 **Verify scope check.** `stage.mjs check` also compares the working tree with the commit the task started from
 (`base_commit`) and records which changed files are tests, lint config or CI config, and which are not listed in the
 plan's "Files to touch" (lockfiles, `.shipline/` and `.claude/` are ignored). If there are any, finishing the stage
 asks you an extra question, and `pr-summary` shows a Scope line and the two lists. The CI check shows it for
 information and never fails on it. Turn it off with `scope_check: { enabled: false }`; add globs with
-`scope_check.sensitive_extra`. A task started before 0.13.0 has no base commit, so nothing is checked for it.
+`scope_check.sensitive_extra`.
 
-**Upgrading.** `upgrade` adds the guardrail keys with every rail `off` and `protected_paths: []`, so an existing repo
-doesn't start asking until you turn them on (the scope check is on). If you edited the Shipline hook entries in
-`.claude/settings.json`, add `Read` to the PreToolUse matcher yourself so `read_credentials` works.
+**Failure modes.** If the code that protects the task store throws, only that step is skipped and the rails still run.
+If `config.yml` can't be read, the rails use their defaults (and ask before edits to `.shipline/config.yml`, which may
+be the file you are fixing); every call says so.
 
 ### Hooks are defence in depth
 
@@ -289,16 +371,44 @@ skipped in `auto` or `bypassPermissions`, but headless mode can't show a prompt,
 interactive `auto` or `bypassPermissions` session was not checked. If you must not rely on a prompt, set the rail
 to `deny`.
 
-## 8. Upgrade and uninstall
+## 8. The pull-request check
+
+`init` can add `.github/workflows/shipline.yml` (the CI check, off unless you pick it). It fails a PR whose
+description has no Shipline summary (paste the output of `stage.mjs pr-summary`; the `ci:` block in `config.yml`
+sets whether the `shipline:skip` label can stand in) or whose summary shows a `block` stage that isn't done.
+
+**It uses the base branch's checker and config.** The workflow checks out the PR head into `head/` and the base
+commit into `base/`. When the base has `.shipline/bin/ci-check.mjs`, it runs that script from `head/` with
+`--config-from ../base`: `config.yml` and the workflow files are read from the base, while the git tree and the checks'
+fingerprint come from the PR. So a PR can't loosen its own check by editing `config.yml` (for example setting
+`ci.missing_block: warn`). The PR that first adds Shipline has no base copy, so its own script runs. It uses the plain
+`pull_request` trigger and needs no secrets, so it also works on PRs from forks.
+
+**A PR can still edit the workflow file itself.** Real enforcement needs two things on GitHub: make the Shipline check
+a required status check in branch protection, and require review from code owners for `.shipline/` and `.github/`. A
+sample `.github/CODEOWNERS`:
+
+```
+# Changes to Shipline's rules and CI need an owner's review.
+/.shipline/   @your-org/platform-team
+/.github/     @your-org/platform-team
+```
+
+## 9. Upgrade and uninstall
 
 ```bash
-npx @forgeyard/shipline upgrade [dir] [--yes] [--dry-run] [--force]
-npx @forgeyard/shipline uninstall [dir] [--yes] [--dry-run] [--purge]
+npx @forgeyard/shipline upgrade [--dir <path>] [--yes] [--dry-run] [--force]
+npx @forgeyard/shipline uninstall [--dir <path>] [--yes] [--dry-run] [--purge]
 ```
 
 **upgrade** shows a preview and asks before changing anything. `--dry-run` only previews, `--yes` skips the
-question, `--force` also replaces Shipline files your team edited (they are skipped otherwise). It moves tasks
-from an old in-repo folder into `~/.shipline` and never commits: review and commit the result.
+question, `--force` also replaces Shipline files your team edited (they are skipped otherwise). Your `config.yml`,
+workflows and rules are yours: only an untouched shipped rules file is replaced. It never commits: review and commit
+the result.
+
+**Coming from a pre-1.0 Shipline.** Versions before 1.0 were never published to npm, so `upgrade` doesn't migrate
+them: it exits with an error and changes nothing. Run `npx @forgeyard/shipline uninstall --yes`, then `init` again.
+Task data in `~/.shipline` is kept. (`init` on such a repo says "already initialized", so uninstall first.)
 
 **uninstall** previews what it will remove, then asks. It removes `.shipline/`, the agents and skills Shipline
 installed (agents you kept as your own are left alone), the `CLAUDE.md` block, and Shipline's hook entries and
@@ -307,16 +417,17 @@ allow rules in `.claude/settings.json`. It asks separately whether to delete thi
 files only and never runs git: commit the removal yourself. It refuses while a Shipline UI chat holds the
 repo (stop the UI first).
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 - **A hook warning appears at session start or on a tool call.** Read it: it names the problem (a config
-  that doesn't parse, a missing stage). A malformed config fails open, so work isn't blocked; fix the file
-  shown, or run `npx @forgeyard/shipline ui` and use Setup.
+  that doesn't parse, a missing stage). A config.yml that can't be read keeps the guardrails on with their
+  defaults ("guardrails are using their defaults"); fix the file shown, or run `npx @forgeyard/shipline ui` and use Setup.
 - **A tool call was denied.** A `block` stage isn't done yet. Finish that stage or tell the developer; don't
   work around it.
 - **"Shipline is already initialized".** `init` found `.shipline/`, the `CLAUDE.md` block or the hooks. To
   change agents and skills use the UI (Setup, Agents & skills); to update use `upgrade`; to start over use
   `uninstall`, then `init`.
+- **`upgrade` says "pre-1.0 Shipline".** See [Upgrade and uninstall](#9-upgrade-and-uninstall): uninstall, then `init`.
 - **"Repo newer".** The repo was set up by a newer Shipline than the one you ran. Run the newer version, for
   example `npx @forgeyard/shipline@<version> ui`, or `upgrade` with the latest.
 - **A task seems lost.** Tasks are stored per repo path under `~/.shipline/projects/`. If you moved or renamed
@@ -331,7 +442,7 @@ repo (stop the UI first).
   - Task data is in `%USERPROFILE%\.shipline`. A repo at `C:\Users\you\repo` is stored as `C--Users-you-repo`.
   - Existing CRLF files keep CRLF when Shipline saves them; new files use LF.
 
-## 10. Contributing
+## 11. Contributing
 
 The repo holds only the CLI product:
 
@@ -350,14 +461,22 @@ pnpm --filter ./packages/cli test:hooks   # the hook and init tests, which must 
 ```
 
 After changing anything under `packages/cli/templates/`, run `node packages/cli/scripts/hash-templates.mjs` to
-record the new template hashes.
+record the new template hashes. When a rules template changes, also keep the old text's hash in
+`packages/cli/src/known-stub-rules.mjs`, so `upgrade` can still tell an untouched copy from an edited one.
 
 **CI** (`.github/workflows/cli.yml`) runs the hook tests on Node 18 and the full suite plus the UI typecheck and
 bundle-size check on Node 20, on Ubuntu, macOS and Windows.
 
-**Releasing.** Bump the version in `packages/cli/package.json`, run the hash script, commit, then push a tag
-`v<version>` (for example `v0.7.0`). `.github/workflows/publish.yml` checks that the tag matches the package
-version and publishes `@forgeyard/shipline` to npm. It needs the `NPM_TOKEN` secret: a granular npm token with
-publish rights on the `@forgeyard` scope.
+**Releasing.** Bump the version in `packages/cli/package.json`, add a `## [<version>]` entry to
+`packages/cli/CHANGELOG.md`, run the hash script, commit, then push a tag `v<version>` (for example `v1.0.0`).
+`.github/workflows/publish.yml` checks that the tag matches the package version, that the CHANGELOG has the heading and
+that the hashes are recorded, and publishes `@forgeyard/shipline` to npm through **trusted publishing** (GitHub's OIDC
+identity, no npm token stored anywhere; the package's Settings → Trusted publishing on npmjs.com names this repo and
+`publish.yml`). A version that is already on npm is skipped. 1.0.0 was published by hand to create the package, since
+npm only accepts a trusted publisher for a package that already exists.
 
 Older design documents live in `docs/plans/`; those describing the v1 hub are marked historical.
+
+## License
+
+[MIT](LICENSE). See the [changelog](packages/cli/CHANGELOG.md) for what changed in each release.

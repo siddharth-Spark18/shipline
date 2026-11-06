@@ -13,7 +13,7 @@ export function routes(app) {
     versionState: app.repo.state,
     root: app.repo.root,
     storeDir: storeDir(app.repo.root),
-    needsUpgrade: app.repo.needsUpgrade,
+    versionMessage: app.repo.versionMessage,
   });
 
   return [

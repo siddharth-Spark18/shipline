@@ -18,7 +18,8 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { ReviewStep } from '@/pages/install/review-step';
 import { ApiError, api } from '@/lib/api';
-import type { InstallInfo, InstallSelection } from '@/lib/types';
+import { TRACKER_OPTIONS } from '@/lib/stages';
+import type { InstallInfo, InstallSelection, TrackerId } from '@/lib/types';
 
 const STEPS = ['Workflows', 'Agents & skills', 'Commands & process', 'CI check', 'Review'] as const;
 const REVIEW = STEPS.length - 1;
@@ -38,7 +39,7 @@ interface Draft {
   stageAgents: Record<string, string | null>;
   skills: string[];
   commands: { test: string; lint: string; build: string };
-  tracker: 'jira' | 'github';
+  tracker: TrackerId;
   confirmations: 'standard' | 'light';
   ci: boolean;
 }
@@ -543,16 +544,16 @@ function CommandsStep({ info, draft, patch }: StepProps) {
       ))}
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="wiz-tracker">Tracker</Label>
-        <Select
-          value={draft.tracker}
-          onValueChange={(v) => patch({ tracker: v as 'jira' | 'github' })}
-        >
+        <Select value={draft.tracker} onValueChange={(v) => patch({ tracker: v as TrackerId })}>
           <SelectTrigger id="wiz-tracker" className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="jira">Jira</SelectItem>
-            <SelectItem value="github">GitHub Issues</SelectItem>
+            {TRACKER_OPTIONS.map((t) => (
+              <SelectItem key={t.value} value={t.value}>
+                {t.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>

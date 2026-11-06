@@ -163,7 +163,10 @@ before(() => {
   scripts = tmpDir('shipline-conf-scripts-');
   writeFileSync(path.join(scripts, 'pass.js'), "console.log('ok');\n");
   writeFileSync(path.join(scripts, 'fail3.js'), "console.log('lint error');\nprocess.exit(3);\n");
-  configText = readFileSync(path.join(dir, '.shipline', 'config.yml'), 'utf8');
+  // These runs walk through the ticket stage, so they use a tracker (with the default `none` it is skipped on start).
+  configText = readFileSync(path.join(dir, '.shipline', 'config.yml'), 'utf8').replace(/^tracker: none$/m, 'tracker: jira');
+  assert.match(configText, /^tracker: jira$/m);
+  writeFileSync(path.join(dir, '.shipline', 'config.yml'), configText);
 });
 after(() => {
   setConfig('standard');
@@ -190,7 +193,7 @@ describe('light: a feature run asks to advance only at Plan', () => {
     const { session, slug } = t;
     toQuestions(t);
     // The stage text says it won't ask, and why.
-    const desc = stage(dir, ['status'], session).stdout;
+    const desc = stage(dir, ['status', '--verbose'], session).stdout;
     assert.match(desc, /Confirm with the developer before advancing: no \(light confirmations: auto-advance\)/);
 
     const afterQuestions = advances(session, 'questions');
@@ -304,7 +307,7 @@ describe('standard, a missing key and an unknown value: as 0.13.0', () => {
       setConfig(mode);
       const t = startFeature();
       toQuestions(t);
-      assert.match(stage(dir, ['status'], t.session).stdout, /Confirm with the developer before advancing: YES/);
+      assert.match(stage(dir, ['status', '--verbose'], t.session).stdout, /Confirm with the developer before advancing: YES/);
       const q = asks(t.session, advanceQ('questions', t.slug), ADVANCE_OPTIONS);
       assert.equal(state(t.session).pending_confirm.kind, 'advance');
       answer(t.session, q, 'Advance');

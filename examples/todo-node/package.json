@@ -1,0 +1,15 @@
+{
+  "name": "todo-node",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A tiny Node module to try Shipline on.",
+  "type": "module",
+  "main": "src/todo.js",
+  "scripts": {
+    "test": "node --test",
+    "lint": "node --check src/todo.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

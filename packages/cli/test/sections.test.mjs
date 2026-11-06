@@ -16,9 +16,9 @@ describe('sectionProblems', () => {
     assert.deepEqual(sectionProblems(`# Plan\n\nThe scope is small. ${TEXT}\n`, ['Scope']), ['Scope (no heading)']);
   });
 
-  test('under 20 non-whitespace characters is "(empty)"; whitespace does not count, 20 is enough', () => {
-    assert.deepEqual(sectionProblems('## Scope\n\n', ['Scope']), ['Scope (empty)']);
-    assert.deepEqual(sectionProblems('## Scope\n\n  a b c d e f g h i j k l m n o p q r s  \n\n', ['Scope']), ['Scope (empty)'], '19 characters');
+  test('under 20 non-whitespace characters is "(too short: ...)"; whitespace does not count, 20 is enough', () => {
+    assert.deepEqual(sectionProblems('## Scope\n\n', ['Scope']), ['Scope (too short: write at least 20 characters under it)']);
+    assert.deepEqual(sectionProblems('## Scope\n\n  a b c d e f g h i j k l m n o p q r s  \n\n', ['Scope']), ['Scope (too short: write at least 20 characters under it)'], '19 characters');
     assert.deepEqual(sectionProblems('## Scope\n\n  a b c d e f g h i j k l m n o p q r s t\n', ['Scope']), [], '20 characters');
   });
 
@@ -46,16 +46,16 @@ describe('sectionProblems', () => {
   test('a section runs to the next heading of the same or a higher level; nested headings are inside it', () => {
     // The text sits under a deeper heading: it still belongs to Scope.
     const nested = `## Scope\n\n### In\n${TEXT}\n\n## Verification\n\n`;
-    assert.deepEqual(sectionProblems(nested, ['Scope', 'Verification']), ['Verification (empty)']);
+    assert.deepEqual(sectionProblems(nested, ['Scope', 'Verification']), ['Verification (too short: write at least 20 characters under it)']);
     // A same-level heading ends it, so the text after it is not Scope's.
-    assert.deepEqual(sectionProblems(`## Scope\n\n## Other\n${TEXT}\n`, ['Scope']), ['Scope (empty)']);
+    assert.deepEqual(sectionProblems(`## Scope\n\n## Other\n${TEXT}\n`, ['Scope']), ['Scope (too short: write at least 20 characters under it)']);
     // A higher-level heading ends it too.
-    assert.deepEqual(sectionProblems(`### Scope\n\n# Next\n${TEXT}\n`, ['Scope']), ['Scope (empty)']);
+    assert.deepEqual(sectionProblems(`### Scope\n\n# Next\n${TEXT}\n`, ['Scope']), ['Scope (too short: write at least 20 characters under it)']);
   });
 
   test('every problem is listed, in the order of `sections`; CRLF text works the same', () => {
     const md = `# Plan\r\n\r\n## Verification\r\n\r\n## Scope\r\n${TEXT}\r\n`;
-    assert.deepEqual(sectionProblems(md, ['Scope', 'Files to touch', 'Verification']), ['Files to touch (no heading)', 'Verification (empty)']);
+    assert.deepEqual(sectionProblems(md, ['Scope', 'Files to touch', 'Verification']), ['Files to touch (no heading)', 'Verification (too short: write at least 20 characters under it)']);
   });
 
   test('no sections, or a non-list, gives no problems', () => {

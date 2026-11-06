@@ -10,3 +10,10 @@ export function findStage<T extends { id: string }>(
 ): T | undefined {
   return stages?.find((s) => s.id === id) ?? stages?.find((s) => sameStage(s.id, id));
 }
+
+/** The trackers a repo can use, in the order the forms list them. `none` is the default. */
+export const TRACKER_OPTIONS = [
+  { value: 'none', label: 'None' },
+  { value: 'github', label: 'GitHub Issues' },
+  { value: 'jira', label: 'Jira' },
+] as const;

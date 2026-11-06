@@ -65,14 +65,15 @@ describe('status and diagnostics', () => {
       versionState: 'same',
       root: dir,
       storeDir: storeOf(dir),
-      needsUpgrade: false,
+      versionMessage: null,
     });
     const d = await api(ui, 'GET', '/api/diagnostics');
     assert.equal(d.status, 200);
     assert.equal(d.json.root, dir);
-    assert.equal(d.json.uiInterface, 7);
+    assert.equal(d.json.uiInterface, 1);
     assert.equal(d.json.storeDir, storeOf(dir));
-    assert.equal(d.json.needsUpgrade, false);
+    assert.equal(d.json.versionMessage, null);
+    assert.ok(!('needsUpgrade' in d.json), 'the pre-store flag is gone');
     assert.equal(d.json.port, ui.port);
     assert.ok(['watch', 'poll'].includes(d.json.watchMode));
     assert.ok(Array.isArray(d.json.logTail) && d.json.logTail.length > 0);
@@ -298,7 +299,7 @@ describe('command line', () => {
     await new Promise((r) => blocker.listen(0, '127.0.0.1', r));
     const port = blocker.address().port;
     try {
-      const r = ui([dir, '--port', String(port), '--no-open']);
+      const r = ui(['--dir', dir, '--port', String(port), '--no-open']);
       assert.equal(r.status, 1, r.stdout + r.stderr);
       assert.match(r.stderr, new RegExp(`Port ${port} is in use`));
     } finally {
@@ -307,7 +308,7 @@ describe('command line', () => {
   });
 
   test('prints the tokened URL, and SIGINT shuts down with exit 0', { skip: process.platform === 'win32' && 'Node cannot send SIGINT to a child on Windows (child.kill terminates it, so the exit code is never 0); no Windows test covers Ctrl+C on `shipline ui`' }, async () => {
-    const child = spawn(process.execPath, [BIN, 'ui', dir, '--no-open'], { env: cleanEnv({ SHIPLINE_HOME: homeFor(dir) }), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [BIN, 'ui', '--dir', dir, '--no-open'], { env: cleanEnv({ SHIPLINE_HOME: homeFor(dir) }), stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     child.stdout.on('data', (c) => (out += c));
     const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
@@ -328,10 +329,10 @@ describe('command line', () => {
     }
   });
 
-  test('an invalid --port value exits 1', () => {
+  test('an invalid --port value is a usage error (exit 2)', () => {
     for (const args of [['--port'], ['--port', 'abc'], ['--port', '70000'], ['--port', '-1']]) {
-      const r = ui([dir, ...args, '--no-open']);
-      assert.equal(r.status, 1, args.join(' '));
+      const r = ui(['--dir', dir, ...args, '--no-open']);
+      assert.equal(r.status, 2, args.join(' '));
       assert.ok(r.stderr.length > 0);
     }
   });
@@ -340,7 +341,7 @@ describe('command line', () => {
   test('a folder with no Shipline setup starts the install wizard instead of exiting, and writes nothing', async () => {
     const empty = tmpDir();
     const home = homeFor(empty);
-    const child = spawn(process.execPath, [BIN, 'ui', empty, '--no-open'], { env: cleanEnv({ SHIPLINE_HOME: home }), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [BIN, 'ui', '--dir', empty, '--no-open'], { env: cleanEnv({ SHIPLINE_HOME: home }), stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     child.stdout.on('data', (c) => (out += c));
     const exited = new Promise((resolve) => child.on('exit', resolve));
@@ -370,7 +371,7 @@ describe('command line', () => {
     const blockDir = tmpDir();
     try {
       writeFileSync(path.join(blockDir, 'a-file'), 'x');
-      const r = spawnSync(process.execPath, [BIN, 'ui', dir, '--no-open'], {
+      const r = spawnSync(process.execPath, [BIN, 'ui', '--dir', dir, '--no-open'], {
         env: cleanEnv({ SHIPLINE_HOME: path.join(blockDir, 'a-file', 'home') }),
         encoding: 'utf8',
         timeout: 20000,
@@ -382,10 +383,31 @@ describe('command line', () => {
     }
   });
 
-  test('parseUiArgs: dir is the first non-flag argument; flags in any order', () => {
-    assert.deepEqual(parseUiArgs(['--port', '4000', 'repo', '--no-open']), { dir: path.resolve('repo'), port: 4000, open: false });
+  // 1.0 plan, item 4: the folder is given only with --dir; anything else is a usage error (exit 2). The errors exit the
+  // process, so they run through the bin.
+  test('parseUiArgs: --dir <path> or --dir=<path>; flags in any order', () => {
+    assert.deepEqual(parseUiArgs(['--port', '4000', '--dir', 'repo', '--no-open']), { dir: path.resolve('repo'), port: 4000, open: false });
+    assert.deepEqual(parseUiArgs(['--dir=repo', '--port=0']), { dir: path.resolve('repo'), port: 0, open: true });
     assert.deepEqual(parseUiArgs([]), { dir: process.cwd(), port: 0, open: true });
-    assert.deepEqual(parseUiArgs(['a', 'b']).dir, path.resolve('a'));
+  });
+
+  test('ui: a bare folder, an unknown option or --dir without a path exits 2; --help and -h print the usage', () => {
+    for (const [args, re] of [
+      [['repo'], /^shipline: unexpected argument repo \(use --dir\)\n$/],
+      [['--dir', dir, 'extra'], /^shipline: unexpected argument extra \(use --dir\)\n$/],
+      [['--bogus'], /^shipline: unknown option --bogus \(see shipline ui --help\)\n$/],
+      [['--dir'], /^shipline: --dir needs a path/],
+    ]) {
+      const r = ui(args, dir);
+      assert.equal(r.status, 2, args.join(' '));
+      assert.match(r.stderr, re, args.join(' '));
+      assert.equal(r.stdout, '', args.join(' '));
+    }
+    for (const h of ['--help', '-h']) {
+      const r = ui([h], dir);
+      assert.equal(r.status, 0, h);
+      assert.match(r.stdout, /^Usage: npx @forgeyard\/shipline ui \[--dir <path>\] \[--port <n>\] \[--no-open\]/, h);
+    }
   });
 
   test('ui resolves the repo from a subfolder and ignores CLAUDE_PROJECT_DIR', async () => {

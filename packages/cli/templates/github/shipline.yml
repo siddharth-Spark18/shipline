@@ -1,5 +1,9 @@
 # Added by Shipline. Fails a pull request whose description has no Shipline summary (see ci: in .shipline/config.yml)
 # or whose summary shows a "block" stage that isn't done. Remove this file to turn the check off.
+#
+# The check runs the checker and reads config.yml and the workflows from the PR's base branch, so a PR can't relax
+# its own check. The PR that first adds Shipline has no base copy and runs its own. A PR can still edit this
+# workflow file: make the check required in branch protection and put .shipline/ and .github/ under CODEOWNERS.
 name: Shipline
 
 on:
@@ -18,4 +22,18 @@ jobs:
         with:
           # The PR's own code, not the merge commit, so its git tree matches the one `stage.mjs check` recorded.
           ref: ${{ github.event.pull_request.head.sha }}
-      - run: node .shipline/bin/ci-check.mjs
+          path: head
+      - uses: actions/checkout@v4
+        with:
+          # The base branch's commit: its checker and its config.
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          fetch-depth: 1
+      - name: Shipline check
+        working-directory: head
+        run: |
+          if [ -f ../base/.shipline/bin/ci-check.mjs ]; then
+            node ../base/.shipline/bin/ci-check.mjs --config-from ../base
+          else
+            node .shipline/bin/ci-check.mjs
+          fi

@@ -78,16 +78,18 @@ describe('the hook wrappers (sh -c)', { skip: process.platform === 'win32' && 'P
     }
   });
 
-  test('a node that exits 1: the same results', () => {
+  // 1.0 plan, item 7: the "needs Node" warning is only for a missing node. A node that is there but fails
+  // prints nothing from the wrapper: SessionStart passes node's exit code on, the others still exit 0.
+  test('a node that exits 1: no "needs Node" warning; SessionStart passes the exit code on, the others exit 0', () => {
     const bin = path.join(scratch, 'broken-node');
     mkdirSync(bin, { recursive: true });
     writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nexit 1\n');
     chmodSync(path.join(bin, 'node'), 0o755);
     for (const h of HOOKS) {
       const r = viaShell(h.command, h.event, bin);
-      assert.equal(r.code, 0, `${h.event}: ${r.stderr}`);
-      if (h.event === 'SessionStart') assert.deepEqual(JSON.parse(r.stdout), { systemMessage: WARNING });
-      else assert.equal(r.stdout, '', h.event);
+      assert.equal(r.code, h.event === 'SessionStart' ? 1 : 0, `${h.event}: ${r.stderr}`);
+      assert.equal(r.stdout, '', h.event);
+      assert.ok(!r.stdout.includes('Shipline needs Node.js'), h.event);
     }
   });
 

@@ -186,9 +186,10 @@ export async function runUninstall({ target, yes = false, dryRun = false, purge 
   for (const d of emptyDirs) out.push(`  - ${d} (left empty)`);
   if (claudeNext !== null) out.push(`  ~ CLAUDE.md: remove the Shipline block${claudeNext === '' ? ' (the file is then empty and is deleted)' : ''}`);
   if (settingsEdit) out.push(`  ~ .claude/settings.json: remove ${settingsEdit.removed} Shipline hook entr${settingsEdit.removed === 1 ? 'y/rule' : 'ies and rules'}${settingsEdit.remove ? ' (the file is then empty and is deleted)' : ''}`);
-  if (excluded.size) {
+  const keptExcluded = [...excluded].filter((p) => !p.split('/').includes('..') && existsSync(path.join(root, p))).sort();
+  if (keptExcluded.length) {
     out.push('', 'Kept (your own, recorded in VERSION.excluded)');
-    for (const p of [...excluded].sort()) out.push(`  = ${p}`);
+    for (const p of keptExcluded) out.push(`  = ${p}`);
   }
   if (store) out.push('', `Task data for this repo (asked about separately): ${store} (${human(dirSize(store))})`);
   if (notes.length) out.push('', 'Notes', ...notes.map((n) => `  ! ${n}`));

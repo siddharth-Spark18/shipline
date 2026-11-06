@@ -5,7 +5,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { KNOWN_FIELDS, configLayout, headerFor, validateConfig, validateWorkflow } from '../src/setup-schema.mjs';
+import { KNOWN_FIELDS, TRACKERS, configLayout, headerFor, validateConfig, validateWorkflow } from '../src/setup-schema.mjs';
 import { parseYaml } from '../templates/shipline/bin/lib.mjs';
 import { CLI_ROOT, TEMPLATES } from './helpers.mjs';
 import { emitConfig, emitWorkflow } from '../src/yaml-emit.mjs';
@@ -233,15 +233,16 @@ describe('workflow checks', () => {
 });
 
 describe('tracker and setup (Teams Phase 1, D and E)', () => {
-  test('jira, github, or no tracker at all pass with no issue', () => {
-    for (const tracker of ['jira', 'github']) assert.deepEqual(validateConfig({ ...baseConfig(), tracker }), [], tracker);
+  test('none, jira, github, or no tracker at all pass with no issue', () => {
+    assert.deepEqual(TRACKERS, ['none', 'jira', 'github'], '1.0: none comes first (the default)');
+    for (const tracker of ['none', 'jira', 'github']) assert.deepEqual(validateConfig({ ...baseConfig(), tracker }), [], tracker);
     const none = baseConfig();
     delete none.tracker;
     assert.deepEqual(validateConfig(none), []);
   });
 
   test('any other tracker is a warning, not an error: "not supported; the ticket stage will be skipped"', () => {
-    for (const tracker of ['linear', 'Jira', 'GitHub']) {
+    for (const tracker of ['linear', 'Jira', 'GitHub', 'None']) {
       const issues = validateConfig({ ...baseConfig(), tracker });
       assert.deepEqual(issues, [{ path: 'tracker', message: 'not supported; the ticket stage will be skipped', severity: 'warning' }], tracker);
       assert.deepEqual(errorsOnly(issues), []);

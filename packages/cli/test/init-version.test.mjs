@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { INTERFACE, MISSING_BEFORE, compareInterface, readRepoVersion } from '../src/interface.mjs';
+import { INTERFACE, MISSING_BEFORE, compareInterface, isPreOne, preOneMessage, readRepoVersion } from '../src/interface.mjs';
 import { BIN, CLI_ROOT, homeFor, removeDir, run, runInit, storeOf, tmpDir } from './helpers.mjs';
 
 const sha = (data) => createHash('sha256').update(data).digest('hex');
@@ -21,7 +21,7 @@ const fresh = () => {
 after(() => dirs.forEach(removeDir));
 
 describe('init writes VERSION', () => {
-  test('with the package version, INTERFACE 7 and the files map, plus a newline', () => {
+  test('with the package version, INTERFACE 1 and the files map, plus a newline', () => {
     const dir = fresh();
     const r = runInit(dir);
     assert.equal(r.code, 0, r.stderr);
@@ -34,7 +34,8 @@ describe('init writes VERSION', () => {
     assert.deepEqual(v.excluded, excluded, '--yes leaves out the standalone reviewer and, with no UI, wireframe-proposer');
     assert.equal(v.package, PACKAGE_VERSION);
     assert.equal(v.interface, INTERFACE);
-    assert.equal(INTERFACE, 7);
+    assert.equal(INTERFACE, 1);
+    assert.equal(PACKAGE_VERSION, '1.0.0');
     assert.deepEqual(readRepoVersion(dir), { package: PACKAGE_VERSION, interface: INTERFACE, files: v.files, excluded });
   });
 
@@ -73,7 +74,7 @@ describe('init writes VERSION', () => {
 
   // Chat reliability plan, G: the hooks check for node first, so a machine without it gets one warning, not an
   // error on every tool call.
-  test('settings.json gets the 0.9.0 hook form: each Shipline command checks for node; SessionStart warns, the others || true', () => {
+  test('settings.json gets the hook form: each Shipline command checks for node; SessionStart warns only without node, the others || true', () => {
     const dir = fresh();
     assert.equal(runInit(dir).code, 0);
     const s = JSON.parse(readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'));
@@ -86,12 +87,16 @@ describe('init writes VERSION', () => {
     const script = { SessionStart: 'session-start', UserPromptSubmit: 'prompt-submit', PostToolUse: 'record-answer', PreToolUse: 'guard' };
     for (const [event, cmds] of Object.entries(commands)) {
       assert.equal(cmds.length, 1, event);
-      const prefix = `command -v node >/dev/null 2>&1 && node "$CLAUDE_PROJECT_DIR/.shipline/bin/${script[event]}.mjs" || `;
-      assert.ok(cmds[0].startsWith(prefix), `${event}: ${cmds[0]}`);
-      const fallback = cmds[0].slice(prefix.length);
-      if (event === 'SessionStart') assert.match(fallback, /^echo '\{"systemMessage":"Shipline needs Node\.js 18 or newer/);
-      else assert.equal(fallback, 'true');
+      const run = `node "$CLAUDE_PROJECT_DIR/.shipline/bin/${script[event]}.mjs"`;
+      if (event === 'SessionStart') {
+        // 1.0 plan, item 7: the warning is in the else branch of `command -v node`, so a failing node never prints it.
+        assert.match(cmds[0], new RegExp(`^if command -v node >/dev/null 2>&1; then ${run.replace(/[$.]/g, '\\$&')}; else echo '\\{"systemMessage":"Shipline needs Node\\.js 18 or newer.*'; fi$`), cmds[0]);
+      } else {
+        assert.equal(cmds[0], `command -v node >/dev/null 2>&1 && ${run} || true`, event);
+      }
     }
+    // The PreToolUse matcher covers the file tools, Bash, Read and Grep (1.0 plan, item 11); Glob stays outside.
+    assert.equal(s.hooks.PreToolUse[0].matcher, 'Edit|Write|MultiEdit|NotebookEdit|Bash|Read|Grep');
   });
 
   test('no .shipline/.gitignore, no docs/shipline and no .shipline/.state; the store is created with repo.json', () => {
@@ -110,7 +115,7 @@ describe('init writes VERSION', () => {
     const dir = fresh();
     const blocker = path.join(homeFor(dir), 'file');
     writeFileSync(blocker, 'x');
-    const r = run(process.execPath, [BIN, 'init', dir, '--yes'], { cwd: dir, env: { SHIPLINE_HOME: path.join(blocker, 'home') } });
+    const r = run(process.execPath, [BIN, 'init', '--dir', dir, '--yes'], { cwd: dir, env: { SHIPLINE_HOME: path.join(blocker, 'home') } });
     assert.equal(r.code, 1);
     assert.match(r.stderr, /Shipline can't write its task store at /);
     assert.ok(!existsSync(path.join(dir, '.shipline')));
@@ -190,7 +195,7 @@ describe('ui on old Node', () => {
   test('`shipline ui` exits 1 with a message on Node < 20, without loading the UI code', { skip: major >= 20 ? 'runs on Node 18 (the CI test:hooks job)' : false }, () => {
     const dir = fresh();
     assert.equal(runInit(dir).code, 0);
-    const r = run(process.execPath, [BIN, 'ui', dir, '--no-open'], { cwd: dir });
+    const r = run(process.execPath, [BIN, 'ui', '--dir', dir, '--no-open'], { cwd: dir });
     assert.equal(r.code, 1);
     assert.match(r.stderr, /shipline ui requires Node 20 or newer/);
   });
@@ -236,30 +241,34 @@ describe('readRepoVersion', () => {
 describe('compareInterface', () => {
   test('same', () => {
     assert.equal(compareInterface(2, 2), 'same');
-    assert.equal(compareInterface({ package: '0.14.0', interface: 7 }, INTERFACE), 'same');
-    assert.equal(compareInterface({ package: '0.13.0', interface: 6 }, INTERFACE), 'repo-older');
-    assert.equal(compareInterface({ package: '0.11.0', interface: 5 }, INTERFACE), 'repo-older');
-    assert.equal(compareInterface({ package: '0.8.0', interface: 4 }, INTERFACE), 'repo-older');
-    assert.equal(compareInterface({ package: '0.7.0', interface: 3 }, INTERFACE), 'repo-older');
-    assert.equal(compareInterface({ package: '0.6.0', interface: 2 }, INTERFACE), 'repo-older');
+    assert.equal(compareInterface({ package: '1.0.0', interface: 1 }, INTERFACE), 'same');
+    // 1.0 restarts the interface at 1, so a file with no VERSION reads as interface 1 too: `upgrade` refuses such a repo
+    // by its package version (upgrade.test.mjs), not by the interface.
+    assert.equal(compareInterface({ legacy: true, interface: 1 }, { interface: INTERFACE }), 'same');
   });
-  test('repo older, including a legacy repo', () => {
+  test('repo older', () => {
     assert.equal(compareInterface(1, 2), 'repo-older');
-    assert.equal(compareInterface({ legacy: true, interface: 1 }, { interface: INTERFACE }), 'repo-older');
+    assert.equal(compareInterface({ package: '1.0.0', interface: 1 }, 2), 'repo-older');
   });
   test('repo newer', () => {
     assert.equal(compareInterface(4, 3), 'repo-newer');
     assert.equal(compareInterface({ interface: 9 }, INTERFACE), 'repo-newer');
   });
-  test('MISSING_BEFORE names what interface-1 repos lack', () => {
-    assert.deepEqual(MISSING_BEFORE, [
-      'the lost-task warning',
-      'visible warn reminders',
-      'task storage outside the repo (the store)',
-      'Trust: answer-based confirmations and the CI check',
-      'Trust: real check runs, required sections and PR evidence',
-      'Guardrails: always-on rails, protected paths, named actions and the Verify scope check',
-      'Lighter confirmations: the standard or light preset and checkpoint stages',
-    ]);
+  test('isPreOne: a package below 1.0.0, no package, or no/unreadable VERSION; preOneMessage names the version', () => {
+    for (const v of [{ package: '0.14.0', interface: 7 }, { package: '0.6.0', interface: 2 }, { package: null, interface: 1 }, { legacy: true, interface: 1 }, null]) {
+      assert.equal(isPreOne(v), true, JSON.stringify(v));
+    }
+    for (const v of [{ package: '1.0.0', interface: 1 }, { package: '1.2.3', interface: 1 }, { package: '2.0.0', interface: 2 }]) {
+      assert.equal(isPreOne(v), false, JSON.stringify(v));
+    }
+    assert.equal(
+      preOneMessage({ package: '0.14.0' }),
+      'This repo was set up with a pre-1.0 Shipline (0.14.0). Run `npx @forgeyard/shipline uninstall --yes` then `init`; task data in ~/.shipline is kept.',
+    );
+    assert.match(preOneMessage({ legacy: true, interface: 1 }), /pre-1\.0 Shipline \(unknown version\)/);
+  });
+
+  test('MISSING_BEFORE is empty at interface 1 (the 1.0 baseline)', () => {
+    assert.deepEqual(MISSING_BEFORE, []);
   });
 });

@@ -3,9 +3,9 @@
 // GITHUB_EVENT_PATH and GITHUB_STEP_SUMMARY set). Node 18+, so it stays in test:hooks.
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { git, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
+import { CLI_ROOT, git, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
 
 let dir;
 let scratch;
@@ -324,7 +324,7 @@ describe('the jira/ticket alias and the Closes line', () => {
   test('end to end with tracker: github: pr-summary (starting with Closes #5) pasted into a PR passes', () => {
     const cfg = path.join(dir, '.shipline', 'config.yml');
     const saved = readFileSync(cfg, 'utf8');
-    writeFileSync(cfg, saved.replace('tracker: jira', 'tracker: github'));
+    writeFileSync(cfg, saved.replace('tracker: none', 'tracker: github'));
     writeFileSync(wfPath(), tixWorkflow('ticket'));
     try {
       const s = 'ci-github';
@@ -593,4 +593,146 @@ describe('confirmations: light (needsAnswer)', () => {
       assert.equal(check(body(featureSummary())).code, 0, 'every confirm stage answered still passes');
     });
   }
+});
+
+// 1.0 plan, item 15: the workflow runs the base branch's checker with `--config-from <base checkout>`, so config.yml and
+// the workflow files come from the base while the git tree (the fingerprint) is the PR head's.
+describe('--config-from <dir>', () => {
+  let base; // a copy of the repo's .shipline/ as the base branch has it (not a git checkout)
+  const baseCfg = () => path.join(base, '.shipline', 'config.yml');
+  // ci-check with these extra arguments, run from `cwd` (the PR head), with `script` (head's own by default).
+  function checkWith(args, data, { script = path.join(dir, '.shipline', 'bin', 'ci-check.mjs'), cwd = dir } = {}) {
+    const i = ++n;
+    const eventPath = path.join(scratch, `event-cf-${i}.json`);
+    writeFileSync(eventPath, JSON.stringify({ action: 'opened', pull_request: { number: 9, body: data, labels: [] } }));
+    return run(process.execPath, [script, ...args], { cwd, env: { GITHUB_EVENT_PATH: eventPath } });
+  }
+  const writeBaseCi = (ci) => {
+    const text = configText.replace(/\n# Optional\. The pull-request check[\s\S]*$/, '\n');
+    writeFileSync(baseCfg(), `${text}\nci:\n${Object.entries(ci).map(([k, v]) => `  ${k}: ${v}`).join('\n')}\n`);
+  };
+
+  before(() => {
+    base = path.join(scratch, 'base');
+    cpSync(path.join(dir, '.shipline'), path.join(base, '.shipline'), { recursive: true });
+  });
+  after(() => setCi({ missing_block: 'fail', skip_label: 'shipline:skip' }));
+
+  test('the head relaxes ci.missing_block to warn; with --config-from the base\'s fail still applies', () => {
+    setCi({ missing_block: 'warn', skip_label: 'shipline:skip' });
+    writeBaseCi({ missing_block: 'fail', skip_label: 'shipline:skip' });
+    const own = checkWith([], 'No summary here.');
+    assert.equal(own.code, 0, own.stdout);
+    assert.match(own.stdout, /^::warning title=Shipline::This pull request has no Shipline summary\./m);
+    for (const args of [['--config-from', base], [`--config-from=${base}`], ['--config-from', path.relative(dir, base)]]) {
+      const r = checkWith(args, 'No summary here.');
+      assert.equal(r.code, 1, `${args.join(' ')}: ${r.stdout}`);
+      assert.deepEqual(errors(r), ['::error title=Shipline::This pull request has no Shipline summary. Run `node .shipline/bin/stage.mjs pr-summary` and paste its output into the description.']);
+    }
+  });
+
+  test('the workflow files come from the base too: a head that turns a block stage into guide does not pass', () => {
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip' });
+    writeBaseCi({ missing_block: 'fail', skip_label: 'shipline:skip' });
+    const wf = 'id: gate\nname: Gate\nstages:\n  - id: review\n    enforcement: ENF\n  - id: build\n    enforcement: guide\n';
+    writeFileSync(path.join(base, '.shipline', 'workflows', 'gate.yml'), wf.replace('ENF', 'block'));
+    writeFileSync(path.join(dir, '.shipline', 'workflows', 'gate.yml'), wf.replace('ENF', 'guide'));
+    try {
+      const data = body({ v: 1, workflow: 'gate', task: 'x', stages: [{ id: 'review', status: 'pending', enforcement: 'guide', confirmed: null }, { id: 'build', status: 'done', enforcement: 'guide', confirmed: 'auto' }] });
+      assert.equal(checkWith([], data).code, 0, 'the head\'s own workflow lets it through');
+      const r = checkWith(['--config-from', base], data);
+      assert.equal(r.code, 1, r.stdout);
+      assert.match(r.stdout, /Stage "review" is a block stage and is not done \(it is pending\)/);
+    } finally {
+      rmSync(path.join(dir, '.shipline', 'workflows', 'gate.yml'), { force: true });
+      rmSync(path.join(base, '.shipline', 'workflows', 'gate.yml'), { force: true });
+    }
+  });
+
+  test('the fingerprint still comes from the checkout it runs in (the head), not from the --config-from folder', () => {
+    writeBaseCi({ missing_block: 'fail', skip_label: 'shipline:skip', stale_checks: 'fail' });
+    const head = git(dir, 'rev-parse', 'HEAD^{tree}');
+    const data = featureSummary({}, { v: 2, checks: { ran_at: new Date().toISOString(), fingerprint: head, results: [{ name: 'test', exit: 0, duration_ms: 5, accepted: false }] } });
+    const r = checkWith(['--config-from', base], body(data));
+    assert.equal(r.code, 0, r.stdout);
+    assert.match(r.stdout, /Checks ran on this exact code\./);
+    const stale = checkWith(['--config-from', base], body({ ...data, checks: { ...data.checks, fingerprint: 'f'.repeat(40) } }));
+    assert.equal(stale.code, 1, 'stale_checks: fail is read from the base');
+  });
+
+  test('flag handling: an unknown option, a missing folder, or a folder with no config.yml fails with a message', () => {
+    const summary = body(featureSummary());
+    for (const [args, re] of [
+      [['--bogus'], /Unknown option --bogus\. Usage: ci-check\.mjs \[--config-from <dir>\]/],
+      [['--config-from'], /--config-from needs a folder\./],
+      [['--config-from='], /--config-from needs a folder\./],
+      [['--config-from', path.join(scratch, 'no-such-base')], /No \.shipline\/config\.yml in .*no-such-base; there is nothing to read the check's settings from\./],
+    ]) {
+      const r = checkWith(args, summary);
+      assert.equal(r.code, 1, args.join(' '));
+      assert.match(r.stdout, re, args.join(' '));
+    }
+  });
+
+  // The `run:` step of templates/github/shipline.yml, run with sh from head/ as Actions does: base's checker with
+  // --config-from ../base when base has one, else head's own (the PR that adds Shipline).
+  test('the workflow template runs base\'s checker with --config-from ../base, or head\'s own when base has none', { skip: process.platform === 'win32' && 'runs the template\'s run: block with sh (the job runs on ubuntu-latest)' }, () => {
+    const yml = readFileSync(path.join(CLI_ROOT, 'templates', 'github', 'shipline.yml'), 'utf8');
+    assert.match(yml, /path: head\n/);
+    assert.match(yml, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}\n\s+path: base\n\s+fetch-depth: 1/);
+    assert.match(yml, /working-directory: head\n/);
+    const m = /\n {8}run: \|\n((?: {10}[^\n]*\n?)+)/.exec(yml);
+    assert.ok(m, yml);
+    const script = m[1].replace(/^ {10}/gm, '');
+    assert.match(script, /node \.\.\/base\/\.shipline\/bin\/ci-check\.mjs --config-from \.\.\/base/);
+
+    const ws = path.join(scratch, 'actions');
+    cpSync(dir, path.join(ws, 'head'), { recursive: true });
+    cpSync(base, path.join(ws, 'base'), { recursive: true });
+    setCi({ missing_block: 'warn', skip_label: 'shipline:skip' });
+    cpSync(path.join(dir, '.shipline', 'config.yml'), path.join(ws, 'head', '.shipline', 'config.yml'));
+    writeBaseCi({ missing_block: 'fail', skip_label: 'shipline:skip' });
+    cpSync(baseCfg(), path.join(ws, 'base', '.shipline', 'config.yml'));
+    // A base checker that says which one ran, then runs the real one.
+    const marker = path.join(ws, 'base', '.shipline', 'bin', 'ci-check.mjs');
+    const real = readFileSync(marker, 'utf8').replace(/^#![^\n]*\n/, '');
+    writeFileSync(marker, `console.log('::notice title=Shipline::base checker ' + process.argv.slice(2).join(' '));\n${real}`);
+    const eventPath = path.join(scratch, 'event-actions.json');
+    writeFileSync(eventPath, JSON.stringify({ action: 'opened', pull_request: { number: 1, body: 'No summary.', labels: [] } }));
+    const sh = (cwd) => run('sh', ['-c', script], { cwd, env: { GITHUB_EVENT_PATH: eventPath } });
+    const withBase = sh(path.join(ws, 'head'));
+    assert.equal(withBase.code, 1, withBase.stdout + withBase.stderr);
+    assert.match(withBase.stdout, /base checker --config-from \.\.\/base/);
+    assert.match(withBase.stdout, /^::error title=Shipline::This pull request has no Shipline summary\./m, 'the base config (fail) decides');
+
+    rmSync(path.join(ws, 'base', '.shipline'), { recursive: true });
+    const firstPr = sh(path.join(ws, 'head'));
+    assert.equal(firstPr.code, 0, firstPr.stdout + firstPr.stderr);
+    assert.ok(!firstPr.stdout.includes('base checker'));
+    assert.match(firstPr.stdout, /^::warning title=Shipline::This pull request has no Shipline summary\./m, 'head\'s own checker and config');
+  });
+});
+
+// 1.0 plan, item 19: with tracker: none the ticket stage is skipped on start, and the CI check accepts the summary.
+describe('tracker: none and the CI check', () => {
+  test('a real task whose block ticket stage was auto-skipped (No tracker) passes', () => {
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip' });
+    assert.match(readFileSync(path.join(dir, '.shipline', 'config.yml'), 'utf8'), /^tracker: none$/m);
+    const wf = path.join(dir, '.shipline', 'workflows', 'tixnone.yml');
+    writeFileSync(wf, 'id: tixnone\nname: Tix none\nstages:\n  - id: ticket\n    artifact: ticket.md\n    enforcement: block\n  - id: build\n    enforcement: guide\n');
+    try {
+      const s = 'ci-none';
+      assert.equal(stage(dir, ['start', '--workflow', 'tixnone', '--title', 'No tracker'], s).code, 0);
+      assert.equal(stage(dir, ['advance'], s).code, 0);
+      const summary = stage(dir, ['pr-summary'], s).stdout;
+      const data = JSON.parse(/<!-- shipline:summary (.*) -->/.exec(summary)[1]);
+      assert.deepEqual(data.stages[0], { id: 'ticket', status: 'skipped', enforcement: 'block', confirmed: 'auto' });
+      const r = check(`Adds X.\n\n${summary}`);
+      assert.equal(r.code, 0, r.stdout);
+      assert.deepEqual(errors(r), []);
+      rmSync(path.join(storeOf(dir), 'tasks', 'no-tracker'), { recursive: true });
+    } finally {
+      rmSync(wf, { force: true });
+    }
+  });
 });

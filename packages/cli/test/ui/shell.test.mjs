@@ -5,8 +5,8 @@
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { IS_WIN, livePids, makeRepo, removeDir, tmpDir } from '../helpers.mjs';
-import { api, openEvents, startUi } from './helpers.mjs';
+import { IS_WIN, livePids, makeRepo, removeDir, tasklist, tmpDir } from '../helpers.mjs';
+import { api, openEvents, sleep, startUi } from './helpers.mjs';
 import { groupPids, readUiLog, startChat, stopChat, useFakeClaude, waitUntil } from './chat-helpers.mjs';
 import { OUTPUT_CAP_BYTES, startShell, stopAll, stopEverything, stopRun } from '../../src/ui/shell.mjs';
 
@@ -88,28 +88,60 @@ const withTimeout = (p, ms, what) => {
   );
 };
 
-// Starts TREE and returns { r, pids: [node, grandchild], pgid } once both are running.
+// How long a process check polls before it fails (1.0 plan, item 8: Windows CI is slow to tear a tree down).
+const GONE_MS = 10_000;
+
+// Windows: the pids of `pids` still in tasklist under the image name they had at start (a freed pid that Windows has
+// already handed to another process is not a leftover). null when tasklist itself failed, so the caller asks again.
+function leftInTasklist(pids, images) {
+  let procs;
+  try {
+    procs = tasklist();
+  } catch {
+    return null;
+  }
+  return pids.filter((pid) => procs.has(pid) && (!images || !images.get(pid) || procs.get(pid) === images.get(pid)));
+}
+
+// Windows: { pid: image name } of `pids` now, so a pid Windows reuses later is not taken for a leftover. null elsewhere.
+function imagesOf(pids) {
+  if (!IS_WIN) return null;
+  const procs = tasklist();
+  return new Map(pids.map((pid) => [pid, procs.get(pid)]));
+}
+
+// Starts TREE and returns { r, pids: [node, grandchild], pgid, images } once both are running.
 async function startTree(chatId) {
   const r = run(TREE, chatId);
   const m = await r.waitOutput(/(\d+) (\d+)/);
   const pids = [Number(m[1]), Number(m[2])];
   for (const p of pids) leftovers.add(p);
+  await waitUntil(() => livePids(pids).length === pids.length, GONE_MS).catch(() => {});
   assert.deepEqual(livePids(pids).sort(), [...pids].sort(), 'command and grandchild are running');
   let pgid = null;
+  const images = imagesOf(pids);
   if (!IS_WIN) {
     pgid = Number(execFileSync('ps', ['-o', 'pgid=', '-p', String(pids[0])], { encoding: 'utf8' }).trim());
     assert.ok(groupPids(pgid).includes(pids[1]), 'the grandchild is in the command\'s process group');
   }
-  return { r, pids, pgid };
+  return { r, pids, pgid, images };
 }
 
-// The tree is gone: POSIX, nothing left in the group; Windows, neither pid in tasklist.
-async function assertTreeGone({ pids, pgid }) {
+// The tree is gone: POSIX, nothing left in the group; Windows, neither pid in tasklist. Both poll for up to 10 s:
+// Windows retries tasklist (which can itself fail under load) until the tree is gone or the time is up.
+async function assertTreeGone({ pids, pgid, images = null }) {
   if (IS_WIN) {
-    await waitUntil(() => livePids(pids).length === 0, 10_000).catch(() => {});
-    assert.deepEqual(livePids(pids), [], 'no process of the tree is left in tasklist');
+    const deadline = Date.now() + GONE_MS;
+    let left = pids;
+    for (;;) {
+      const now = leftInTasklist(pids, images);
+      if (now) left = now;
+      if ((now && now.length === 0) || Date.now() > deadline) break;
+      await sleep(100);
+    }
+    assert.deepEqual(left, [], 'no process of the tree is left in tasklist');
   } else {
-    await waitUntil(() => groupPids(pgid).length === 0, 5000).catch(() => {});
+    await waitUntil(() => groupPids(pgid).length === 0 && livePids(pids).length === 0, GONE_MS).catch(() => {});
     assert.deepEqual(groupPids(pgid), [], 'no process of the group is left');
     assert.deepEqual(livePids(pids), []);
   }
@@ -292,11 +324,12 @@ describe('/api/chats/<id>/shell routes', () => {
       const pids = [Number(p1), Number(p2)];
       for (const p of pids) leftovers.add(p);
       const pgid = IS_WIN ? null : Number(execFileSync('ps', ['-o', 'pgid=', '-p', String(pids[0])], { encoding: 'utf8' }).trim());
+      const images = imagesOf(pids);
       const stop = await api(ui, 'POST', `/api/chats/${id}/shell/${runId}/stop`);
       assert.equal(stop.status, 200, stop.text);
       assert.deepEqual(stop.json, { stopped: true });
       await ev.waitFor(isShell(runId, 'exit'), 12_000, since);
-      await assertTreeGone({ pids, pgid });
+      await assertTreeGone({ pids, pgid, images });
     } finally {
       await stopChat(ui, ev, id);
     }
@@ -314,10 +347,11 @@ describe('/api/chats/<id>/shell routes', () => {
     const pids = [Number(p1), Number(p2)];
     for (const p of pids) leftovers.add(p);
     const pgid = IS_WIN ? null : Number(execFileSync('ps', ['-o', 'pgid=', '-p', String(pids[0])], { encoding: 'utf8' }).trim());
+    const images = imagesOf(pids);
 
     await stopChat(ui, ev, id);
     await ev.waitFor(isShell(runId, 'exit'), 12_000, since);
-    await assertTreeGone({ pids, pgid });
+    await assertTreeGone({ pids, pgid, images });
 
     const ended = await postShell(id, 'echo hi');
     assert.equal(ended.status, 409);
@@ -336,9 +370,10 @@ describe('/api/chats/<id>/shell routes', () => {
     const pids = [Number(p1), Number(p2)];
     for (const p of pids) leftovers.add(p);
     const pgid = IS_WIN ? null : Number(execFileSync('ps', ['-o', 'pgid=', '-p', String(pids[0])], { encoding: 'utf8' }).trim());
+    const images = imagesOf(pids);
     ev.close();
     ev = null;
     assert.equal(await ui.close(), 0);
-    await assertTreeGone({ pids, pgid });
+    await assertTreeGone({ pids, pgid, images });
   });
 });

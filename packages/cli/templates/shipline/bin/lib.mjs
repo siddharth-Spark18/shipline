@@ -149,7 +149,7 @@ export function findRoot(start) {
 
 const DEFAULT_CONFIG = {
   branch_pattern: '{type}/{key}-{slug}',
-  tracker: 'jira',
+  tracker: 'none',
   commands: {},
   skills: [],
 };
@@ -173,6 +173,13 @@ export const RAIL_DEFAULTS = {
   migrate: 'ask',
   agent_config: 'ask',
 };
+// The protected_paths the shipped config.yml lists (keep the two identical; a test checks). Used as-is when config.yml
+// can't be read; a readable config.yml that leaves the key out protects nothing.
+export const DEFAULT_PROTECTED_PATHS = [
+  'migrations/**', 'db/migrate/**', 'prisma/migrations/**', 'alembic/versions/**', 'infra/**', 'terraform/**', '**/*.tf', 'k8s/**',
+  'helm/**', '**/Dockerfile*', '**/docker-compose*', '.github/workflows/**', '.gitlab-ci.yml', '.circleci/**', 'Jenkinsfile',
+  'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'poetry.lock', 'Cargo.lock', 'go.sum',
+];
 // The named actions a stage block can hold back (`blocks: [{ actions: [...] }]`).
 export const ACTIONS = ['commit', 'push', 'pr', 'merge', 'release', 'deploy', 'migrate'];
 
@@ -188,10 +195,20 @@ export function readYamlFile(file) {
 }
 
 export function loadConfig(root) {
-  const cfg = { ...DEFAULT_CONFIG, ...(readYamlFile(path.join(root, '.shipline', 'config.yml')) || {}) };
+  return normalizeConfig(readYamlFile(path.join(root, '.shipline', 'config.yml')) || {});
+}
+
+// The built-in defaults: what the rails use when config.yml can't be read (the default rail levels and the shipped
+// protected_paths).
+export function defaultConfig() {
+  return normalizeConfig({ protected_paths: [...DEFAULT_PROTECTED_PATHS] });
+}
+
+function normalizeConfig(raw) {
+  const cfg = { ...DEFAULT_CONFIG, ...raw };
   // skills: names of the repo's own .claude/skills/<name>; anything that is not a list of names is ignored.
-  // tracker: 'jira' (the default) or 'github'; any other value is kept as written (the ticket stage is then skipped).
-  if (cfg.tracker === null || cfg.tracker === undefined || cfg.tracker === '') cfg.tracker = 'jira';
+  // tracker: 'none' (the default), 'jira' or 'github'; any other value is kept as written (the ticket stage is then skipped).
+  if (cfg.tracker === null || cfg.tracker === undefined || cfg.tracker === '') cfg.tracker = 'none';
   // setup: 'done' once /shipline-setup has run; absent otherwise.
   if (cfg.setup === null) cfg.setup = undefined;
   cfg.skills = Array.isArray(cfg.skills) ? cfg.skills.filter((n) => typeof n === 'string' && n) : [];
@@ -599,13 +616,13 @@ export function findSection(markdown, heading) {
 
 export const MIN_SECTION_CHARS = 20;
 
-// Problems with the required sections of an artifact: '<heading> (no heading)' or '<heading> (empty)', in order.
+// Problems with the required sections of an artifact: '<heading> (no heading)' or '<heading> (too short: ...)', in order.
 export function sectionProblems(markdown, sections) {
   const problems = [];
   for (const h of Array.isArray(sections) ? sections : []) {
     const sec = findSection(markdown, h);
     if (!sec.found) problems.push(`${h} (no heading)`);
-    else if (sec.text.replace(/\s/g, '').length < MIN_SECTION_CHARS) problems.push(`${h} (empty)`);
+    else if (sec.text.replace(/\s/g, '').length < MIN_SECTION_CHARS) problems.push(`${h} (too short: write at least ${MIN_SECTION_CHARS} characters under it)`);
   }
   return problems;
 }
@@ -618,6 +635,8 @@ export function sectionProblems(markdown, sections) {
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 const RESERVED = new Set(['{', '}', '!', 'if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'while', 'until']);
 const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+// A word that starts with a command substitution of a download: $(curl ...) or `wget ...`.
+const NET_SUBST = /^\s*(?:\$\(|`)\s*(?:curl|wget)\b/;
 
 const baseName = (w) => path.posix.basename(String(w).replace(/\\/g, '/')).replace(/\.(exe|cmd|bat)$/i, '');
 
@@ -745,7 +764,8 @@ function tokenize(text) {
         }
         if (delim) heredocs.push(delim);
       } else if (text[i + 1] === '(') {
-        i++; // process substitution: the `(` becomes a separator
+        i++; // process substitution: marked, and the `(` becomes a separator
+        toks.push({ t: 'psub' });
       } else {
         i++;
         toks.push({ t: 'redir', v: '<' });
@@ -840,6 +860,8 @@ function makeParts(argv, redirects, pipedFrom, depth, cd) {
     if (inner.length) {
       if (!inner[0].pipedFrom) inner[0].pipedFrom = pipedFrom;
       inner[inner.length - 1].redirects.push(...redirects);
+      // `sh -c "$(curl ...)"` runs what it downloads: keep the shell as a part of its own for pipe_to_shell.
+      if (NET_SUBST.test(u.inner)) return [{ argv: u.argv, tool: baseName(u.argv[0]), args: u.argv.slice(1), redirects: [], pipedFrom, cd, netSubst: true }, ...inner];
       return inner;
     }
   }
@@ -858,8 +880,17 @@ function parseInner(text, depth, cd0) {
   let pending = null;
   let piped = null;
   let cd = cd0;
+  let afterPsub = false; // the last token was `<(`
+  let psubShell = null; // the part that has a `<(...)` argument whose first command comes next
   const finish = (pipe) => {
     const made = argv.length || redirects.length ? makeParts(argv, redirects, piped, depth, cd) : [];
+    if (afterPsub) {
+      psubShell = made.length ? made[made.length - 1] : null;
+      afterPsub = false;
+    } else if (psubShell && made.length) {
+      psubShell.psubFrom = made[0];
+      psubShell = null;
+    }
     for (const p of made) {
       if (p.tool === 'cd' && p.args[0] && !p.args[0].startsWith('-')) cd = composeCd(cd, p.args[0]);
       parts.push(p);
@@ -871,6 +902,7 @@ function parseInner(text, depth, cd0) {
   };
   for (const tk of toks) {
     if (tk.t === 'sep') finish(tk.pipe);
+    else if (tk.t === 'psub') afterPsub = true;
     else if (tk.t === 'redir') pending = tk.v;
     else if (pending) {
       if (pending !== '<<<') redirects.push({ op: pending, target: tk.v });
@@ -945,24 +977,35 @@ export function repoRelative(root, abs) {
   return rel.split(path.sep).join('/');
 }
 
-// Credential files: .env (not the .example/.sample/.template ones), keys, ssh/aws/gcloud/kube config, .npmrc, .pypirc.
+// Credential files, matched without regard to case: .env (not the .example/.sample/.template ones), .envrc, keys,
+// certificate bundles, ssh/aws/docker/gcloud/kube config, and the token files .netrc, .git-credentials, .pgpass,
+// .npmrc, .pypirc and credentials.json. An argument inside ~/.ssh, ~/.aws or ~/.docker, or the folder itself, counts.
 export function isCredentialPath(file, ctx, part) {
   if (typeof file !== 'string' || !file) return false;
-  const abs = resolveTarget(ctx, part || null, file).replace(/\\/g, '/');
+  const abs = resolveTarget(ctx, part || null, file).replace(/\\/g, '/').toLowerCase();
   const name = path.posix.basename(abs);
   if (/^\.env(\..+)?$/.test(name) && !/^\.env\.(example|sample|template)$/.test(name)) return true;
   if (/\.(pem|key)$/.test(name) || /^id_(rsa|ed25519)/.test(name)) return !/\.pub$/.test(name);
-  if (name === '.npmrc' || name === '.pypirc') return true;
-  const home = homeOf().replace(/\\/g, '/').replace(/\/$/, '');
+  if (/\.(p12|pfx)$/.test(name)) return true;
+  if (['.envrc', '.netrc', '.git-credentials', '.pgpass', '.npmrc', '.pypirc', 'credentials.json'].includes(name)) return true;
+  if (abs.endsWith('/.docker/config.json')) return true;
+  const home = homeOf().replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
   const inHome = (sub) => abs === `${home}/${sub}` || abs.startsWith(`${home}/${sub}/`);
-  return inHome('.ssh') || abs === `${home}/.aws/credentials` || inHome('.config/gcloud') || abs === `${home}/.kube/config`;
+  return inHome('.ssh') || inHome('.aws') || inHome('.docker') || inHome('.config/gcloud') || abs === `${home}/.kube/config`;
+}
+
+// Does a glob (a Grep tool's `glob`) match a credential file name, in the folder it names or any below it?
+const CREDENTIAL_SAMPLES = ['.env', '.env.local', '.env.production', 'id_rsa', 'id_ed25519', 'key.pem', 'server.key', 'cert.p12', 'cert.pfx', '.envrc', '.netrc', '.git-credentials', '.pgpass', '.npmrc', '.pypirc', 'credentials.json', '.docker/config.json'];
+export function globMatchesCredential(glob) {
+  if (typeof glob !== 'string' || !glob) return false;
+  return CREDENTIAL_SAMPLES.some((name) => ['', 'a/', 'a/b/'].some((prefix) => globMatches(glob, prefix + name)));
 }
 
 const globCache = new Map();
 export function globMatches(glob, rel) {
   let re = globCache.get(glob);
   if (!re) {
-    re = globToRegExp(String(glob));
+    re = new RegExp(globToRegExp(String(glob)).source, 'i'); // paths match without regard to case
     globCache.set(glob, re);
   }
   return re.test(rel);
@@ -1274,10 +1317,12 @@ function pushInfo(p, ctx) {
 
 const hitsDefault = (info, ctx) => info.all || info.targets.some((t) => ctx.defaultBranches().includes(t));
 
-const READERS = {
-  cat: [], less: [], more: [], bat: [], head: ['-n', '-c'], tail: ['-n', '-c'], xxd: ['-l', '-s', '-c', '-g', '-o'],
-  base64: ['-w'], strings: ['-n'], grep: ['-A', '-B', '-C', '-m', '-e', '-f'], awk: ['-F', '-v', '-f'], sed: ['-e', '-f'],
-};
+// Commands that name a path without printing what is in it. `cp` and `mv` are safe unless the destination prints.
+// (`cd` and `tee` are here too: one only moves, the other only writes its input.)
+const NON_PRINTING = new Set(['ls', 'stat', 'test', '[', 'touch', 'rm', 'mv', 'cp', 'chmod', 'chown', 'file', 'wc', 'du', 'cd', 'tee']);
+const PRINTING_DESTINATIONS = new Set(['/dev/stdout', '/dev/stderr', '/dev/tty', '-']);
+// git subcommands that print file contents; the rest (add, rm, mv, status, check-ignore, ...) never do.
+const GIT_PRINTING = new Set(['diff', 'show', 'blame', 'annotate', 'grep', 'cat-file', 'difftool']);
 const SECRET_VAR = /\$\{?(?:AWS_SECRET_ACCESS_KEY|GITHUB_TOKEN|[A-Za-z0-9_]*_(?:TOKEN|SECRET|KEY|PASSWORD))\b/;
 const INTERPRETER = /^(sh|bash|zsh|dash|python[\d.]*|node|perl|ruby)$/;
 
@@ -1304,6 +1349,14 @@ export function matchRail(part, rail, ctx) {
       return null;
     }
     case 'pipe_to_shell': {
+      // bash <(curl ...), source <(wget ...), . <(...): a download run through process substitution.
+      if (part.psubFrom && /^(sh|bash|zsh|dash|ksh|source|\.)$/.test(part.tool) && /^(curl|wget)$/.test(part.psubFrom.tool)) {
+        return `running a download through process substitution with ${part.tool}`;
+      }
+      // sh -c "$(curl ...)", eval "$(wget ...)": a download run through command substitution.
+      if (part.netSubst || ((INTERPRETER.test(part.tool) || part.tool === 'eval') && part.args.some((a) => NET_SUBST.test(a)))) {
+        return `running a downloaded script with ${part.tool}`;
+      }
       if (!INTERPRETER.test(part.tool)) return null;
       let from = part.pipedFrom;
       let net = false;
@@ -1320,16 +1373,26 @@ export function matchRail(part, rail, ctx) {
       const t = part.tool;
       if (t === 'printenv' || (t === 'env' && part.argv.length === 1)) return 'printing the environment (it may hold secrets)';
       if ((t === 'echo' || t === 'printf') && part.args.some((a) => SECRET_VAR.test(a))) return `printing a secret variable with ${brief(part)}`;
-      if (Object.prototype.hasOwnProperty.call(READERS, t)) {
-        if (t === 'sed' && part.args.some((a) => a === '--in-place' || /^-[a-zA-Z]*i/.test(a))) return null;
-        let files = positionals(part.args, READERS[t]);
-        const scriptGiven = part.args.some((a) => a === '-e' || a === '-f' || a === '--regexp' || a === '--file');
-        if ((t === 'grep' || t === 'awk' || t === 'sed') && !scriptGiven) files = files.slice(1);
-        const reads = part.redirects.filter((r) => r.op === '<').map((r) => r.target);
-        const hit = [...files, ...reads].find((f) => isCredentialPath(f, ctx, part));
-        if (hit) return `reading ${hit} with ${t}`;
+      if (t === 'sed' && part.args.some((a) => a === '--in-place' || /^-[a-zA-Z]*i/.test(a))) return null; // a write: the write rules apply
+      if (t === 'cp' || t === 'mv') {
+        // Safe unless the destination prints (/dev/stdout, /dev/stderr, /dev/tty or -); then the sources are printed.
+        if (part.args.some((a) => a === '-t' || a === '--target-directory')) return null;
+        const args = positionals(part.args, ['-S', '--suffix']);
+        const dest = args[args.length - 1];
+        if (!PRINTING_DESTINATIONS.has(dest)) return null;
+        const hit = args.slice(0, -1).find((f) => isCredentialPath(f, ctx, part));
+        return hit ? `copying ${hit} to ${dest} with ${t}` : null;
       }
-      return null;
+      if (NON_PRINTING.has(t)) return null;
+      if (t === 'git' && !GIT_PRINTING.has(part.sub) && !(part.sub === 'log' && part.args.some((a) => a === '-p' || a === '--patch' || a === '-u'))) return null;
+      // Every non-flag argument (and each `< file` redirection) may be a file whose contents get printed.
+      let files = positionals(part.args, t === 'grep' ? ['-A', '-B', '-C', '-m', '-e', '-f'] : t === 'head' || t === 'tail' ? ['-n', '-c'] : []);
+      const scriptGiven = part.args.some((a) => a === '-e' || a === '-f' || a === '--regexp' || a === '--file');
+      if (/^(grep|egrep|fgrep|rg|ag|ack|awk|sed)$/.test(t) && !scriptGiven) files = files.slice(1); // the pattern or script, not a file
+      if (t === 'git') files = files.map((f) => (f.includes(':') ? f.slice(f.lastIndexOf(':') + 1) : f)); // git show HEAD:.env
+      const reads = part.redirects.filter((r) => r.op === '<').map((r) => r.target);
+      const hit = [...files, ...reads].find((f) => isCredentialPath(f, ctx, part));
+      return hit ? `reading ${hit} with ${t === 'git' ? `git ${part.sub}` : t}` : null;
     }
     case 'deploy':
       return matchAction(part, 'deploy', ctx) ? `running a deploy command (${brief(part)})` : null;
@@ -1454,8 +1517,9 @@ export function scopeOf(root, manifest, planText, cfg) {
   return { changed, sensitive, outside_plan };
 }
 
-// "2 test files, 1 file outside the plan", or a note when there is nothing to report.
-export function scopeText(scope, cfg) {
+// "2 test files, 1 file outside the plan", or a note when there is nothing to report. hasPlan false (the workflow has
+// no plan stage) leaves the plan out of the text.
+export function scopeText(scope, cfg, hasPlan = true) {
   if (!scope || scope.changed === null) return (scope && scope.note) || 'unknown';
   const kinds = {};
   for (const f of scope.sensitive) {
@@ -1465,6 +1529,7 @@ export function scopeText(scope, cfg) {
   const label = { test: 'test', lint: 'lint config', CI: 'CI config', other: 'sensitive' };
   const bits = Object.entries(kinds).map(([k, n]) => `${n} ${label[k]} file${n === 1 ? '' : 's'}`);
   if (scope.outside_plan && scope.outside_plan.length) bits.push(`${scope.outside_plan.length} file${scope.outside_plan.length === 1 ? '' : 's'} outside the plan`);
+  if (!bits.length && !hasPlan) return 'no test, lint or CI files touched';
   if (!bits.length) return scope.outside_plan === null ? 'no test, lint or CI files touched (the plan lists no files, so changes outside it are not checked)' : 'no test, lint or CI files touched, nothing outside the plan';
   return bits.join(', ');
 }

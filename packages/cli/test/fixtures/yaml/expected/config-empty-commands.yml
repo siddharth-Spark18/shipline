@@ -3,8 +3,9 @@
 # {key} = ticket key (Jira key, or issue-123 for GitHub; dropped when there is no ticket), {slug} = short task name, {type} = workflow id.
 branch_pattern: "{type}/{key}-{slug}"
 
-# Where tickets live: jira | github. Jira is read through the Atlassian MCP when it is connected; GitHub Issues
-# through the `gh` CLI. Shipline ships no tracker code and only reads tickets. Any other value skips the ticket stage.
+# Where tickets live: none | github | jira. With none (the default) the ticket stage is skipped. Jira is read
+# through the Atlassian MCP when it is connected; GitHub Issues through the `gh` CLI. Shipline ships no tracker
+# code and only reads tickets. Any other value skips the ticket stage too.
 tracker: jira
 
 # Optional. The verify stage runs only the commands you set here. `init` fills them in from the repo's files.

@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { appendFileSync, cpSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { BIN, CLI_ROOT, FIXTURES, removeDir, run, tmpDir } from './helpers.mjs';
+import { BIN, CLI_ROOT, makeRepo, removeDir, run, tmpDir } from './helpers.mjs';
 import { PACKAGE_VERSION, templateHashes, sha256 } from '../src/hashes.mjs';
 
 const require = createRequire(import.meta.url);
@@ -34,9 +34,10 @@ function packFiles() {
 describe('package.json', () => {
   test('name, version, bin and files', () => {
     assert.equal(pkg.name, '@forgeyard/shipline');
-    assert.equal(pkg.version, '0.14.0');
+    assert.equal(pkg.version, '1.0.0');
     assert.deepEqual(pkg.bin, { shipline: 'bin/shipline.mjs' });
-    for (const f of ['bin', 'src', 'templates', 'ui-dist']) assert.ok(pkg.files.includes(f), f);
+    // npm adds LICENSE on its own but not CHANGELOG.md; both are listed (1.0 plan, item 1-2).
+    for (const f of ['bin', 'src', 'templates', 'ui-dist', 'CHANGELOG.md', 'LICENSE']) assert.ok(pkg.files.includes(f), f);
     assert.ok(!pkg.files.includes('test'));
     // Prepublish plan: the one runtime dependency is @inquirer/prompts (interactive init).
     assert.deepEqual(Object.keys(pkg.dependencies || {}), ['@inquirer/prompts'], 'the only dependency is @inquirer/prompts');
@@ -49,7 +50,7 @@ describe('package.json', () => {
     assert.equal(pkg.publishConfig.access, 'public');
     assert.match(pkg.repository.url, /github\.com\/.+\/shipline/);
     assert.equal(pkg.repository.directory, 'packages/cli');
-    assert.equal(typeof pkg.license, 'string');
+    assert.equal(pkg.license, 'MIT');
     assert.match(pkg.description, /npx @forgeyard\/shipline init/);
     assert.equal(pkg.engines.node, '>=18');
     assert.equal(pkg.scripts.prepack, 'node scripts/build-ui.mjs', 'prepack builds ui-dist');
@@ -84,11 +85,14 @@ describe('npm pack --dry-run', () => {
       'src/uninstall.mjs',
       'src/init-prompts.mjs',
       'templates/claude/skills/shipline-workflow/SKILL.md',
+      'LICENSE',
+      'CHANGELOG.md',
     ]) {
       assert.ok(files.includes(f), f);
     }
     assert.ok(!files.includes('templates/shipline/gitignore'), 'the gitignore template is gone');
     assert.ok(!files.some((f) => f.startsWith('test/') || f.startsWith('scripts/')), files.filter((f) => /^(test|scripts)\//.test(f)).join(', '));
+    assert.ok(!files.some((f) => f.startsWith('examples/') || f.includes('todo-node')), 'the example app is not in the package');
   });
 
   test('includes ui-dist/index.html', { skip: existsSync(path.join(CLI_ROOT, 'ui-dist', 'index.html')) ? false : 'ui-dist is not built here (prepack builds it on publish)' }, () => {
@@ -140,20 +144,31 @@ describe('npm pack --dry-run', () => {
 });
 
 describe('the bin', () => {
-  test('--help names the scoped package and the upgrade command', () => {
+  test('--help names the scoped package and every command; each command\'s --help has its usage', () => {
     const r = run(process.execPath, [BIN, '--help'], { cwd: CLI_ROOT });
     assert.equal(r.code, 0);
-    assert.match(r.stdout, /npx @forgeyard\/shipline init \[dir\] \[--yes\] \[--dry-run\]/);
-    assert.match(r.stdout, /npx @forgeyard\/shipline uninstall \[dir\] \[--yes\] \[--dry-run\] \[--purge\]/);
-    assert.match(r.stdout, /npx @forgeyard\/shipline upgrade \[dir\] \[--yes\] \[--dry-run\] \[--force\]/);
-    assert.match(r.stdout, /npx @forgeyard\/shipline ui \[dir\]/);
+    assert.match(r.stdout, /npx @forgeyard\/shipline <command> \[options\]/);
+    for (const c of ['init', 'upgrade', 'uninstall', 'ui']) assert.match(r.stdout, new RegExp(`^ {2}${c} `, 'm'), c);
     assert.ok(!UNSCOPED.test(r.stdout));
+    const usage = {
+      init: /npx @forgeyard\/shipline init \[--dir <path>\] \[--yes\] \[--dry-run\]/,
+      uninstall: /npx @forgeyard\/shipline uninstall \[--dir <path>\] \[--yes\] \[--dry-run\] \[--purge\]/,
+      upgrade: /npx @forgeyard\/shipline upgrade \[--dir <path>\] \[--yes\] \[--dry-run\] \[--force\]/,
+      ui: /npx @forgeyard\/shipline ui \[--dir <path>\] \[--port <n>\] \[--no-open\]/,
+    };
+    for (const [c, re] of Object.entries(usage)) {
+      const h = run(process.execPath, [BIN, c, '--help'], { cwd: CLI_ROOT });
+      assert.equal(h.code, 0, c);
+      assert.match(h.stdout, re, c);
+      assert.ok(!UNSCOPED.test(h.stdout), c);
+    }
   });
 
-  test('an unknown command prints the help and exits 1', () => {
+  test('an unknown command prints the help and exits 2', () => {
     const r = run(process.execPath, [BIN, 'bogus'], { cwd: CLI_ROOT });
-    assert.equal(r.code, 1);
+    assert.equal(r.code, 2);
     assert.match(r.stdout, /Usage:/);
+    assert.match(r.stderr, /unknown command bogus/);
   });
 });
 
@@ -184,16 +199,46 @@ describe('known-hashes.json', () => {
     }
   });
 
-  test('is seeded with 0.6.0: every Shipline file of the legacy-0.6 fixture (brown-bg-tracker) is known as 0.6.0', () => {
-    const legacy = path.join(FIXTURES, 'legacy-0.6');
-    for (const p of Object.keys(KNOWN)) {
-      if (p.includes('#')) continue;
-      const file = path.join(legacy, p);
-      if (!existsSync(file)) continue;
-      assert.equal(KNOWN[p][sha256(readFileSync(file))], '0.6.0', p);
+  // 1.0 plan, item 3: the upgrade history starts over at 1.0.0.
+  test('holds only 1.0.0 hashes: one per path, the current template\'s', () => {
+    const current = templateHashes();
+    assert.deepEqual(Object.keys(KNOWN).sort(), Object.keys(current).sort());
+    for (const [p, byHash] of Object.entries(KNOWN)) {
+      assert.deepEqual(byHash, { [current[p]]: '1.0.0' }, p);
     }
-    assert.ok(Object.values(KNOWN['CLAUDE.md#shipline']).includes('0.6.0'));
-    assert.ok(Object.values(KNOWN['.claude/settings.json#shipline']).includes('0.6.0'));
+  });
+
+  test('every Shipline file a fresh 1.0 init writes (and its CLAUDE.md block and settings part) is known as 1.0.0', () => {
+    const dir = makeRepo();
+    try {
+      const v = JSON.parse(readFileSync(path.join(dir, '.shipline', 'bin', 'VERSION'), 'utf8'));
+      assert.equal(v.package, '1.0.0');
+      let checked = 0;
+      for (const [p, h] of Object.entries(v.files)) {
+        if (!KNOWN[p]) continue; // files known-hashes.json doesn't track (none expected beyond the team-owned ones)
+        assert.equal(KNOWN[p][h], '1.0.0', p);
+        if (!p.includes('#')) assert.equal(sha256(readFileSync(path.join(dir, p))), h, p);
+        checked++;
+      }
+      assert.ok(checked >= 10, `checked ${checked} files`);
+      assert.equal(KNOWN['CLAUDE.md#shipline'][v.files['CLAUDE.md#shipline']], '1.0.0');
+      assert.equal(KNOWN['.claude/settings.json#shipline'][v.files['.claude/settings.json#shipline']], '1.0.0');
+    } finally {
+      removeDir(dir);
+    }
+  });
+});
+
+// 1.0 plan, item 3: known-stub-rules.mjs keeps only the 1.0 stubs, one per shipped rules file.
+describe('known-stub-rules.mjs', () => {
+  test('one hash per shipped rules file: the LF-normalised 1.0 template', async () => {
+    const { KNOWN_STUB_RULES } = await import('../src/known-stub-rules.mjs');
+    const dir = path.join(CLI_ROOT, 'templates', 'shipline', 'rules');
+    const shipped = readdirSync(dir).filter((f) => f.endsWith('.md')).sort();
+    assert.deepEqual(Object.keys(KNOWN_STUB_RULES).sort(), shipped);
+    for (const f of shipped) {
+      assert.deepEqual(KNOWN_STUB_RULES[f], [sha256(readFileSync(path.join(dir, f), 'utf8').replace(/\r\n/g, '\n'))], f);
+    }
   });
 });
 
@@ -243,6 +288,32 @@ describe('.github/workflows/publish.yml', () => {
     }
     assert.match(yml, /\$\{GITHUB_REF_NAME\}" != "v\$\{version\}"/);
     assert.match(yml, /working-directory: packages\/cli/);
-    assert.match(yml, /NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/);
+    // Trusted publishing (OIDC): no token secret, npm 11.5.1+ via Node 24, and an already-published version is skipped.
+    assert.doesNotMatch(yml, /NPM_TOKEN|NODE_AUTH_TOKEN/);
+    assert.match(yml, /node-version: 24/);
+    assert.ok(yml.indexOf('npm view "@forgeyard/shipline@${version}" version') < yml.indexOf('npm publish --access public --provenance'));
+    assert.match(yml, /if: steps\.published\.outputs\.skip != 'true'/);
+  });
+
+  test('fails when CHANGELOG.md has no heading for the version, before publishing', () => {
+    const i = yml.indexOf('packages/cli/CHANGELOG.md');
+    assert.ok(i > 0 && i < yml.indexOf('npm publish'), 'the CHANGELOG check runs before npm publish');
+    assert.match(yml, /grep -qF "## \[\$\{version\}\]" packages\/cli\/CHANGELOG\.md/);
+  });
+});
+
+describe('LICENSE and CHANGELOG.md', () => {
+  test('MIT, 2026 Siddharth Paneri, at the repo root and in the package (same text)', () => {
+    const root = readFileSync(path.join(REPO, 'LICENSE'), 'utf8');
+    assert.match(root, /^MIT License\n/);
+    assert.match(root, /Copyright \(c\) 2026 Siddharth Paneri/);
+    assert.equal(readFileSync(path.join(CLI_ROOT, 'LICENSE'), 'utf8'), root);
+  });
+
+  test('CHANGELOG.md has a Keep a Changelog heading for this version, and none before 1.0.0', () => {
+    const log = readFileSync(path.join(CLI_ROOT, 'CHANGELOG.md'), 'utf8');
+    assert.match(log, /Keep a Changelog/);
+    assert.ok(log.includes(`## [${PACKAGE_VERSION}] - `), `## [${PACKAGE_VERSION}]`);
+    assert.deepEqual([...log.matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)].map((m) => m[1]).filter((v) => v.startsWith('0.')), []);
   });
 });

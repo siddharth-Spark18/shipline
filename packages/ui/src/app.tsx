@@ -87,7 +87,7 @@ function RepoApp() {
         {view === 'chat' ? (
           <ChatPage
             versionState={status.data?.versionState}
-            needsUpgrade={status.data?.needsUpgrade}
+            versionMessage={status.data?.versionMessage ?? null}
             chats={chats}
             selectedId={selectedId}
             onSelect={select}

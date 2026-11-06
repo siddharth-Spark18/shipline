@@ -138,7 +138,7 @@ describe('required sections on advance', () => {
     write('sections-task', 'plan.md', `# Plan\n\n## scope:\n\n${TEXT}\n\n## Verification\n\nTBD\n`);
     const r = stage(dir, ['advance'], session);
     assert.equal(r.code, 1);
-    assert.equal(r.stderr, 'shipline: plan.md is missing: Files to touch (no heading), Verification (empty).\n');
+    assert.equal(r.stderr, 'shipline: plan.md is missing: Files to touch (no heading), Verification (too short: write at least 20 characters under it).\n');
     assert.equal(stageOf('sections-task', 'plan').status, 'in_progress');
     write('sections-task', 'plan.md', PLAN);
     assert.equal(stage(dir, ['advance'], session).code, 0);

@@ -471,7 +471,8 @@ describe('outside git', () => {
     const scope = JSON.parse(readFileSync(mf, 'utf8')).checks.scope;
     assert.equal(scope.changed, null);
     // Through to verify: implement (guide) then verify (checks, confirm_to_advance) asks only the advance question.
-    assert.equal(stage(plain, ['skip'], 'ng1').code, 0); // ticket is optional
+    // tracker: none (the default) skipped the optional ticket stage on start.
+    assert.deepEqual(JSON.parse(readFileSync(mf, 'utf8')).stages[0].skipped.via, 'optional');
     writeFileSync(path.join(storeOf(plain), 'tasks', slug, 'implementation.md'), 'done\n');
     assert.equal(stage(plain, ['advance'], 'ng1').code, 0);
     writeFileSync(path.join(storeOf(plain), 'tasks', slug, 'verification.md'), '# V\n\n## Checklist\n\n- [x] it works as intended\n');

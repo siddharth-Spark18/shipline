@@ -43,7 +43,7 @@ export function ghStatus(cache = {}, now = Date.now) {
 // { tracker: 'jira' | 'github', status } for the chat, or null when there is nothing to report.
 //   jira: from the chat's system/init mcp_servers (null until the chat has started).
 //   github: from ghStatus, only when `atTicketStage`, so other chats never start gh.
-// Any other tracker has no notice (its ticket stage is skipped).
+// 'none' and any other tracker have no notice (their ticket stage is skipped).
 export async function ticketStatus(
   tracker,
   initInfo,

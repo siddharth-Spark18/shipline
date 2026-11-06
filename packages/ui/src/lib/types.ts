@@ -9,7 +9,8 @@ export interface ApiErrorEnvelope {
 
 // --- Status ---
 
-export type VersionState = 'same' | 'repo-older' | 'repo-newer';
+/** 'pre-1.0': set up with a Shipline before 1.0 (uninstall, then init); the others compare interfaces. */
+export type VersionState = 'same' | 'repo-older' | 'repo-newer' | 'pre-1.0';
 
 /** Shape of `readRepoVersion` in packages/cli/src/interface.mjs. */
 export interface VersionInfo {
@@ -29,8 +30,8 @@ export interface Status {
   root: string;
   /** The task store for this repo, outside the repo (under ~/.shipline). */
   storeDir: string;
-  /** True when the repo's interface is below 3: tasks still live in the repo and chat is disabled. */
-  needsUpgrade: boolean;
+  /** For a pre-1.0 repo, the guidance `upgrade` also gives (uninstall, then init); null otherwise. */
+  versionMessage: string | null;
 }
 
 // --- Diff ---
@@ -540,6 +541,9 @@ export interface ChatDetail {
   tasks?: Task[];
 }
 
+/** Where a repo's tickets live: `none` (the default) skips the ticket stage. */
+export type TrackerId = 'none' | 'github' | 'jira';
+
 export type TrackerConnection = 'connected' | 'needs-auth' | 'failed' | 'missing';
 
 export interface TicketStatus {
@@ -593,7 +597,7 @@ export interface InstallSelection {
   stageAgents: Record<string, string | null>;
   skills: string[];
   commands: { test: string; lint: string; build: string };
-  tracker: 'jira' | 'github';
+  tracker: TrackerId;
   /** Optional: missing means standard. */
   confirmations?: 'standard' | 'light';
   ci: boolean;
@@ -609,7 +613,7 @@ export interface InstallInfo {
   repoAgents: string[];
   repoSkills: string[];
   detected: { test: string; lint: string; build: string; sources: Record<string, string> };
-  trackerDefault: 'jira' | 'github';
+  trackerDefault: TrackerId;
   uiDetected: boolean;
   /** What `init --yes` would choose. */
   defaults: InstallSelection;

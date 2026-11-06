@@ -139,7 +139,7 @@ describe('enforcement output', () => {
     assert.equal(
       h.permissionDecisionReason,
       'Shipline (Feature workflow, task add-export): Edit on src/a.js needs the "Plan" stage to be done first. ' +
-        'Finish it, then record it with: node .shipline/bin/stage.mjs advance Do not work around this; tell the developer what is missing.',
+        'Finish it, then record it with: node .shipline/bin/stage.mjs advance. Do not work around this; tell the developer what is missing.',
     );
   });
 
@@ -155,7 +155,7 @@ describe('enforcement output', () => {
     assert.equal(r.code, 0);
     const msg =
       'Shipline (Spike workflow, task try-it): Edit on src/a.js needs the "Explore" stage to be done first. ' +
-      'Finish it, then record it with: node .shipline/bin/stage.mjs advance';
+      'Finish it, then record it with: node .shipline/bin/stage.mjs advance.';
     assert.deepEqual(r.json, {
       systemMessage: `Shipline reminder: ${msg}`,
       hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: `Reminder: ${msg}` },

@@ -1,68 +1,25 @@
-// `shipline upgrade`: brings a repo that already has Shipline up to this version, and moves its task data
-// into the store outside the repo. Never commits; stages `git rm` only. Node 18+, no dependencies.
-import { execFileSync } from 'node:child_process';
-import {
-  cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync,
-} from 'node:fs';
+// `shipline upgrade`: brings a repo that already has Shipline up to this version: refreshes the files Shipline
+// owns that the team has not edited, and the shared CLAUDE.md block and settings entries. Never commits.
+// Node 18+, no dependencies.
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline/promises';
-import { detectEol, parseYaml, toEol } from '../templates/shipline/bin/lib.mjs';
+import { detectEol, toEol } from '../templates/shipline/bin/lib.mjs';
 import {
   CI_WORKFLOW, CI_WORKFLOW_TEMPLATE, CLAUDE_MD_KEY, END, PACKAGE_VERSION, SETTINGS_KEY, START, TEMPLATES, VERSION_FILE,
   canonicalSettingsPart, claudeMdBlock, claudeMdSection, isShiplineHookEntry, ownedTemplateFiles, sha256, templateSettings,
 } from './hashes.mjs';
-import { INTERFACE, STORE_INTERFACE, compareInterface, readRepoVersion } from './interface.mjs';
+import { INTERFACE, compareInterface, isPreOne, preOneMessage, readRepoVersion, semverGt } from './interface.mjs';
 import { mergeSettingsObject, parseSettings } from './init.mjs';
-import { detectCommands } from './detect-commands.mjs';
 import { KNOWN_STUB_RULES } from './known-stub-rules.mjs';
-import { configLayout } from './setup-schema.mjs';
-import { encodePath, shiplineHome, storeDir } from './store.mjs';
-import { emitConfig, emitWorkflow } from './yaml-emit.mjs';
 
 const require = createRequire(import.meta.url);
 const KNOWN = require('./known-hashes.json');
-const RECENT_MS = 30 * 60 * 1000;
-const REMOVED_CONFIG_KEYS = ['artifact_root', 'folder_pattern'];
-const COMMAND_KEYS = ['test', 'lint', 'build'];
-// The verify block that every shipped workflow had before 0.13.0; an unedited one becomes `actions: [commit, pr]`.
-const SHIPPED_VERIFY_REGEX = '\\bgit\\s+commit\\b|\\bgh\\s+pr\\s+create\\b';
-const GUARDRAILS_OFF_COMMENT = '# Guardrails are off for repos set up before 0.13.0. Turn them on here or in Setup → Guardrails.';
-const RAIL_IDS = ['force_push_default', 'push_default', 'pipe_to_shell', 'print_credentials', 'read_credentials', 'deploy', 'migrate', 'agent_config'];
-// Appended to a team's edited rules/jira.md when it becomes rules/ticket.md.
-const TICKET_DEFAULTS_HEADING = '## Shipline defaults (0.10.0)';
-const TICKET_DEFAULTS = [
-  'The stage is now called "ticket" and works with Jira or GitHub Issues (`tracker:` in `.shipline/config.yml`). Read the ticket read-only.',
-  '- Jira: if the Atlassian tools are not available (the connector is missing, needs authentication, or failed to start), skip this stage with `stage.mjs skip --reason "Jira not connected"`.',
-  '- GitHub: run `gh issue view <n> --json number,title,body,labels,url,state` and save the result to `ticket.md`. If `gh` is missing, not signed in, or the call fails, skip this stage with `stage.mjs skip --reason "GitHub not connected"`.',
-  'The stage is optional, so don\'t ask the developer before skipping it.',
-].join('\n');
 
 const readText = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : null);
-const posix = (p) => p.split(path.sep).join('/');
 
 // ---------- small helpers ----------
-
-function semverGt(a, b) {
-  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
-  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
-  }
-  return false;
-}
-
-function git(root, args) {
-  return execFileSync('git', args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }).toString();
-}
-
-function isGitRepo(root) {
-  try {
-    return git(root, ['rev-parse', '--is-inside-work-tree']).trim() === 'true';
-  } catch {
-    return false;
-  }
-}
 
 // Line diff (LCS) of two texts, printed with 2 lines of context. Returns indented lines.
 function lineDiff(a, b) {
@@ -103,54 +60,6 @@ function lineDiff(a, b) {
     out.push(`    ${t} ${s}`);
   });
   return out;
-}
-
-// { relative/path: sha256 } for every file under dir.
-function treeHashes(dir) {
-  const out = {};
-  const walk = (d) => {
-    for (const e of readdirSync(d, { withFileTypes: true })) {
-      const full = path.join(d, e.name);
-      if (e.isDirectory()) walk(full);
-      else if (e.isFile()) out[posix(path.relative(dir, full))] = sha256(readFileSync(full));
-    }
-  };
-  walk(dir);
-  return out;
-}
-
-const sameHashes = (a, b) => {
-  const ka = Object.keys(a);
-  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
-};
-
-function leadingHeader(raw) {
-  const lines = raw.split('\n');
-  let n = 0;
-  while (n < lines.length && lines[n].startsWith('#')) n++;
-  if (n === 0) return '';
-  const blank = lines[n] === '' && n < lines.length - 1;
-  return lines.slice(0, n).join('\n') + '\n' + (blank ? '\n' : '');
-}
-
-// Read-only look at the store path (nothing is created), for dry runs and the plan.
-function peekStore(root) {
-  let real = root;
-  try {
-    real = realpathSync(root);
-  } catch {
-    // Keep the given path.
-  }
-  const dir = path.join(shiplineHome(), 'projects', encodePath(real));
-  try {
-    const meta = JSON.parse(readFileSync(path.join(dir, 'repo.json'), 'utf8'));
-    if (meta && typeof meta.root === 'string' && meta.root !== real) {
-      throw new Error(`Shipline store collision at ${dir}: it belongs to ${meta.root}, but this repo is ${real}. Nothing was shared.`);
-    }
-  } catch (e) {
-    if (/collision/.test(e.message)) throw e;
-  }
-  return dir;
 }
 
 // ---------- planning ----------
@@ -280,264 +189,33 @@ function planShared(root, version, force) {
   } else {
     shared.settings = { action: 'skip', diff: lineDiff(pretty(curPart), pretty(newPart)) };
     if (record && record[SETTINGS_KEY]) shared.hashes[SETTINGS_KEY] = record[SETTINGS_KEY];
-    // The read_credentials rail needs the PreToolUse matcher to include Read (added in 0.13.0).
+    // The read_credentials rail needs the PreToolUse matcher to include Read and Grep.
     const pre = settings && settings.hooks && Array.isArray(settings.hooks.PreToolUse) ? settings.hooks.PreToolUse.filter(isShiplineHookEntry) : [];
-    shared.readNotGuarded = !pre.some((e) => e && typeof e.matcher === 'string' && e.matcher.split('|').includes('Read'));
+    shared.readNotGuarded = !pre.some((e) => e && typeof e.matcher === 'string' && ['Read', 'Grep'].every((t) => e.matcher.split('|').includes(t)));
   }
   return shared;
-}
-
-// config.yml loses artifact_root and folder_pattern and gets its empty commands filled in; workflows lose
-// {artifact_root} allow_paths entries, have their `jira` stage renamed `ticket`, and (0.11) get `checks: true` on
-// their verify stage and the default `sections` on plan, verify, root_cause and feasibility stages that set none.
-const DEFAULT_SECTIONS = {
-  plan: ['Scope', 'Files to touch', 'Verification'],
-  verify: ['Checklist'],
-  root_cause: ['Cause', 'Evidence'],
-  feasibility: ['Risks'],
-};
-// (0.14) The stage that keeps its advance question in light confirmations, by shipped workflow id.
-const CHECKPOINT_STAGES = { feature: 'plan', bugfix: 'root_cause' };
-
-function planConfig(root) {
-  const out = { config: null, workflows: [], artifactRoot: null, warnings: [] };
-  const cfgFile = path.join(root, '.shipline', 'config.yml');
-  const raw = readText(cfgFile);
-  if (raw !== null) {
-    let model;
-    try {
-      model = parseYaml(raw) || {};
-    } catch (e) {
-      throw new Error(`.shipline/config.yml could not be parsed (${e.message}). Fix it first; nothing was changed.`);
-    }
-    if (typeof model.artifact_root === 'string' && model.artifact_root.trim()) {
-      out.artifactRoot = model.artifact_root.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
-    }
-    const present = REMOVED_CONFIG_KEYS.filter((k) => Object.prototype.hasOwnProperty.call(model, k));
-    for (const k of present) delete model[k];
-
-    // Commands that are empty or missing are filled from the repo's files; a set command is never touched.
-    const detected = detectCommands(root);
-    const current = model.commands && typeof model.commands === 'object' && !Array.isArray(model.commands) ? model.commands : {};
-    const fills = COMMAND_KEYS.filter((k) => detected[k] && !(typeof current[k] === 'string' && current[k].trim())).map((k) => ({
-      key: k,
-      command: detected[k],
-      source: detected.sources[k],
-    }));
-    if (fills.length) {
-      model.commands = { ...current };
-      for (const f of fills) model.commands[f.key] = f.command;
-    }
-
-    // Guardrails (0.13.0): an existing repo gets every rail off and no protected paths, so nothing it does today starts
-    // asking. Keys that are already there are never touched.
-    const has = (k) => Object.prototype.hasOwnProperty.call(model, k);
-    const guardrails = [];
-    if (!has('rails')) {
-      model.rails = Object.fromEntries(RAIL_IDS.map((id) => [id, 'off']));
-      guardrails.push('rails');
-    }
-    if (!has('rails_commands')) {
-      model.rails_commands = { deploy: [], migrate: [] };
-      guardrails.push('rails_commands');
-    }
-    if (!has('protected_paths')) {
-      model.protected_paths = [];
-      guardrails.push('protected_paths');
-    }
-    if (!has('scope_check')) {
-      model.scope_check = { enabled: true, sensitive_extra: [] };
-      guardrails.push('scope_check');
-    }
-
-    // Confirmations (0.14.0): a repo without the key gets the standard preset (the comment comes from the template's layout).
-    const confirmations = !has('confirmations');
-    if (confirmations) model.confirmations = 'standard';
-
-    if (present.length || fills.length || guardrails.length || confirmations) {
-      let text = emitConfig(model, { layout: configLayout(), raw });
-      if (guardrails.includes('rails')) text = text.replace(/^rails:/m, `${GUARDRAILS_OFF_COMMENT}${detectEol(raw) === '\r\n' ? '\r\n' : '\n'}rails:`);
-      out.config = { keys: present, fills, guardrails, confirmations, text, diff: lineDiff(raw, text) };
-    }
-  }
-
-  const wfDir = path.join(root, '.shipline', 'workflows');
-  if (existsSync(wfDir)) {
-    for (const name of readdirSync(wfDir).filter((n) => n.endsWith('.yml')).sort()) {
-      const wfRaw = readFileSync(path.join(wfDir, name), 'utf8');
-      const hasRoot = wfRaw.includes('{artifact_root}');
-      let model;
-      try {
-        model = parseYaml(wfRaw);
-      } catch (e) {
-        if (hasRoot) throw new Error(`.shipline/workflows/${name} could not be parsed (${e.message}). Fix it first; nothing was changed.`);
-        out.warnings.push(`.shipline/workflows/${name} could not be parsed (${e.message}), so it was not checked for upgrades`);
-        continue;
-      }
-      let changed = 0;
-      let renamed = false;
-      let rewritten = 0;
-      const added = [];
-      const stages = model && Array.isArray(model.stages) ? model.stages : [];
-      for (const stage of stages) {
-        if (!stage || !Array.isArray(stage.blocks)) continue;
-        for (const b of stage.blocks) {
-          // The shipped commit/PR regex, unedited and alone in its block, becomes named actions.
-          if (b && typeof b === 'object' && Object.keys(b).length === 1 && b.bash === SHIPPED_VERIFY_REGEX) {
-            delete b.bash;
-            b.actions = ['commit', 'pr'];
-            rewritten++;
-            continue;
-          }
-          if (!b || !Array.isArray(b.allow_paths)) continue;
-          const kept = b.allow_paths.filter((g) => !String(g).includes('{artifact_root}'));
-          if (kept.length !== b.allow_paths.length) {
-            changed += b.allow_paths.length - kept.length;
-            if (kept.length) b.allow_paths = kept;
-            else delete b.allow_paths;
-          }
-        }
-      }
-      const jira = stages.find((st) => st && st.id === 'jira');
-      if (jira) {
-        if (stages.some((st) => st && st.id === 'ticket')) {
-          out.warnings.push(`.shipline/workflows/${name} has both a jira and a ticket stage; its jira stage was left alone`);
-        } else {
-          jira.id = 'ticket';
-          if (jira.name === 'Jira ticket') jira.name = 'Ticket';
-          renamed = true;
-        }
-      }
-      for (const stage of stages) {
-        if (!stage || typeof stage !== 'object' || Array.isArray(stage)) continue;
-        if (stage.id === 'verify' && !Object.prototype.hasOwnProperty.call(stage, 'checks')) {
-          stage.checks = true;
-          added.push(`checks on ${stage.id}`);
-        }
-        if (DEFAULT_SECTIONS[stage.id] && !Object.prototype.hasOwnProperty.call(stage, 'sections')) {
-          stage.sections = [...DEFAULT_SECTIONS[stage.id]];
-          added.push(`sections on ${stage.id}`);
-        }
-      }
-      // 0.14: the shipped checkpoint (asked in light confirmations) on feature's plan and bugfix's root_cause, when the
-      // file sets no checkpoint anywhere and that stage asks to advance.
-      const cpStage = CHECKPOINT_STAGES[model && model.id];
-      if (cpStage && !stages.some((st) => st && typeof st === 'object' && Object.prototype.hasOwnProperty.call(st, 'checkpoint'))) {
-        const st = stages.find((s) => s && typeof s === 'object' && s.id === cpStage);
-        if (st && st.confirm_to_advance === true) {
-          st.checkpoint = true;
-          added.push(`checkpoint on ${st.id}`);
-        }
-      }
-      if (!changed && !renamed && !added.length && !rewritten) continue;
-      const text = emitWorkflow(model, { header: leadingHeader(wfRaw), raw: wfRaw });
-      out.workflows.push({ file: `.shipline/workflows/${name}`, entries: changed, renamed, added, rewritten, text, diff: lineDiff(wfRaw, text) });
-    }
-  }
-  return out;
 }
 
 const normalizeLf = (text) => toEol(text, '\n');
 const isStubRule = (file, text) => (KNOWN_STUB_RULES[file] || []).includes(sha256(normalizeLf(text)));
 
-// The rules files: an untouched stub (one that matches a shipped version) gets the new default, and rules/jira.md
-// becomes rules/ticket.md. A file the team edited is never overwritten. Missing files are not added.
-// -> { write: [{ file, text, note }], remove: [file], warnings: [] }
+// The rules files: an untouched stub (one that matches a shipped version) gets the new default. A file the team
+// edited is never overwritten. Missing files are not added.
+// -> { write: [{ file, text, note }] }
 function planRules(root) {
-  const out = { write: [], remove: [], warnings: [] };
+  const out = { write: [] };
   const dir = path.join(root, '.shipline', 'rules');
   const tplDir = path.join(TEMPLATES, 'shipline', 'rules');
-  const rel = (f) => `.shipline/rules/${f}`;
-  const tplText = (f) => readFileSync(path.join(tplDir, f), 'utf8');
-
-  const jira = readText(path.join(dir, 'jira.md'));
-  if (jira !== null) {
-    if (existsSync(path.join(dir, 'ticket.md'))) {
-      out.warnings.push(`${rel('jira.md')} was left alone because ${rel('ticket.md')} already exists; merge them by hand and delete jira.md`);
-    } else if (isStubRule('jira.md', jira)) {
-      out.write.push({ file: 'ticket.md', text: toEol(tplText('ticket.md'), detectEol(jira)), note: 'new default (jira.md was unedited)' });
-      out.remove.push('jira.md');
-    } else {
-      const eol = detectEol(jira);
-      const text = toEol(jira.replace(/\s*$/, '') + `\n\n${TICKET_DEFAULTS_HEADING}\n\n${TICKET_DEFAULTS}\n`, eol);
-      out.write.push({ file: 'ticket.md', text, note: 'your jira.md content kept, Jira and GitHub text appended' });
-      out.remove.push('jira.md');
-    }
-  }
-
   if (existsSync(tplDir)) {
-    for (const f of readdirSync(tplDir).filter((n) => n.endsWith('.md') && n !== 'ticket.md').sort()) {
+    for (const f of readdirSync(tplDir).filter((n) => n.endsWith('.md')).sort()) {
       const cur = readText(path.join(dir, f));
       if (cur === null || !isStubRule(f, cur)) continue;
-      const next = toEol(tplText(f), detectEol(cur));
+      const next = toEol(readFileSync(path.join(tplDir, f), 'utf8'), detectEol(cur));
       if (next === cur) continue;
       out.write.push({ file: f, text: next, note: 'unedited stub replaced by the new default' });
     }
   }
   return out;
-}
-
-// What moves into the store from the old in-repo locations.
-function planMigration(root, artifactRoot, storePath, hasGit) {
-  const mig = { tasks: [], state: [], leftovers: [], problems: [], warnings: [], stateRoot: null };
-  const base = path.join(root, artifactRoot);
-  if (existsSync(base) && lstatSync(base).isDirectory()) {
-    for (const e of readdirSync(base, { withFileTypes: true })) {
-      const src = path.join(base, e.name);
-      if (e.isDirectory() && existsSync(path.join(src, 'manifest.json'))) {
-        mig.tasks.push({ name: e.name, src, rel: posix(path.relative(root, src)), dest: path.join(storePath, 'tasks', e.name) });
-      } else {
-        mig.leftovers.push(posix(path.relative(root, src)) + (e.isDirectory() ? '/' : ''));
-      }
-    }
-  }
-
-  const stateRoot = path.join(root, '.shipline', '.state');
-  if (existsSync(stateRoot) && lstatSync(stateRoot).isDirectory()) {
-    mig.stateRoot = stateRoot;
-    for (const e of readdirSync(stateRoot, { withFileTypes: true })) {
-      const src = path.join(stateRoot, e.name);
-      if (e.name === 'ui' && e.isDirectory()) {
-        for (const u of readdirSync(src, { withFileTypes: true })) {
-          if (u.name === 'tmp') continue; // scratch files, not worth moving
-          mig.state.push({ src: path.join(src, u.name), dest: path.join(storePath, 'ui', u.name), dir: u.isDirectory() });
-        }
-      } else if (/^ui\.log(\.1)?$/.test(e.name)) {
-        mig.state.push({ src, dest: path.join(storePath, 'ui', e.name), dir: false });
-      } else {
-        mig.state.push({ src, dest: path.join(storePath, 'state', e.name), dir: e.isDirectory() });
-      }
-    }
-  }
-
-  // Preflight problems.
-  for (const t of mig.tasks) {
-    if (existsSync(t.dest)) mig.problems.push(`${t.rel}: a task named "${t.name}" already exists in the store (${t.dest})`);
-    if (hasGit) {
-      try {
-        const st = git(root, ['status', '--porcelain', '--untracked-files=all', '--', t.rel]).trim();
-        if (st) mig.problems.push(`${t.rel}: has uncommitted or untracked changes; commit or stash them first`);
-      } catch (e) {
-        mig.problems.push(`${t.rel}: git status failed (${String(e.stderr || e.message).trim()})`);
-      }
-    }
-  }
-  for (const s of mig.state) {
-    if (existsSync(s.dest)) mig.problems.push(`${posix(path.relative(root, s.src))}: ${s.dest} already exists in the store`);
-  }
-
-  // Warnings: sessions that look alive.
-  const now = Date.now();
-  for (const s of mig.state) {
-    if (s.dir || !s.src.endsWith('.json') || path.dirname(s.src) !== stateRoot) continue;
-    try {
-      if (now - statSync(s.src).mtimeMs < RECENT_MS) mig.warnings.push(`Claude session ${path.basename(s.src, '.json')} was active in the last 30 minutes; restart it after the upgrade`);
-    } catch {
-      // Gone already.
-    }
-  }
-  if (existsSync(path.join(stateRoot, 'ui', 'lock.json'))) mig.warnings.push('a Shipline UI chat lock is held (.shipline/.state/ui/lock.json); stop the UI chat first');
-  return mig;
 }
 
 // ---------- applying ----------
@@ -549,54 +227,10 @@ class StepError extends Error {
   }
 }
 
-function copyVerified(src, dest, isDir) {
-  mkdirSync(path.dirname(dest), { recursive: true });
-  if (isDir) {
-    cpSync(src, dest, { recursive: true, errorOnExist: true, force: false });
-    if (!sameHashes(treeHashes(src), treeHashes(dest))) throw new Error(`copy of ${src} does not match the original`);
-  } else {
-    cpSync(src, dest, { errorOnExist: true, force: false });
-    if (sha256(readFileSync(src)) !== sha256(readFileSync(dest))) throw new Error(`copy of ${src} does not match the original`);
-  }
-}
-
-// Rewrites task_dir in a migrated state file or sessions.json to the task's absolute store path.
-function rewriteTaskDirs(file, root, artifactRoot, storePath) {
-  const base = path.join(root, artifactRoot);
-  const fix = (entry) => {
-    if (!entry || typeof entry.task_dir !== 'string' || !entry.task_dir) return false;
-    const abs = path.resolve(root, entry.task_dir);
-    const rel = path.relative(base, abs);
-    if (rel.startsWith('..') || path.isAbsolute(rel) || rel === '') return false;
-    const name = rel.split(path.sep)[0];
-    entry.task_dir = path.join(storePath, 'tasks', name);
-    return true;
-  };
-  let data;
-  try {
-    data = JSON.parse(readFileSync(file, 'utf8'));
-  } catch {
-    return; // Not JSON we understand: the verified copy is kept as it is.
-  }
-  const changed = Array.isArray(data) ? data.map(fix).some(Boolean) : fix(data);
-  if (changed) writeFileSync(file, JSON.stringify(data, null, 2) + '\n');
-}
-
 function apply(root, ctx) {
-  const { files, shared, cfgPlan, rulesPlan, mig, hasGit, artifactRoot } = ctx;
-  let step = 'preparing the store';
-  let gitRemoved = [];
+  const { files, shared, rulesPlan } = ctx;
+  let step = 'writing files';
   try {
-    const storePath = storeDir(root); // creates it and runs the repo.json guard
-
-    step = 'copying tasks and state to the store';
-    for (const t of mig.tasks) copyVerified(t.src, t.dest, true);
-    for (const s of mig.state) copyVerified(s.src, s.dest, s.dir);
-    for (const s of mig.state) {
-      if (!s.dir && s.dest.endsWith('.json')) rewriteTaskDirs(s.dest, root, artifactRoot, storePath);
-    }
-
-    step = 'writing files';
     for (const f of [...files.add, ...files.replace]) {
       const abs = path.join(root, f.to);
       mkdirSync(path.dirname(abs), { recursive: true });
@@ -608,53 +242,18 @@ function apply(root, ctx) {
       mkdirSync(path.join(root, '.claude'), { recursive: true });
       writeFileSync(path.join(root, '.claude', 'settings.json'), shared.settings.text);
     }
-    if (cfgPlan.config) writeFileSync(path.join(root, '.shipline', 'config.yml'), cfgPlan.config.text);
-    for (const w of cfgPlan.workflows) writeFileSync(path.join(root, w.file), w.text);
     for (const r of rulesPlan.write) writeFileSync(path.join(root, '.shipline', 'rules', r.file), r.text);
-    for (const f of rulesPlan.remove) rmSync(path.join(root, '.shipline', 'rules', f), { force: true });
-
-    step = 'staging the removal of the old task folders (git rm)';
-    for (const t of mig.tasks) {
-      let tracked = '';
-      if (hasGit) {
-        try {
-          tracked = git(root, ['ls-files', '--', t.rel]).trim();
-        } catch {
-          tracked = '';
-        }
-      }
-      if (tracked) {
-        git(root, ['rm', '-r', '-q', '--', t.rel]);
-        gitRemoved.push(t.rel);
-      }
-      rmSync(t.src, { recursive: true, force: true });
-    }
-
-    step = 'removing .shipline/.state/';
-    if (mig.stateRoot) rmSync(mig.stateRoot, { recursive: true, force: true });
 
     step = 'writing .shipline/bin/VERSION';
     const newVersion = { package: PACKAGE_VERSION, interface: INTERFACE, files: sortKeys({ ...files.hashes, ...shared.hashes }), excluded: ctx.excluded };
     writeFileSync(path.join(root, VERSION_FILE), JSON.stringify(newVersion, null, 2) + '\n');
   } catch (e) {
-    const notes = [];
-    if (gitRemoved.length) notes.push(`The removal of ${gitRemoved.join(', ')} stays staged; to undo it run: git restore --staged ${gitRemoved.join(' ')}`);
-    if (mig.tasks.length) notes.push(`Copies already made in the store were left in place (${path.join(storeDirSafe(root), 'tasks')}); remove them before running upgrade again.`);
-    notes.push('.shipline/bin/VERSION was not rewritten, so the repo still reports its old version.');
-    throw new StepError(`upgrade failed while ${step}`, e, '\n' + notes.join('\n'));
+    throw new StepError(`upgrade failed while ${step}`, e, '\n.shipline/bin/VERSION was not rewritten, so the repo still reports its old version.');
   }
 }
 
 function sortKeys(o) {
   return Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
-}
-
-function storeDirSafe(root) {
-  try {
-    return peekStore(root);
-  } catch {
-    return '<store>';
-  }
 }
 
 // ---------- entry point ----------
@@ -672,8 +271,13 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
   }
 
   const version = readRepoVersion(root);
+  // 1.0 is the first version with an upgrade path. Older repos (including ones with no VERSION file) start over.
+  if (isPreOne(version)) {
+    console.error(`shipline: ${preOneMessage(version)} Nothing was changed.`);
+    return 1;
+  }
   const rel = compareInterface(version, INTERFACE);
-  if (rel === 'repo-newer' || (rel === 'same' && version.package && semverGt(version.package, PACKAGE_VERSION))) {
+  if (rel === 'repo-newer' || (rel === 'same' && semverGt(version.package, PACKAGE_VERSION))) {
     const v = version.package || `interface ${version.interface}`;
     console.error(`shipline: this repo was set up with Shipline ${v}, which is newer than this CLI (${PACKAGE_VERSION}). Run \`npx @forgeyard/shipline@${version.package || 'latest'} ...\` instead. Nothing was changed.`);
     return 1;
@@ -681,25 +285,15 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
 
   let files;
   let shared;
-  let cfgPlan;
   let rulesPlan;
-  let storePath;
-  const hasGit = isGitRepo(root);
   try {
-    storePath = peekStore(root);
     files = planFiles(root, version, force);
     shared = planShared(root, version, force);
-    cfgPlan = planConfig(root);
     rulesPlan = planRules(root);
   } catch (e) {
     console.error(`shipline: ${e.message}`);
     return 1;
   }
-  const artifactRoot = cfgPlan.artifactRoot || 'docs/shipline';
-  const needsMigration = version.interface < STORE_INTERFACE;
-  const mig = needsMigration
-    ? planMigration(root, artifactRoot, storePath, hasGit)
-    : { tasks: [], state: [], leftovers: [], problems: [], warnings: [], stateRoot: null };
 
   const excluded = [...(version.excluded || [])];
   const newVersion = { package: PACKAGE_VERSION, interface: INTERFACE, files: sortKeys({ ...files.hashes, ...shared.hashes }), excluded };
@@ -708,9 +302,7 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
 
   const sharedActions = [shared.claude, shared.settings].filter((s) => s.action !== 'same' && s.action !== 'skip');
   const skipped = [...files.skip, ...(shared.claude.action === 'skip' ? [{ to: 'CLAUDE.md (Shipline block)', diff: shared.claude.diff }] : []), ...(shared.settings.action === 'skip' ? [{ to: '.claude/settings.json (Shipline hook entries and allow rules)', diff: shared.settings.diff }] : [])];
-  const nothingToDo =
-    !files.add.length && !files.replace.length && !files.remove.length && !sharedActions.length &&
-    !cfgPlan.config && !cfgPlan.workflows.length && !rulesPlan.write.length && !rulesPlan.remove.length && !mig.tasks.length && !mig.state.length && !versionChanged;
+  const nothingToDo = !files.add.length && !files.replace.length && !files.remove.length && !sharedActions.length && !rulesPlan.write.length && !versionChanged;
 
   if (nothingToDo) {
     console.log('Already up to date.');
@@ -734,51 +326,17 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
   out.push('', 'Shared files');
   out.push(`  CLAUDE.md block: ${shared.claude.action}`);
   out.push(`  .claude/settings.json (hook entries, allow rules for ~/.shipline): ${shared.settings.action}`);
-  out.push('', 'Config and workflows');
-  if (cfgPlan.config) {
-    const what = [];
-    if (cfgPlan.config.keys.length) what.push(`remove ${cfgPlan.config.keys.join(', ')}`);
-    if (cfgPlan.config.fills.length) what.push('fill empty commands');
-    if (cfgPlan.config.guardrails.length) what.push(`add ${cfgPlan.config.guardrails.join(', ')} (every rail off)`);
-    if (cfgPlan.config.confirmations) what.push('add confirmations: standard');
-    out.push(`  ~ .shipline/config.yml: ${what.join('; ')}`);
-    for (const f of cfgPlan.config.fills) out.push(`    commands: ${f.key} <- \`${f.command}\` (${f.source})`);
-    out.push(...cfgPlan.config.diff);
-  }
-  for (const w of cfgPlan.workflows) {
-    const what = [];
-    if (w.entries) what.push(`remove ${w.entries} {artifact_root} allow_paths entr${w.entries === 1 ? 'y' : 'ies'}`);
-    if (w.renamed) what.push('rename stage jira to ticket');
-    if (w.added.length) what.push(`add ${w.added.join(', ')}`);
-    if (w.rewritten) what.push('replace the commit/PR regex with actions: [commit, pr]');
-    out.push(`  ~ ${w.file}: ${what.join('; ')}`);
-    out.push(...w.diff);
-  }
-  if (!cfgPlan.config && !cfgPlan.workflows.length) out.push('  (no changes)');
   out.push('', 'Rules');
   for (const r of rulesPlan.write) out.push(`  ~ .shipline/rules/${r.file}: ${r.note}`);
-  for (const f of rulesPlan.remove) out.push(`  - remove   .shipline/rules/${f} (renamed to ticket.md)`);
-  if (!rulesPlan.write.length && !rulesPlan.remove.length) out.push('  (no changes)');
+  if (!rulesPlan.write.length) out.push('  (no changes)');
 
-  if (needsMigration) {
-    out.push('', `Task data -> ${storePath}`);
-    if (!mig.tasks.length && !mig.state.length) out.push('  (nothing to move)');
-    for (const t of mig.tasks) out.push(`  move task ${t.rel}/ -> tasks/${t.name}/${hasGit ? ' (git rm staged afterwards)' : ''}`);
-    if (mig.state.length) out.push(`  move ${mig.state.length} item(s) from .shipline/.state/ (session state, UI data); the folder is then removed`);
-    if (mig.leftovers.length) out.push(`  left in place (not task folders): ${mig.leftovers.join(', ')}`);
-    if (!hasGit && mig.tasks.length) out.push('  not a git repository: the old task folders are deleted from disk after the copies are verified, with no git rm');
-  }
-  if (cfgPlan.config && cfgPlan.config.guardrails.includes('rails')) out.push('', 'New: guardrails (off; see Setup → Guardrails)');
-  if (cfgPlan.config && cfgPlan.config.confirmations) out.push('', 'New: confirmations preset (standard; light asks only at checkpoints, see Setup)');
-  const warnings = [...cfgPlan.warnings, ...rulesPlan.warnings, ...mig.warnings];
+  const warnings = [];
   if (shared.readNotGuarded) {
-    warnings.push('Your Shipline hook entries in .claude/settings.json were edited, so reading credential files (the read_credentials rail) is not guarded. Add Read to the PreToolUse matcher to enable it.');
+    warnings.push('Your Shipline hook entries in .claude/settings.json were edited, so reading credential files (the Read and Grep tools) is not guarded. Add Read and Grep to the PreToolUse matcher to enable it.');
   }
   if (warnings.length) out.push('', 'Warnings', ...warnings.map((w) => `  ! ${w}`));
-  if (mig.problems.length) out.push('', 'Cannot upgrade yet. Nothing was changed:', ...mig.problems.map((p) => `  - ${p}`));
   console.log(out.join('\n'));
 
-  if (mig.problems.length) return 1;
   if (dryRun) {
     console.log('\nDry run, nothing written.');
     return 0;
@@ -799,16 +357,16 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
   }
 
   try {
-    apply(root, { files, shared, cfgPlan, rulesPlan, mig, hasGit, artifactRoot, excluded });
+    apply(root, { files, shared, rulesPlan, excluded });
   } catch (e) {
     console.error(`shipline: ${e.message}`);
     return 1;
   }
 
-  console.log(`\nUpgraded to ${PACKAGE_VERSION} (interface ${INTERFACE}).${mig.tasks.length ? ` Moved ${mig.tasks.length} task(s) to ${storePath}.` : ''}
+  console.log(`\nUpgraded to ${PACKAGE_VERSION} (interface ${INTERFACE}).
 
 Next:
-  - review and commit the changes${hasGit && mig.tasks.length ? ' (the removal of the old task folders is staged, not committed)' : ''};
+  - review and commit the changes;
   - restart any running Claude Code sessions so they pick up the new hooks.`);
   return 0;
 }

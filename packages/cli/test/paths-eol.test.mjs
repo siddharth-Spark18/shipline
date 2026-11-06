@@ -194,8 +194,8 @@ describe('Setup saves keep the file\'s line ending', { skip: NEEDS_UI }, () => {
 
 describe('a CRLF CLAUDE.md', () => {
   const TEAM = '# Team\r\n\r\nShip small.\r\n';
-  const upgrade = (dir, ...flags) => run(process.execPath, [BIN, 'upgrade', dir, ...flags], { cwd: dir });
-  const uninstall = (dir, ...flags) => run(process.execPath, [BIN, 'uninstall', dir, ...flags], { cwd: dir });
+  const upgrade = (dir, ...flags) => run(process.execPath, [BIN, 'upgrade', '--dir', dir, ...flags], { cwd: dir });
+  const uninstall = (dir, ...flags) => run(process.execPath, [BIN, 'uninstall', '--dir', dir, ...flags], { cwd: dir });
   const md = (dir) => readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8');
 
   test('init adds the block with CRLF; uninstall removes it and leaves the team text exactly as it was', () => {

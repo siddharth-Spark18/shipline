@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { copyFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { CLI_ROOT, hook, makeRepo, removeDir, stage, storeOf } from '../helpers.mjs';
+import { CLI_ROOT, git, hook, makeRepo, removeDir, stage, storeOf } from '../helpers.mjs';
 import { api, openEvents, sleep, startUi } from './helpers.mjs';
 import {
   FORBIDDEN,
@@ -62,6 +62,10 @@ const sessionOf = (id) => readSessions(dir).find((c) => c.id === id);
 before(async () => {
   fake = useFakeClaude();
   dir = makeRepo({ commitInit: true });
+  // The Jira notices below need tracker: jira (the default, none, has no ticket); committed so git status stays clean.
+  const cfgFile = path.join(dir, '.shipline', 'config.yml');
+  writeFileSync(cfgFile, readFileSync(cfgFile, 'utf8').replace(/^tracker: none$/m, 'tracker: jira'));
+  git(dir, 'commit', '-q', '-am', 'tracker: jira');
   ui = await startUi(dir);
   ev = await openEvents(ui);
 });
@@ -564,13 +568,12 @@ describe('chat-first tasks', () => {
   });
 });
 
-// Plan "Interface change": chat is disabled for an interface-2 repo (its old hooks write state to
-// .shipline/.state/, which the chat code no longer reads). Start, message and continue give 423 needs-upgrade.
-describe('needs-upgrade (interface-2 repo)', () => {
-  test('POST /api/chats, /message and /continue return 423 needs-upgrade; nothing is spawned; status says needsUpgrade', async () => {
+// 1.0: chat is disabled for a repo set up before 1.0 (its hooks predate the store); start, message and continue give
+// 423 pre-1.0 with the same guidance `upgrade` gives, and claude is never spawned.
+describe('a pre-1.0 repo', () => {
+  test('POST /api/chats, /message and /continue return 423 pre-1.0; nothing is spawned; no lock is taken', async () => {
     const legacy = makeRepo({ commitInit: true });
-    const v = path.join(legacy, '.shipline', 'bin', 'VERSION');
-    writeFileSync(v, JSON.stringify({ package: '0.6.0', interface: 2 }) + '\n');
+    writeFileSync(path.join(legacy, '.shipline', 'bin', 'VERSION'), JSON.stringify({ package: '0.14.0', interface: 7 }) + '\n');
     // A chat recorded earlier, so /message and /continue get past the 404 for an unknown chat.
     const chatId = '11111111-2222-4333-8444-555555555555';
     const ui2Dir = path.join(storeOf(legacy), 'ui');
@@ -583,8 +586,7 @@ describe('needs-upgrade (interface-2 repo)', () => {
     try {
       legacyUi = await startUi(legacy);
       const status = await api(legacyUi, 'GET', '/api/status');
-      assert.equal(status.json.needsUpgrade, true);
-      assert.equal(status.json.versionState, 'repo-older');
+      assert.equal(status.json.versionState, 'pre-1.0');
       for (const [p, body] of [
         ['/api/chats', { message: 'hi' }],
         [`/api/chats/${chatId}/message`, { text: 'hi' }],
@@ -592,8 +594,8 @@ describe('needs-upgrade (interface-2 repo)', () => {
       ]) {
         const r = await api(legacyUi, 'POST', p, { body });
         assert.equal(r.status, 423, `${p}: ${r.text}`);
-        assert.equal(r.json.error.code, 'needs-upgrade', p);
-        assert.match(r.json.error.message, /npx @forgeyard\/shipline upgrade/);
+        assert.equal(r.json.error.code, 'pre-1.0', p);
+        assert.equal(r.json.error.message, 'This repo was set up with a pre-1.0 Shipline (0.14.0). Run `npx @forgeyard/shipline uninstall --yes` then `init`; task data in ~/.shipline is kept.', p);
       }
       assert.deepEqual(fake.records(argvFile), [], 'claude was never spawned');
       assert.ok(!existsSync(path.join(ui2Dir, 'lock.json')), 'no lock was taken');
@@ -826,7 +828,7 @@ describe('chat reliability: reminders, trust, Jira, commands (2026-11-05 capture
   let id;
   let since;
 
-  // The needs-upgrade test's second server pointed the (process-wide) log at its own repo; point it back.
+  // Another server in this process may have pointed the (process-wide) log at its own repo; point it back.
   before(() => initLog(dir));
 
   test('a hook reminder (system/informational) is forwarded with a reminder notice, prefix stripped', async () => {

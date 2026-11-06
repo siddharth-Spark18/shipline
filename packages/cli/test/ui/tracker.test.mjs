@@ -114,6 +114,9 @@ describe('ghStatus and ticketStatus', () => {
     assert.deepEqual(await ticketStatus('github', null, { atTicketStage: true, ghCache: {} }), { tracker: 'github', status: 'connected' });
     assert.equal(runs().length, 1);
     assert.equal(await ticketStatus('linear', atl('connected'), { atTicketStage: true, ghCache: {} }), null);
+    // 1.0: none (the default) has no ticket and no notice, and starts nothing.
+    assert.equal(await ticketStatus('none', atl('connected'), { atTicketStage: true, ghCache: {} }), null);
+    assert.equal(await ticketStatus('none', null), null);
     assert.equal(runs().length, 1);
   });
 });
@@ -130,7 +133,7 @@ describe('GET /api/chats/<id> ticket, tracker: github', () => {
   before(() => {
     dir = makeRepo({ commitInit: true });
     const cfg = path.join(dir, '.shipline', 'config.yml');
-    writeFileSync(cfg, readFileSync(cfg, 'utf8').replace('tracker: jira', 'tracker: github'));
+    writeFileSync(cfg, readFileSync(cfg, 'utf8').replace('tracker: none', 'tracker: github'));
     const tasks = path.join(storeOf(dir), 'tasks');
     assert.equal(stage(dir, ['start', '--workflow', 'small', '--title', 'At ticket', '--ticket', '7'], 'sa').code, 0);
     assert.equal(stage(dir, ['start', '--workflow', 'small', '--title', 'Past ticket', '--ticket', '8'], 'sb').code, 0);

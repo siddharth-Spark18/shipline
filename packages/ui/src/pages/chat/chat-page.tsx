@@ -134,29 +134,16 @@ function TerminalNote() {
 }
 
 /** Shown in place of the chat for a repo that hasn't been upgraded: the old hooks write state the chat can't read. */
-function UpgradeNotice() {
-  return (
-    <section className="flex h-full min-h-0 min-w-0 flex-col gap-3 p-4">
-      <Alert variant="destructive">
-        <AlertTitle>Chat is disabled until this repo is upgraded</AlertTitle>
-        <AlertDescription>
-          Task data is still stored in this repo. Run <code>npx @forgeyard/shipline upgrade</code>{' '}
-          to move it to ~/.shipline, then restart this UI.
-        </AlertDescription>
-      </Alert>
-    </section>
-  );
-}
-
 export default function ChatPage({
   versionState,
-  needsUpgrade = false,
+  versionMessage = null,
   chats,
   selectedId,
   onSelect,
 }: {
   versionState?: VersionState;
-  needsUpgrade?: boolean;
+  /** The pre-1.0 guidance from /api/status, shown instead of the generic text. */
+  versionMessage?: string | null;
   chats: UseQueryResult<ChatsResponse>;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
@@ -165,7 +152,7 @@ export default function ChatPage({
   const prompts = usePrompts();
   const tasks = useTasks();
   const [blocker, setBlocker] = useState<Blocker | null>(null);
-  const readOnly = versionState === 'repo-newer';
+  const readOnly = versionState === 'repo-newer' || versionState === 'pre-1.0';
   // The task panel needs room: from 1200px it sits beside the chat, below that it is an overlay sheet.
   const wide = useMediaQuery('(min-width: 1200px)');
   // Per chat: 'closed' / 'open' once the user has used the toggle. Without a choice the panel
@@ -197,7 +184,7 @@ export default function ChatPage({
       case 'claude-too-old':
       case 'claude-signed-out':
       case 'repo-newer':
-      case 'needs-upgrade':
+      case 'pre-1.0':
         setBlocker({ code: e.code, message: e.message, heldBy: details.heldBy });
         break;
       default:
@@ -242,8 +229,6 @@ export default function ChatPage({
     else setSheetOpen((o) => !o);
   };
 
-  if (needsUpgrade) return <UpgradeNotice />;
-
   const stream = (
     <section className="mx-auto flex h-full min-h-0 w-full max-w-[760px] min-w-0 flex-col gap-3 p-4">
       <TerminalNote />
@@ -257,14 +242,16 @@ export default function ChatPage({
         <Alert variant="destructive">
           <AlertTitle>Chat is disabled</AlertTitle>
           <AlertDescription>
-            This repo was set up with a newer Shipline, so chats can't be started or continued here.
+            {versionState === 'pre-1.0' && versionMessage
+              ? versionMessage
+              : "This repo was set up with a newer Shipline, so chats can't be started or continued here."}
           </AlertDescription>
         </Alert>
       )}
       {blocker?.code === 'lock-held' && (
         <LockHeldNotice heldBy={blocker.heldBy} message={blocker.message} />
       )}
-      {(blocker?.code === 'repo-newer' || blocker?.code === 'needs-upgrade') && (
+      {(blocker?.code === 'repo-newer' || blocker?.code === 'pre-1.0') && (
         <Alert variant="destructive">
           <AlertTitle>Chat is disabled</AlertTitle>
           <AlertDescription>{blocker.message}</AlertDescription>

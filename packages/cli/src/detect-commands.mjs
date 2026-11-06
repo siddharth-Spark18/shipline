@@ -1,5 +1,6 @@
 // Detects the test, lint and build commands of a repo from the files at its root. Reads files only: it never runs
 // a project script or a package manager. Node 18+, no dependencies.
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
@@ -98,4 +99,19 @@ export function detectCommands(root) {
     }
   }
   return result;
+}
+
+// True when `command` (a bare program name such as `pytest`) can be found on PATH. Uses `command -v` on POSIX and
+// `where` on Windows; a failed lookup counts as not found.
+export function toolOnPath(command) {
+  if (typeof command !== 'string' || !/^[A-Za-z0-9._+][A-Za-z0-9._+-]*$/.test(command)) return false;
+  try {
+    const r =
+      process.platform === 'win32'
+        ? spawnSync('where', [command], { stdio: 'ignore', windowsHide: true })
+        : spawnSync('sh', ['-c', 'command -v "$1"', 'sh', command], { stdio: 'ignore' });
+    return r.status === 0;
+  } catch {
+    return false;
+  }
 }

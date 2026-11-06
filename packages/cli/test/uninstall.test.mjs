@@ -4,7 +4,7 @@ import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { BIN, FIXTURES, git, makeRepo, removeDir, run, runInitAll, storeOf, tmpDir } from './helpers.mjs';
@@ -13,7 +13,7 @@ const sha = (data) => createHash('sha256').update(data).digest('hex');
 const dirs = [];
 after(() => dirs.forEach(removeDir));
 
-const uninstall = (dir, ...flags) => run(process.execPath, [BIN, 'uninstall', dir, ...flags], { cwd: dir });
+const uninstall = (dir, ...flags) => run(process.execPath, [BIN, 'uninstall', '--dir', dir, ...flags], { cwd: dir });
 const read = (dir, rel) => readFileSync(path.join(dir, rel), 'utf8');
 const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'));
 const exists = (dir, rel) => existsSync(path.join(dir, rel));
@@ -258,21 +258,24 @@ describe('refusals (nothing is changed)', () => {
   });
 });
 
-describe('a legacy install', () => {
-  // brown-bg-tracker's 0.6.0 files (test/fixtures/legacy-0.6), team content in CLAUDE.md (@AGENTS.md) and
-  // settings.json (deny rules) included.
-  function legacy({ keepVersion = false } = {}) {
-    const dir = tmpDir();
-    dirs.push(dir);
-    writeFileSync(path.join(dir, 'README.md'), '# app\n');
-    cpSync(path.join(FIXTURES, 'legacy-0.6'), dir, { recursive: true });
-    if (!keepVersion) rmSync(path.join(dir, '.shipline/bin/VERSION'));
+// 1.0 deleted the 0.6.0 fixture; these start from a fresh 1.0 init, then take away what an older or damaged install
+// would lack (VERSION, or its files map). Team content in CLAUDE.md (@AGENTS.md) and settings.json (deny rules).
+describe('an install without a usable VERSION record', () => {
+  const TEAM_SETTINGS = { permissions: { deny: ['Read(./secrets/**)'] } };
+  function installed({ version = 'none' } = {}) {
+    const dir = bareRepo((d) => {
+      writeFile(d, 'CLAUDE.md', '@AGENTS.md\n');
+      writeFile(d, '.claude/settings.json', JSON.stringify(TEAM_SETTINGS, null, 2) + '\n');
+    });
+    initAndCommit(dir);
+    const vf = path.join(dir, '.shipline/bin/VERSION');
+    if (version === 'none') rmSync(vf);
+    else writeFileSync(vf, JSON.stringify({ package: '1.0.0', interface: 1 }) + '\n'); // no files map
     return dir;
   }
-  const legacySettings = () => readJson(path.join(FIXTURES, 'legacy-0.6', '.claude/settings.json'));
 
   test('with no VERSION: uses the template inventory plus .claude/skills/shipline-*', () => {
-    const dir = legacy();
+    const dir = installed();
     writeFile(dir, '.claude/agents/mine.md', '# ours\n');
     const r = uninstall(dir, '--yes');
     assert.equal(r.code, 0, r.stderr);
@@ -281,17 +284,45 @@ describe('a legacy install', () => {
     assert.deepEqual(readdirSync(path.join(dir, '.claude/agents')), ['mine.md']);
     assert.ok(!exists(dir, '.claude/skills'));
     assert.equal(read(dir, 'CLAUDE.md'), '@AGENTS.md\n');
-    assert.deepEqual(readJson(path.join(dir, '.claude/settings.json')), { permissions: legacySettings().permissions });
-    assert.equal(read(dir, 'README.md'), '# app\n');
+    assert.deepEqual(readJson(path.join(dir, '.claude/settings.json')), TEAM_SETTINGS);
+    assert.equal(read(dir, 'README.md'), '# test repo\n');
   });
 
-  test('a 0.6.0 VERSION (no files map) removes the agents and skills too', () => {
-    const dir = legacy({ keepVersion: true });
+  test('a VERSION with no files map removes the agents and skills too', () => {
+    const dir = installed({ version: 'no-files' });
     const r = uninstall(dir, '--yes');
     assert.equal(r.code, 0, r.stderr);
     assert.ok(!exists(dir, '.shipline'));
     assert.ok(!exists(dir, '.claude/agents/planner.md'), 'Shipline agent left behind');
     assert.ok(!exists(dir, '.claude/skills/shipline-workflow'), 'Shipline skill left behind');
+    assert.equal(read(dir, 'CLAUDE.md'), '@AGENTS.md\n');
+  });
+});
+
+// 1.0 plan, item 7: the preview's "Kept" list names only excluded paths that exist. `init --yes` records the
+// standalone reviewer (and, with no UI, wireframe-proposer) as excluded without ever writing them.
+describe('the Kept list', () => {
+  test('excluded files that were never installed are not listed; an own file that exists is', () => {
+    const dir = bareRepo((d) => writeFile(d, '.claude/agents/planner.md', '# Our planner\n'));
+    const r0 = run(process.execPath, [BIN, 'init', '--dir', dir, '--yes'], { cwd: dir });
+    assert.equal(r0.code, 0, r0.stderr);
+    const excluded = readJson(path.join(dir, '.shipline/bin/VERSION')).excluded;
+    assert.ok(excluded.includes('.claude/agents/reviewer.md') && excluded.includes('.claude/agents/planner.md'), excluded.join(', '));
+    assert.ok(!exists(dir, '.claude/agents/reviewer.md'));
+    const r = uninstall(dir, '--dry-run');
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /Kept \(your own, recorded in VERSION\.excluded\)\n {2}= \.claude\/agents\/planner\.md\n/);
+    assert.ok(!r.stdout.includes('reviewer.md'), r.stdout);
+    assert.ok(!r.stdout.includes('wireframe-proposer.md'), r.stdout);
+  });
+
+  test('no excluded file exists: no Kept section at all', () => {
+    const dir = bareRepo();
+    assert.equal(run(process.execPath, [BIN, 'init', '--dir', dir, '--yes'], { cwd: dir }).code, 0);
+    assert.ok(readJson(path.join(dir, '.shipline/bin/VERSION')).excluded.length > 0);
+    const r = uninstall(dir, '--dry-run');
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.stdout.includes('Kept (your own'), r.stdout);
   });
 });
 

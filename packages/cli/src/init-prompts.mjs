@@ -127,10 +127,11 @@ export async function askSelection(info) {
   const tracker = await select({
     message: 'Tracker:',
     choices: [
+      { name: 'None', value: 'none' },
       { name: 'GitHub Issues', value: 'github' },
       { name: 'Jira', value: 'jira' },
     ],
-    default: info.trackerDefault || 'jira',
+    default: info.trackerDefault || 'none',
   });
 
   // 8. The optional pull-request check (default No).

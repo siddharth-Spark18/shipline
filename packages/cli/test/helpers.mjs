@@ -56,12 +56,12 @@ export function run(cmd, args, { cwd, input, env } = {}) {
   const e = { SHIPLINE_HOME: homeFor(cwd), ...env };
   const r = spawnSync(cmd, args, { cwd, input, env: cleanEnv(e), encoding: 'utf8' });
   if (r.error) throw r.error;
-  return { code: r.status, stdout: r.stdout, stderr: r.stderr };
+  return { code: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr };
 }
 
 export function git(cwd, ...args) {
   const r = run('git', args, { cwd });
-  if (r.code !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
+  if (r.code !== 0) throw new Error(`git ${args.join(' ')} failed (exit ${r.code}${r.signal ? `, signal ${r.signal}` : ''}): ${r.stderr}`);
   return r.stdout.trim();
 }
 

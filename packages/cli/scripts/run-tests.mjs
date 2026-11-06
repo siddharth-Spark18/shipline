@@ -22,5 +22,10 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const r = spawnSync(process.execPath, ['--test', ...files], { cwd: root, stdio: 'inherit' });
+// On Windows the files run one at a time: run in parallel, their git and node child processes overload a 4-CPU CI
+// runner and a different test fails at random (a fetch, a `git add`, a process exit). --test-concurrency needs
+// Node 20.10+; older Node keeps the default.
+const [maj, min] = process.versions.node.split('.').map(Number);
+const serial = process.platform === 'win32' && (maj > 20 || (maj === 20 && min >= 10)) ? ['--test-concurrency=1'] : [];
+const r = spawnSync(process.execPath, ['--test', ...serial, ...files], { cwd: root, stdio: 'inherit' });
 process.exit(r.status ?? 1);

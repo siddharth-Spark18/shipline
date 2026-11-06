@@ -587,7 +587,7 @@ describe('agents and skills (prepublish plan, Setup -> Agents & skills)', () => 
     assert.deepEqual(v.excluded, [AGENT('researcher'), AGENT('reviewer')]);
     assert.ok(!(AGENT('researcher') in v.files));
     assert.equal(v.interface, INTERFACE);
-    assert.equal(INTERFACE, 6);
+    assert.equal(INTERFACE, 7);
     let s = await getSetup(x.ui);
     assert.deepEqual(s.agents.shipline.find((a) => a.name === 'researcher'), { name: 'researcher', installed: false, excluded: true, hash: null });
     assert.equal(s.versionHash, sha256(xread(x, '.shipline/bin/VERSION')));
@@ -1504,3 +1504,72 @@ describe('guardrails and actions blocks (Teams Phase 3)', () => {
 function spawnGuard(root, payload) {
   return run(process.execPath, [path.join(root, '.shipline', 'bin', 'guard.mjs')], { cwd: root, input: JSON.stringify(payload) });
 }
+
+// Teams Phase 4: the Standard/Light choice in the config form and the stage editor's Checkpoint switch save through
+// POST /api/setup/save, and the hooks read what was saved.
+describe('confirmations and checkpoint (Teams Phase 4)', () => {
+  let x;
+  const xread = (rel) => readFileSync(path.join(x.dir, rel), 'utf8');
+  before(async () => {
+    x = await scratchRepo();
+  });
+
+  test('GET /api/setup: confirmations standard in the config model, checkpoint on feature plan', async () => {
+    const s = await getSetup(x.ui);
+    assert.equal(s.config.model.confirmations, 'standard');
+    assert.equal(wfEntry(s, 'feature').model.stages.find((st) => st.id === 'plan').checkpoint, true);
+  });
+
+  test('confirmations: light saves in place (comment kept) and stage.mjs then auto-advances a non-checkpoint stage', async () => {
+    const s = await getSetup(x.ui);
+    const cfg = clone(s.config.model);
+    cfg.confirmations = 'light';
+    const before = xread('.shipline/config.yml');
+    const r = await save([{ kind: 'config', model: cfg, baseHash: s.config.hash }], x.ui);
+    assert.equal(r.status, 200, r.text);
+    assert.equal(xread('.shipline/config.yml'), before.replace(/^confirmations: standard$/m, 'confirmations: light'));
+    // The stage text follows the saved setting.
+    const st = stage(x.dir, ['start', '--workflow', 'feature', '--title', 'light setup', '--ui', 'false'], 'conf-setup');
+    assert.equal(st.code, 0, st.stderr);
+    writeFileSync(path.join(storeOf(x.dir), 'tasks', 'light-setup', 'ticket.md'), '# Ticket\n\nEnough real text here.\n');
+    writeFileSync(path.join(storeOf(x.dir), 'tasks', 'light-setup', 'feasibility.md'), '# F\n\n## Risks\n\nEnough real text to pass the minimum.\n');
+    assert.equal(stage(x.dir, ['advance'], 'conf-setup').code, 0);
+    const a = stage(x.dir, ['advance'], 'conf-setup');
+    assert.equal(a.code, 0, a.stderr);
+    assert.match(a.stdout, /Confirm with the developer before advancing: no \(light confirmations: auto-advance\)/);
+  });
+
+  test('an unknown confirmations value is refused (400) and nothing is written', async () => {
+    const s = await getSetup(x.ui);
+    const before = xread('.shipline/config.yml');
+    const r = await save([{ kind: 'config', model: { ...clone(s.config.model), confirmations: 'lite' }, baseHash: s.config.hash }], x.ui);
+    assert.equal(r.status, 400, r.text);
+    assert.ok(r.json.error.details.some((d) => d.path === 'confirmations'), r.text);
+    assert.equal(xread('.shipline/config.yml'), before);
+  });
+
+  test('the Checkpoint switch saves checkpoint: true on a stage; checkpoint without confirm_to_advance only warns', async () => {
+    const s = await getSetup(x.ui);
+    const f = wfEntry(s, 'small');
+    const model = clone(f.model);
+    const [first] = model.stages;
+    first.confirm_to_advance = true;
+    first.checkpoint = true;
+    const r = await save([{ kind: 'workflow', id: 'small', model, baseHash: f.hash }], x.ui);
+    assert.equal(r.status, 200, r.text);
+    const back = parseYaml(xread('.shipline/workflows/small.yml'));
+    assert.equal(back.stages[0].checkpoint, true);
+    assert.equal(back.stages[0].confirm_to_advance, true);
+    assert.match(xread('.shipline/workflows/small.yml'), /^ {4}checkpoint: true$/m);
+
+    const s2 = await getSetup(x.ui);
+    const f2 = wfEntry(s2, 'small');
+    const m2 = clone(f2.model);
+    m2.stages[0].confirm_to_advance = false;
+    const p = await preview([{ kind: 'workflow', id: 'small', model: m2, baseHash: f2.hash }], x.ui);
+    assert.equal(p.status, 200, p.text);
+    assert.deepEqual(p.json.files[0].errors, []);
+    assert.deepEqual(p.json.files[0].warnings, [{ path: 'stages[0].checkpoint', message: 'has no effect without confirm_to_advance', severity: 'warning' }]);
+    assert.equal((await save([{ kind: 'workflow', id: 'small', model: m2, baseHash: f2.hash }], x.ui)).status, 200, 'a warning does not block the save');
+  });
+});

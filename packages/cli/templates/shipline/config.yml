@@ -7,6 +7,13 @@ branch_pattern: "{type}/{key}-{slug}"
 # through the `gh` CLI. Shipline ships no tracker code and only reads tickets. Any other value skips the ticket stage.
 tracker: jira
 
+# How often Claude asks before moving to the next stage: standard | light.
+# standard: it asks at every stage marked confirm_to_advance in the workflows.
+# light: it asks only at stages also marked `checkpoint: true` (plan approval in Feature, root cause in Bugfix);
+# the other stages advance on the deterministic checks. A workflow with no checkpoint then never asks to advance.
+# Always asked in both modes: skipping a required stage, finishing with failed checks, and the scope question.
+confirmations: standard
+
 # Optional. The verify stage runs only the commands you set here. `init` fills them in from the repo's files.
 commands:
   test: ""

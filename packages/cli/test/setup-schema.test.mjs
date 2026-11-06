@@ -264,7 +264,7 @@ describe('known fields, header and layout', () => {
   test('KNOWN_FIELDS lists the form fields from the schema table', () => {
     // `setup` is known (so not listed under "other fields") but the form doesn't edit it (Teams Phase 1, E).
     // Teams Phase 3, F: the Guardrails section edits rails, rails_commands, protected_paths and scope_check.
-    assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup', 'rails', 'rails_commands', 'protected_paths', 'scope_check']);
+    assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup', 'rails', 'rails_commands', 'protected_paths', 'scope_check', 'confirmations']);
     assert.deepEqual(KNOWN_FIELDS.config.rails, ['force_push_default', 'push_default', 'pipe_to_shell', 'print_credentials', 'read_credentials', 'deploy', 'migrate', 'agent_config']);
     assert.deepEqual(KNOWN_FIELDS.config.rails_commands, ['deploy', 'migrate']);
     assert.deepEqual(KNOWN_FIELDS.config.scope_check, ['enabled', 'sensitive_extra']);
@@ -272,7 +272,7 @@ describe('known fields, header and layout', () => {
     assert.deepEqual(KNOWN_FIELDS.config.commands, ['test', 'lint', 'build']);
     assert.deepEqual(KNOWN_FIELDS.config.ci, ['missing_block', 'skip_label', 'stale_checks']);
     for (const f of ['id', 'name', 'description', 'branch_type', 'stages']) assert.ok(KNOWN_FIELDS.workflow.top.includes(f), f);
-    for (const f of ['id', 'name', 'artifact', 'description', 'optional', 'confirm_to_advance', 'condition', 'agent', 'enforcement', 'blocks', 'checks', 'sections']) {
+    for (const f of ['id', 'name', 'artifact', 'description', 'optional', 'confirm_to_advance', 'condition', 'agent', 'enforcement', 'blocks', 'checks', 'sections', 'checkpoint']) {
       assert.ok(KNOWN_FIELDS.workflow.stage.includes(f), f);
     }
   });
@@ -456,5 +456,66 @@ describe('the actions block type (Teams Phase 3, D)', () => {
     const out = emitWorkflow(model, {});
     assert.match(out, /^ {6}- actions: \[commit, pr\]$/m);
     assert.deepEqual(parseYaml(out), model);
+  });
+});
+
+// Teams Phase 4: `confirmations: standard | light` in config.yml and the `checkpoint` stage field.
+describe('confirmations and checkpoint (Teams Phase 4)', () => {
+  const issuesOf = (patch) => validateConfig({ ...baseConfig(), ...patch });
+
+  test('the shipped config.yml has confirmations: standard', () => {
+    assert.equal(baseConfig().confirmations, 'standard');
+  });
+
+  test('confirmations: standard and light pass; missing, null and empty pass', () => {
+    for (const confirmations of ['standard', 'light', undefined, null, '']) {
+      assert.deepEqual(issuesOf({ confirmations }), [], String(confirmations));
+    }
+    const c = baseConfig();
+    delete c.confirmations;
+    assert.deepEqual(validateConfig(c), []);
+  });
+
+  test('any other value is an error naming the two presets', () => {
+    for (const confirmations of ['lite', 'Light', 'none', true, 1, ['light']]) {
+      const issues = issuesOf({ confirmations });
+      assert.deepEqual(errorsOnly(issues), [{ path: 'confirmations', message: 'must be one of standard, light' }], JSON.stringify(confirmations));
+      assert.equal(issues.length, 1, JSON.stringify(confirmations));
+    }
+  });
+
+  test('checkpoint is true or false; anything else is an error', () => {
+    for (const checkpoint of [true, false, undefined, null]) {
+      assert.deepEqual(validateWorkflow(wf([stage({ confirm_to_advance: true, checkpoint })]), { id: 'w' }), [], String(checkpoint));
+    }
+    for (const checkpoint of ['yes', 1, 'true']) {
+      const issues = validateWorkflow(wf([stage({ confirm_to_advance: true, checkpoint })]), { id: 'w' });
+      assert.deepEqual(paths(errorsOnly(issues)), ['stages[0].checkpoint'], String(checkpoint));
+      assert.match(errorsOnly(issues)[0].message, /must be true or false/);
+    }
+  });
+
+  test('checkpoint: true without confirm_to_advance is a warning ("has no effect"), not an error', () => {
+    for (const confirm_to_advance of [false, undefined, null]) {
+      const issues = validateWorkflow(wf([stage({ confirm_to_advance, checkpoint: true })]), { id: 'w' });
+      assert.deepEqual(issues, [{ path: 'stages[0].checkpoint', message: 'has no effect without confirm_to_advance', severity: 'warning' }], String(confirm_to_advance));
+    }
+    assert.deepEqual(validateWorkflow(wf([stage({ checkpoint: false })]), { id: 'w' }), [], 'checkpoint: false never warns');
+  });
+
+  test('the shipped checkpoints: feature plan and bugfix root_cause only', () => {
+    const cps = Object.fromEntries(WORKFLOW_IDS.map((id) => [id, template(id).stages.filter((s) => s.checkpoint === true).map((s) => s.id)]));
+    assert.deepEqual(cps, Object.fromEntries(WORKFLOW_IDS.map((id) => [id, { feature: ['plan'], bugfix: ['root_cause'] }[id] || []])));
+    for (const id of WORKFLOW_IDS) for (const s of template(id).stages) if (s.checkpoint) assert.equal(s.confirm_to_advance, true, `${id}.${s.id}`);
+  });
+
+  test('confirmations: light survives an emit in the layout, with its comment', () => {
+    const raw = readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8');
+    const model = baseConfig();
+    model.confirmations = 'light';
+    const text = emitConfig(model, { layout: configLayout(), raw });
+    assert.equal(parseYaml(text).confirmations, 'light');
+    assert.match(text, /# How often Claude asks before moving to the next stage: standard \| light\.\n(?:#[^\n]*\n)*confirmations: light\n/);
+    assert.equal(text, raw.replace('confirmations: standard', 'confirmations: light'));
   });
 });

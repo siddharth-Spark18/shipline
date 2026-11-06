@@ -296,6 +296,8 @@ const DEFAULT_SECTIONS = {
   root_cause: ['Cause', 'Evidence'],
   feasibility: ['Risks'],
 };
+// (0.14) The stage that keeps its advance question in light confirmations, by shipped workflow id.
+const CHECKPOINT_STAGES = { feature: 'plan', bugfix: 'root_cause' };
 
 function planConfig(root) {
   const out = { config: null, workflows: [], artifactRoot: null, warnings: [] };
@@ -348,10 +350,14 @@ function planConfig(root) {
       guardrails.push('scope_check');
     }
 
-    if (present.length || fills.length || guardrails.length) {
+    // Confirmations (0.14.0): a repo without the key gets the standard preset (the comment comes from the template's layout).
+    const confirmations = !has('confirmations');
+    if (confirmations) model.confirmations = 'standard';
+
+    if (present.length || fills.length || guardrails.length || confirmations) {
       let text = emitConfig(model, { layout: configLayout(), raw });
       if (guardrails.includes('rails')) text = text.replace(/^rails:/m, `${GUARDRAILS_OFF_COMMENT}${detectEol(raw) === '\r\n' ? '\r\n' : '\n'}rails:`);
-      out.config = { keys: present, fills, guardrails, text, diff: lineDiff(raw, text) };
+      out.config = { keys: present, fills, guardrails, confirmations, text, diff: lineDiff(raw, text) };
     }
   }
 
@@ -411,6 +417,16 @@ function planConfig(root) {
         if (DEFAULT_SECTIONS[stage.id] && !Object.prototype.hasOwnProperty.call(stage, 'sections')) {
           stage.sections = [...DEFAULT_SECTIONS[stage.id]];
           added.push(`sections on ${stage.id}`);
+        }
+      }
+      // 0.14: the shipped checkpoint (asked in light confirmations) on feature's plan and bugfix's root_cause, when the
+      // file sets no checkpoint anywhere and that stage asks to advance.
+      const cpStage = CHECKPOINT_STAGES[model && model.id];
+      if (cpStage && !stages.some((st) => st && typeof st === 'object' && Object.prototype.hasOwnProperty.call(st, 'checkpoint'))) {
+        const st = stages.find((s) => s && typeof s === 'object' && s.id === cpStage);
+        if (st && st.confirm_to_advance === true) {
+          st.checkpoint = true;
+          added.push(`checkpoint on ${st.id}`);
         }
       }
       if (!changed && !renamed && !added.length && !rewritten) continue;
@@ -724,6 +740,7 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     if (cfgPlan.config.keys.length) what.push(`remove ${cfgPlan.config.keys.join(', ')}`);
     if (cfgPlan.config.fills.length) what.push('fill empty commands');
     if (cfgPlan.config.guardrails.length) what.push(`add ${cfgPlan.config.guardrails.join(', ')} (every rail off)`);
+    if (cfgPlan.config.confirmations) what.push('add confirmations: standard');
     out.push(`  ~ .shipline/config.yml: ${what.join('; ')}`);
     for (const f of cfgPlan.config.fills) out.push(`    commands: ${f.key} <- \`${f.command}\` (${f.source})`);
     out.push(...cfgPlan.config.diff);
@@ -752,6 +769,7 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     if (!hasGit && mig.tasks.length) out.push('  not a git repository: the old task folders are deleted from disk after the copies are verified, with no git rm');
   }
   if (cfgPlan.config && cfgPlan.config.guardrails.includes('rails')) out.push('', 'New: guardrails (off; see Setup → Guardrails)');
+  if (cfgPlan.config && cfgPlan.config.confirmations) out.push('', 'New: confirmations preset (standard; light asks only at checkpoints, see Setup)');
   const warnings = [...cfgPlan.warnings, ...rulesPlan.warnings, ...mig.warnings];
   if (shared.readNotGuarded) {
     warnings.push('Your Shipline hook entries in .claude/settings.json were edited, so reading credential files (the read_credentials rail) is not guarded. Add Read to the PreToolUse matcher to enable it.');

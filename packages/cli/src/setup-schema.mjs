@@ -9,7 +9,7 @@ const TEMPLATES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 
 // Keys the form edits. Anything else in a file is shown as "other fields (kept)".
 export const KNOWN_FIELDS = {
   config: {
-    top: ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup', 'rails', 'rails_commands', 'protected_paths', 'scope_check'],
+    top: ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup', 'rails', 'rails_commands', 'protected_paths', 'scope_check', 'confirmations'],
     commands: ['test', 'lint', 'build'],
     ci: ['missing_block', 'skip_label', 'stale_checks'],
     rails: ['force_push_default', 'push_default', 'pipe_to_shell', 'print_credentials', 'read_credentials', 'deploy', 'migrate', 'agent_config'],
@@ -18,7 +18,7 @@ export const KNOWN_FIELDS = {
   },
   workflow: {
     top: ['id', 'name', 'description', 'branch_type', 'stages'],
-    stage: ['id', 'name', 'artifact', 'description', 'optional', 'confirm_to_advance', 'condition', 'agent', 'enforcement', 'blocks', 'checks', 'sections'],
+    stage: ['id', 'name', 'artifact', 'description', 'optional', 'confirm_to_advance', 'condition', 'agent', 'enforcement', 'blocks', 'checks', 'sections', 'checkpoint'],
     block: ['tools', 'allow_paths', 'bash', 'actions'],
   },
 };
@@ -32,6 +32,7 @@ export const CI_STALE_CHECKS = ['warn', 'fail'];
 export const DEFAULT_CI = { missing_block: 'fail-unless-label', skip_label: 'shipline:skip', stale_checks: 'warn' };
 const SKIP_LABEL_MAX = 50;
 export const TRACKERS = ['jira', 'github'];
+export const CONFIRMATIONS = ['standard', 'light'];
 export const RAIL_IDS = KNOWN_FIELDS.config.rails;
 export const RAIL_LEVELS = ['deny', 'ask', 'off'];
 export const ACTIONS = ['commit', 'push', 'pr', 'merge', 'release', 'deploy', 'migrate'];
@@ -73,6 +74,9 @@ export function validateConfig(model, { skills = null } = {}) {
   }
   if (model.commands !== undefined && model.commands !== null && !isObj(model.commands)) {
     out.push(err('commands', 'must be a map of commands'));
+  }
+  if (model.confirmations !== undefined && model.confirmations !== null && model.confirmations !== '' && !CONFIRMATIONS.includes(model.confirmations)) {
+    out.push(err('confirmations', `must be one of ${CONFIRMATIONS.join(', ')}`));
   }
   const sk = model.skills;
   if (sk !== undefined && sk !== null) {
@@ -194,9 +198,10 @@ export function validateWorkflow(model, { id, agents = [], existingStageIds = []
         if (typeof s.artifact !== 'string') out.push(err(`${p}.artifact`, 'must be a file name'));
         else if (s.artifact.includes('/')) out.push(err(`${p}.artifact`, 'must be a file name, not a path (no /)'));
       }
-      for (const k of ['optional', 'confirm_to_advance', 'checks']) {
+      for (const k of ['optional', 'confirm_to_advance', 'checks', 'checkpoint']) {
         if (s[k] !== undefined && s[k] !== null && typeof s[k] !== 'boolean') out.push(err(`${p}.${k}`, 'must be true or false'));
       }
+      if (s.checkpoint === true && s.confirm_to_advance !== true) out.push(warn(`${p}.checkpoint`, 'has no effect without confirm_to_advance'));
       if (s.sections !== undefined && s.sections !== null) {
         if (!Array.isArray(s.sections)) out.push(err(`${p}.sections`, 'must be a list of headings'));
         else {

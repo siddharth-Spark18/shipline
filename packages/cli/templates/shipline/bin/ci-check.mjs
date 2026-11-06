@@ -8,7 +8,7 @@
 // Node 18+, no dependencies. It needs no secrets, so it also works on PRs from forks.
 import { appendFileSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { findRoot, findStage, loadConfig, loadWorkflow, stageEnforcement } from './lib.mjs';
+import { findRoot, findStage, loadConfig, loadWorkflow, needsAnswer, stageEnforcement } from './lib.mjs';
 
 // Annotation text may not contain raw line breaks or percent signs.
 const esc = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
@@ -100,7 +100,7 @@ for (const sc of wf.stages) {
   if (stageEnforcement(sc) === 'block' && !finished) {
     problems.push(`Stage "${sc.id}" is a block stage and is not done${s ? ` (it is ${s.status})` : ' (it is missing from the summary)'}.`);
   }
-  if (sc.confirm_to_advance && s && s.status === 'done' && s.confirmed !== 'answer') {
+  if (needsAnswer(sc, cfg) && s && s.status === 'done' && s.confirmed !== 'answer') {
     problems.push(`Stage "${sc.id}" needs the developer's confirmation, but the summary doesn't show their answer.`);
   }
 }

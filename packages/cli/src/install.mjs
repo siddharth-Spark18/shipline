@@ -367,6 +367,10 @@ function planWrites(info, selection) {
         model.tracker = selection.tracker;
         changed = true;
       }
+      if (selection.confirmations === 'light') {
+        model.confirmations = 'light';
+        changed = true;
+      }
       if (!changed) writes.push({ to: f.to, data: Buffer.from(text) });
       else writes.push({ to: f.to, data: Buffer.from(emitConfig(model, { layout: configLayout(), raw: text })) });
     } else writes.push({ to: f.to, data: readFileSync(f.from) });

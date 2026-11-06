@@ -254,6 +254,16 @@ export function stageEnforcement(stage) {
   return ['guide', 'warn', 'block'].includes(stage.enforcement) ? stage.enforcement : 'guide';
 }
 
+// Whether a stage needs the developer's answer to advance. The one source of this rule for stage.mjs and
+// ci-check.mjs (packages/ui/src/lib/confirmations.ts is a copy; keep them in step). `confirmations: light` asks
+// only at stages marked `checkpoint: true`; anything other than 'light' is standard. The skip, accept and scope
+// questions are not decided here: they ask in both modes.
+export function needsAnswer(stageCfg, config) {
+  if (!stageCfg || stageCfg.confirm_to_advance !== true) return false;
+  const light = !!config && config.confirmations === 'light';
+  return !light || stageCfg.checkpoint === true;
+}
+
 // ---------- task store (outside the repo) ----------
 // $SHIPLINE_HOME (default ~/.shipline)/projects/<encoded repo path>/{repo.json, tasks/, state/, ui/}.
 

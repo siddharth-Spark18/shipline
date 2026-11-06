@@ -464,3 +464,39 @@ describe('the API install matches init byte for byte', () => {
     assert.equal(readFileSync(path.join(a.dir, AGENT('planner')), 'utf8').startsWith('---'), true, 'ours replaced the team planner');
   });
 });
+
+// Teams Phase 4: the wizard's Standard/Light radio. Light goes through the API into config.yml; the defaults
+// (no confirmations in the selection) and an unknown value install the template's standard with no error.
+describe('the confirmations choice (Teams Phase 4)', () => {
+  const confirmationsOf = (dir) => /^confirmations: (.*)$/m.exec(readFileSync(path.join(dir, '.shipline', 'config.yml'), 'utf8'))[1];
+
+  test("selection.confirmations 'light': the preview shows it and Install writes confirmations: light", async () => {
+    const dir = cleanRepo();
+    const u = await start(dir);
+    const i = await info(u);
+    assert.ok(!('confirmations' in i.defaults), 'the wizard preselects Standard (nothing sent means standard)');
+    const sel = { ...i.defaults, confirmations: 'light' };
+    const p = await preview(u, sel);
+    assert.equal(p.status, 200, p.text);
+    assert.match(p.json.files.find((f) => f.path === '.shipline/config.yml').text, /^confirmations: light$/m);
+    const r = await install(u, sel, p.json.base);
+    assert.equal(r.status, 200, r.text);
+    assert.equal(confirmationsOf(dir), 'light');
+    const setup = await api(u, 'GET', '/api/setup');
+    assert.equal(setup.json.config.model.confirmations, 'light');
+  });
+
+  for (const confirmations of [undefined, 'standard', 'lite']) {
+    test(`selection.confirmations ${confirmations === undefined ? 'missing' : `'${confirmations}'`}: standard, no error`, async () => {
+      const dir = cleanRepo();
+      const u = await start(dir);
+      const i = await info(u);
+      const sel = confirmations === undefined ? i.defaults : { ...i.defaults, confirmations };
+      const p = await preview(u, sel);
+      assert.equal(p.status, 200, p.text);
+      const r = await install(u, sel, p.json.base);
+      assert.equal(r.status, 200, r.text);
+      assert.equal(confirmationsOf(dir), 'standard');
+    });
+  }
+});

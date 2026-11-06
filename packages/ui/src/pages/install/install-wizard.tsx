@@ -20,7 +20,7 @@ import { ReviewStep } from '@/pages/install/review-step';
 import { ApiError, api } from '@/lib/api';
 import type { InstallInfo, InstallSelection } from '@/lib/types';
 
-const STEPS = ['Workflows', 'Agents & skills', 'Commands & tracker', 'CI check', 'Review'] as const;
+const STEPS = ['Workflows', 'Agents & skills', 'Commands & process', 'CI check', 'Review'] as const;
 const REVIEW = STEPS.length - 1;
 const NONE = '__none__'; // a select value cannot be null
 const COMMANDS = ['test', 'lint', 'build'] as const;
@@ -39,6 +39,7 @@ interface Draft {
   skills: string[];
   commands: { test: string; lint: string; build: string };
   tracker: 'jira' | 'github';
+  confirmations: 'standard' | 'light';
   ci: boolean;
 }
 
@@ -52,6 +53,7 @@ function initialDraft(info: InstallInfo): Draft {
     skills: [],
     commands: { ...info.defaults.commands },
     tracker: info.trackerDefault,
+    confirmations: 'standard',
     ci: false,
   };
 }
@@ -89,6 +91,7 @@ function derive(info: InstallInfo, draft: Draft) {
     skills: draft.skills,
     commands: draft.commands,
     tracker: draft.tracker,
+    confirmations: draft.confirmations,
     ci: draft.ci,
   };
   return { selection, used, present, missing };
@@ -552,6 +555,35 @@ function CommandsStep({ info, draft, patch }: StepProps) {
             <SelectItem value="github">GitHub Issues</SelectItem>
           </SelectContent>
         </Select>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label>Confirmations</Label>
+        <RadioGroup
+          value={draft.confirmations}
+          onValueChange={(v) => patch({ confirmations: v as 'standard' | 'light' })}
+        >
+          {(
+            [
+              ['standard', 'Standard', 'Claude asks before each stage that is marked to confirm.'],
+              [
+                'light',
+                'Light',
+                'Claude asks only at checkpoints (plan approval); skipping, failed checks and scope questions still ask.',
+              ],
+            ] as const
+          ).map(([value, label, hint]) => (
+            <div key={value} className="flex items-start gap-2">
+              <RadioGroupItem value={value} id={`wiz-confirmations-${value}`} className="mt-0.5" />
+              <Label
+                htmlFor={`wiz-confirmations-${value}`}
+                className="flex flex-col items-start gap-0 font-normal"
+              >
+                <span>{label}</span>
+                <span className="text-xs text-muted-foreground">{hint}</span>
+              </Label>
+            </div>
+          ))}
+        </RadioGroup>
       </div>
     </>
   );

@@ -24,6 +24,8 @@ Cover these topics, one group at a time:
 6. **Tracker:** where does this team track work, Jira or GitHub Issues? Set `tracker: jira` or `tracker: github` in `.shipline/config.yml` (Linear and others are not supported; the ticket stage is then skipped).
 7. **Naming and commands:** the branch pattern (`branch_pattern`) and the test/lint/build commands the verify stage should run (leave empty if none).
 
+8. **Confirmations:** ask Standard or Light. Standard: Claude asks before every stage marked `confirm_to_advance`. Light: Claude asks only at checkpoint stages (plan approval in Feature, root cause in Bugfix) and advances the rest on the deterministic checks; skipping a required stage, failed checks and the scope question still ask. Write `confirmations: standard` or `confirmations: light` in `.shipline/config.yml`.
+
 ## 3. Write
 
 After the developer approves your summary, edit only: `.shipline/config.yml`, `.shipline/workflows/*.yml` (keep the field names; see the comment at the top of `feature.yml`), `.shipline/rules/*.md` (add a file for every new stage id), and, only if the developer asks, the `<!-- shipline:start -->` block in `CLAUDE.md`. The YAML parser supports a small subset: nested maps, lists, inline `[a, b]` lists, quoted strings, `#` comments. Use single quotes around regexes. Do not touch the hook scripts in `.shipline/bin/`.

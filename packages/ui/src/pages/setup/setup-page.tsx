@@ -321,6 +321,7 @@ export default function SetupPage({
               dirty={isWorkflowDirty(data, drafts, workflowFile.id!)}
               agents={data.agents}
               existingIds={workflowIds}
+              confirmations={(drafts.config ?? data.config.model)?.confirmations}
               readOnly={readOnly}
               rules={(id) => ({ text: drafts.rules[id] ?? '', exists: !!findRules(data, id) })}
               onChange={(d) => updateWorkflow(workflowFile.id!, d)}

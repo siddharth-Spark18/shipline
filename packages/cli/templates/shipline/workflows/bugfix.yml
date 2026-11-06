@@ -21,6 +21,7 @@ stages:
     sections: [Cause, Evidence]
     enforcement: block
     confirm_to_advance: true
+    checkpoint: true
     blocks:
       - tools: 'Edit|Write|MultiEdit|NotebookEdit'
   - id: fix

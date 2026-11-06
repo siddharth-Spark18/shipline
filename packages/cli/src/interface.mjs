@@ -15,14 +15,16 @@ import path from 'node:path';
 // 6 = Guardrails: always-on rails and protected paths in the guard (the PreToolUse matcher gains Read), the
 // `actions` block type, `stage.mjs check` scope (`base_commit`, `checks.scope`, the `scope` confirmation) and the
 // optional `scope` in the PR summary.
-export const INTERFACE = 6;
+// 7 = Lighter confirmations: the `confirmations` config key, the `checkpoint` stage field and `needsAnswer` in lib.mjs
+// (stage.mjs and ci-check.mjs ask only where it says so).
+export const INTERFACE = 7;
 
 // The first interface whose tasks and session state live in the store (interface 3). Below it, `upgrade` moves
 // the data out of the repo, and the UI chat stays disabled until then.
 export const STORE_INTERFACE = 3;
 
 // What interface-1 repos lack. Used only for banner text.
-export const MISSING_BEFORE = ['the lost-task warning', 'visible warn reminders', 'task storage outside the repo (the store)', 'Trust: answer-based confirmations and the CI check', 'Trust: real check runs, required sections and PR evidence', 'Guardrails: always-on rails, protected paths, named actions and the Verify scope check'];
+export const MISSING_BEFORE = ['the lost-task warning', 'visible warn reminders', 'task storage outside the repo (the store)', 'Trust: answer-based confirmations and the CI check', 'Trust: real check runs, required sections and PR evidence', 'Guardrails: always-on rails, protected paths, named actions and the Verify scope check', 'Lighter confirmations: the standard or light preset and checkpoint stages'];
 
 // Returns { package, interface, files, excluded }, or { legacy: true, interface: 1 } when the file is missing or unreadable.
 export function readRepoVersion(root) {

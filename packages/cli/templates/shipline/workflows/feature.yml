@@ -4,6 +4,7 @@
 #   agent (suggested subagent), confirm_to_advance (ask the developer before moving on),
 #   enforcement: guide | warn | block, blocks (what is held back until THIS stage is done),
 #   sections (headings the artifact must contain, each with some text under it, before the stage can finish),
+#   checkpoint: true (with confirm_to_advance: the stage still asks in `confirmations: light` mode; see config.yml),
 #   checks: true (the stage can't finish until `stage.mjs check` has run the test, lint and build commands on the
 #   current code and they passed, or the developer accepted the failures).
 # A "blocks" entry is { tools: 'Edit|Write', allow_paths: [globs] }, { bash: 'regex' } or { actions: [...] }.
@@ -39,6 +40,7 @@ stages:
     sections: [Scope, Files to touch, Verification]
     enforcement: block
     confirm_to_advance: true
+    checkpoint: true
     blocks:
       - tools: 'Edit|Write|MultiEdit|NotebookEdit'
   - id: wireframes

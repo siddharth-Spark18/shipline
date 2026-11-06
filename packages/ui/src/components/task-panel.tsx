@@ -10,6 +10,7 @@ import { FileViewer, type FileTarget } from '@/components/file-viewer';
 import { EnforcementBadge, STATUS_LABEL, StageDot } from '@/components/stage-dots';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
+import { needsAnswer } from '@/lib/confirmations';
 import { findStage } from '@/lib/stages';
 import type { Block, Change, StageModel, Task, TaskChecks } from '@/lib/types';
 
@@ -81,7 +82,7 @@ function StageFacts({ task, stage }: { task: Task; stage: Task['stages'][number]
             'No file is required to finish this stage.'
           )}
         </li>
-        {c?.confirm_to_advance && <li>Claude asks you before moving on.</li>}
+        {needsAnswer(c, setup?.config.model) && <li>Claude asks you before moving on.</li>}
         {enforcement !== 'guide' && blocks.length > 0 && (
           <li>
             Until it is done, {blocks.map(describeBlock).join('; ')}{' '}

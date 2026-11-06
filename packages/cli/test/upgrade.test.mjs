@@ -392,7 +392,7 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
     assert.equal(r.code, 0, `${r.stdout}\n${r.stderr}`);
     const out = r.stdout;
     assert.match(out, new RegExp(`^Shipline upgrade for ${dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
-    assert.match(out, new RegExp(`repo: 0\\.6\\.0 \\(interface 2\\) -> ${PACKAGE_VERSION.replace(/\./g, '\\.')} \\(interface 6\\)`));
+    assert.match(out, new RegExp(`repo: 0\\.6\\.0 \\(interface 2\\) -> ${PACKAGE_VERSION.replace(/\./g, '\\.')} \\(interface 7\\)`));
     // Trust plan, F: the recorder and the CI check script arrive with the upgrade; the CI workflow is never added.
     for (const f of ['.shipline/bin/record-answer.mjs', '.shipline/bin/ci-check.mjs']) assert.ok(out.includes(`  + add      ${f}\n`), f);
     assert.ok(!out.includes('.github/workflows/shipline.yml'), 'the CI workflow is opt-in, never added by upgrade');
@@ -410,8 +410,10 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
     // Teams Phase 3, D: the shipped commit/PR regex on verify becomes named actions.
     assert.match(out, /~ \.shipline\/workflows\/hotfix\.yml: rename stage jira to ticket; add checks on verify, sections on verify; replace the commit\/PR regex with actions: \[commit, pr\]\n/);
     // Teams Phase 3, G: an existing repo gets the guardrail keys with every rail off.
-    assert.match(out, /~ \.shipline\/config\.yml: remove artifact_root, folder_pattern; add rails, rails_commands, protected_paths, scope_check \(every rail off\)\n/);
+    assert.match(out, /~ \.shipline\/config\.yml: remove artifact_root, folder_pattern; add rails, rails_commands, protected_paths, scope_check \(every rail off\); add confirmations: standard\n/);
     assert.ok(out.includes('New: guardrails (off; see Setup → Guardrails)'));
+    // Teams Phase 4: a repo without `confirmations` gets the standard preset.
+    assert.ok(out.includes('New: confirmations preset (standard; light asks only at checkpoints, see Setup)'));
     // Every 0.6.0 rules file is an unedited stub: each is replaced, and jira.md becomes the new ticket.md.
     assert.match(out, /~ \.shipline\/rules\/ticket\.md: new default \(jira\.md was unedited\)/);
     assert.match(out, /- remove {3}\.shipline\/rules\/jira\.md \(renamed to ticket\.md\)/);
@@ -423,7 +425,7 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
     assert.match(out, /move \d+ item\(s\) from \.shipline\/\.state\/ \(session state, UI data\); the folder is then removed/);
     assert.match(out, /left in place \(not task folders\): docs\/shipline\/README\.md/);
     assert.ok(!out.includes('Warnings'), 'the aged sessions are not reported as running');
-    assert.ok(out.includes(`Upgraded to ${PACKAGE_VERSION} (interface 6). Moved 3 task(s) to ${store}.`));
+    assert.ok(out.includes(`Upgraded to ${PACKAGE_VERSION} (interface 7). Moved 3 task(s) to ${store}.`));
     assert.match(out, /review and commit the changes \(the removal of the old task folders is staged, not committed\)/);
     assert.match(out, /restart any running Claude Code sessions/);
   });
@@ -484,10 +486,10 @@ describe('upgrading a 0.6.0 repo (no VERSION.files: matched through known-hashes
     }
   });
 
-  test('VERSION is interface 6 with a files map of what is on disk; team files are not in it', () => {
+  test('VERSION is interface 7 with a files map of what is on disk; team files are not in it', () => {
     const v = version(dir);
     assert.equal(v.package, PACKAGE_VERSION);
-    assert.equal(v.interface, 6);
+    assert.equal(v.interface, 7);
     for (const [to, hash] of Object.entries(v.files)) {
       assert.ok(!/^\.shipline\/(config\.yml|workflows\/|rules\/)/.test(to), `${to} is team-owned`);
       if (to === 'CLAUDE.md#shipline' || to === '.claude/settings.json#shipline') continue;
@@ -589,7 +591,7 @@ describe('edited files', () => {
     // Everything else was replaced, and the edited files have no hash in VERSION.files.
     assert.equal(read(dir, '.shipline/bin/lib.mjs'), template('.shipline/bin/lib.mjs').toString());
     const v = version(dir);
-    assert.equal(v.interface, 6);
+    assert.equal(v.interface, 7);
     assert.ok(!('.shipline/bin/guard.mjs' in v.files));
     assert.ok(!('.claude/agents/planner.md' in v.files));
 
@@ -777,7 +779,7 @@ describe('running sessions', () => {
     assert.match(r.stdout, /Warnings\n {2}! Claude session s1 was active in the last 30 minutes; restart it after the upgrade/);
     assert.ok(!r.stdout.includes('Claude session s2 was active'));
     assert.match(r.stdout, /! a Shipline UI chat lock is held \(\.shipline\/\.state\/ui\/lock\.json\); stop the UI chat first/);
-    assert.equal(version(dir).interface, 6);
+    assert.equal(version(dir).interface, 7);
     assert.ok(existsSync(path.join(storeOf(dir), 'tasks', 'fix-crash')));
   });
 });
@@ -807,7 +809,7 @@ describe('other layouts', () => {
     const r = upgrade(dir, '--yes');
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /Task data -> .*\n {2}\(nothing to move\)/);
-    assert.match(r.stdout, /Upgraded to [\d.]+ \(interface 6\)\.\n/);
+    assert.match(r.stdout, /Upgraded to [\d.]+ \(interface 7\)\.\n/);
     assert.equal(git(dir, 'diff', '--cached', '--name-only'), '');
     assert.ok(!existsSync(path.join(storeOf(dir), 'tasks')) || readdirSync(path.join(storeOf(dir), 'tasks')).length === 0);
   });
@@ -829,7 +831,7 @@ describe('other layouts', () => {
     const r = upgrade(dir, '--yes');
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /repo: unknown \(interface 1\) -> /);
-    assert.equal(version(dir).interface, 6);
+    assert.equal(version(dir).interface, 7);
     assert.ok(existsSync(path.join(storeOf(dir), 'tasks', 'LL-12-add-export')));
   });
 });
@@ -1187,6 +1189,41 @@ describe('0.11.0: checks and sections on workflow stages, the CI checkout ref, a
     return dir;
   };
 
+  // A workflow as 0.13.0 shipped it: no checkpoint lines.
+  const as013 = (text) => text.replace(/^ {4}checkpoint:[^\n]*\n/gm, '');
+  test('checkpoint: true is added to feature plan and bugfix root_cause when the file sets none (0.14)', () => {
+    const dir = repo((d) => {
+      for (const wf of ['feature', 'bugfix']) write(d, `.shipline/workflows/${wf}.yml`, as013(read(d, `.shipline/workflows/${wf}.yml`)));
+    });
+    assert.equal(stageIn(dir, 'feature', 'plan').checkpoint, undefined);
+    const dry = upgrade(dir, '--dry-run');
+    assert.equal(dry.code, 0, dry.stderr);
+    assert.match(dry.stdout, /~ \.shipline\/workflows\/feature\.yml: add [^\n]*checkpoint on plan/);
+    assert.match(dry.stdout, /~ \.shipline\/workflows\/bugfix\.yml: add [^\n]*checkpoint on root_cause/);
+    assert.doesNotMatch(dry.stdout, /small\.yml: add [^\n]*checkpoint/);
+    const run = upgrade(dir, '--yes');
+    assert.equal(run.code, 0, run.stderr);
+    assert.equal(stageIn(dir, 'feature', 'plan').checkpoint, true);
+    assert.equal(stageIn(dir, 'bugfix', 'root_cause').checkpoint, true);
+    assert.equal(stageIn(dir, 'feature', 'verify').checkpoint, undefined);
+  });
+
+  test('checkpoint is not added when the workflow already sets one, or the stage does not ask to advance', () => {
+    const dir = repo((d) => {
+      const f = as013(read(d, `.shipline/workflows/feature.yml`));
+      // feature: a team moved the checkpoint to verify.
+      write(d, `.shipline/workflows/feature.yml`, f.replace(/(\n  - id: verify\n)/, '$1    checkpoint: true\n'));
+      // bugfix: root_cause no longer asks to advance.
+      write(d, `.shipline/workflows/bugfix.yml`, as013(read(d, `.shipline/workflows/bugfix.yml`)).replace(/(id: root_cause[\s\S]*?confirm_to_advance: )true/, '$1false'));
+    });
+    const run = upgrade(dir, '--yes');
+    assert.equal(run.code, 0, run.stderr);
+    assert.doesNotMatch(run.stdout, /checkpoint on/);
+    assert.equal(stageIn(dir, 'feature', 'plan').checkpoint, undefined);
+    assert.equal(stageIn(dir, 'feature', 'verify').checkpoint, true);
+    assert.equal(stageIn(dir, 'bugfix', 'root_cause').checkpoint, undefined);
+  });
+
   test('checks: true on verify and the default sections are added where missing, with a diff; --dry-run writes nothing', () => {
     const dir = repo();
     assert.equal(stageIn(dir, 'feature', 'verify').checks, undefined);
@@ -1457,4 +1494,65 @@ describe('guardrails (0.12.0 -> 0.13.0)', () => {
     assert.ok(r.stdout.includes(`+ ${OFF_COMMENT}`), r.stdout);
     assert.deepEqual(snapshot(dir), snap);
   });
+});
+
+// Teams Phase 4: upgrading a 0.13.0 repo adds `confirmations: standard` (with the template's comment) when the key is
+// missing, and never changes a value that is there.
+describe('confirmations (0.13.0 -> 0.14.0)', () => {
+  const NEW_LINE = 'New: confirmations preset (standard; light asks only at checkpoints, see Setup)';
+  const BLOCK_RE = /# How often Claude asks before moving to the next stage[^\n]*\n(?:#[^\n]*\n)*confirmations: standard\n\n/;
+
+  // A current install turned back into what 0.13.0 wrote: no confirmations key (opts.config edits further).
+  function repo013({ config } = {}) {
+    const dir = makeRepo({ commitInit: true });
+    dirs.push(dir);
+    const installed = read(dir, '.shipline/config.yml');
+    assert.match(installed, BLOCK_RE);
+    let cfg = installed.replace(BLOCK_RE, '');
+    assert.ok(!/^confirmations:/m.test(cfg), cfg);
+    if (config) cfg = config(cfg);
+    writeFileSync(path.join(dir, '.shipline', 'config.yml'), cfg);
+    const v = version(dir);
+    v.package = '0.13.0';
+    v.interface = 6;
+    writeFileSync(path.join(dir, '.shipline', 'bin', 'VERSION'), JSON.stringify(v, null, 2) + '\n');
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'as installed by 0.13.0');
+    return { dir, installed };
+  }
+
+  test('a missing key: the preview names it, and confirmations: standard is added with its comment', () => {
+    const { dir, installed } = repo013();
+    const dry = upgrade(dir, '--dry-run');
+    assert.equal(dry.code, 0, `${dry.stdout}\n${dry.stderr}`);
+    assert.match(dry.stdout, /^ {2}~ \.shipline\/config\.yml: add confirmations: standard$/m);
+    assert.match(dry.stdout, /^ {4}\+ confirmations: standard$/m, 'the diff shows the new line');
+    assert.ok(dry.stdout.includes(`\n${NEW_LINE}\n`), dry.stdout);
+    assert.ok(!/^confirmations:/m.test(read(dir, '.shipline/config.yml')), 'a dry run writes nothing');
+
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, `${r.stdout}\n${r.stderr}`);
+    assert.match(r.stdout, /^ {2}~ \.shipline\/config\.yml: add confirmations: standard$/m);
+    assert.ok(r.stdout.includes(`\n${NEW_LINE}\n`), r.stdout);
+    assert.ok(!r.stdout.includes('New: guardrails'), 'nothing else is announced');
+    const text = read(dir, '.shipline/config.yml');
+    assert.equal(parseYaml(text).confirmations, 'standard');
+    assert.equal(text, installed, 'back to the template text: the key with its comment, where the template has it');
+    assert.equal(version(dir).interface, INTERFACE);
+    // A second run changes nothing.
+    assert.equal(upgrade(dir, '--yes').stdout, 'Already up to date.\n');
+  });
+
+  for (const value of ['light', 'standard', 'lite']) {
+    test(`an existing confirmations: ${value} is never changed, and nothing about it is reported`, () => {
+      const { dir } = repo013({ config: (t) => t.replace(/\ncommands:\n/, `\nconfirmations: ${value}\n\ncommands:\n`) });
+      const before = read(dir, '.shipline/config.yml');
+      const r = upgrade(dir, '--yes');
+      assert.equal(r.code, 0, `${r.stdout}\n${r.stderr}`);
+      assert.ok(!r.stdout.includes('.shipline/config.yml'), r.stdout);
+      assert.ok(!r.stdout.includes(NEW_LINE), r.stdout);
+      assert.equal(read(dir, '.shipline/config.yml'), before);
+      assert.equal(parseYaml(before).confirmations, value);
+    });
+  }
 });

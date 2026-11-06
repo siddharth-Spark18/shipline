@@ -158,6 +158,7 @@ commands:                               # filled by init from the repo; the Veri
   test: "pnpm test"
   lint: "pnpm run lint"
   build: "pnpm run build"
+confirmations: standard                 # standard | light: how often Claude asks before advancing (see Confirmations)
 skills: []                              # your own .claude/skills/<name> that Claude may use at any stage
 setup: done                             # written by /shipline-setup; stops the setup reminder
 rails: { ... }                          # always-on guardrails, deny | ask | off each (see Guardrails)
@@ -175,6 +176,7 @@ scope_check: { enabled: true }          # Verify: flag edits to tests, lint and 
 | `condition: ui_only` | Runs only when the task is flagged as UI work |
 | `agent` | Suggested subagent |
 | `confirm_to_advance` | Ask the developer before moving on |
+| `checkpoint: true` | With `confirm_to_advance`: the stage still asks in light mode (see Confirmations) |
 | `enforcement` | `guide`, `warn` or `block` |
 | `sections` | Headings the artifact must contain, each with some text under it, before the stage can finish (the defaults: Plan needs `Scope`, `Files to touch`, `Verification`; Verify needs `Checklist`; Root cause needs `Cause`, `Evidence`; Feasibility needs `Risks`) |
 | `checks: true` | The stage (Verify, by default) can't finish until `stage.mjs check` has run the test, lint and build commands on the current code and they passed, or you accepted the failures |
@@ -188,6 +190,20 @@ Checks line plus the plan's scope and the verification checklist in collapsed se
 summary's fingerprint with the PR's git tree. With `ci.stale_checks` in `config.yml` set to `warn` (the default) it warns
 when they differ, with `fail` it fails. A command that failed and wasn't accepted fails the check either way. A hand-edited
 summary can still lie: this is evidence for reviewers, not a signature.
+
+**Confirmations.** `confirmations` in `config.yml` sets how often Claude asks before moving to the next stage, for the
+whole repo.
+
+- `standard` (the default, and what a missing key means): Claude asks at every stage with `confirm_to_advance: true`.
+- `light`: Claude asks only at stages that also have `checkpoint: true`, which the shipped Feature workflow sets on Plan
+  and Bugfix on Root cause. The other stages advance on the deterministic checks. A workflow with no checkpoint stage
+  never asks to advance in light mode; Setup shows a note when that is the case.
+
+In both modes Claude still asks before skipping a required stage, before finishing with failed checks, and when the
+Verify scope check flags something. The rule is shared by the hooks, the CI check and the UI, and a change takes effect
+on the next `advance`. Pick it in Setup, in the install wizard, or in `/shipline-setup`. `upgrade` adds
+`confirmations: standard` when the key is missing and never changes an existing value. A workflow file you edited
+doesn't get `checkpoint: true` from `upgrade`; add it to the stages that should ask in light mode.
 
 **Rules files** (`.shipline/rules/<stage>.md`): plain Markdown that Claude reads before each stage. They ship
 with default guidance; `upgrade` replaces a rules file only while it is still an untouched shipped version.

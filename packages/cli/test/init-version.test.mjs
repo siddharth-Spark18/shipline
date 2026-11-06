@@ -21,7 +21,7 @@ const fresh = () => {
 after(() => dirs.forEach(removeDir));
 
 describe('init writes VERSION', () => {
-  test('with the package version, INTERFACE 6 and the files map, plus a newline', () => {
+  test('with the package version, INTERFACE 7 and the files map, plus a newline', () => {
     const dir = fresh();
     const r = runInit(dir);
     assert.equal(r.code, 0, r.stderr);
@@ -34,7 +34,7 @@ describe('init writes VERSION', () => {
     assert.deepEqual(v.excluded, excluded, '--yes leaves out the standalone reviewer and, with no UI, wireframe-proposer');
     assert.equal(v.package, PACKAGE_VERSION);
     assert.equal(v.interface, INTERFACE);
-    assert.equal(INTERFACE, 6);
+    assert.equal(INTERFACE, 7);
     assert.deepEqual(readRepoVersion(dir), { package: PACKAGE_VERSION, interface: INTERFACE, files: v.files, excluded });
   });
 
@@ -236,7 +236,8 @@ describe('readRepoVersion', () => {
 describe('compareInterface', () => {
   test('same', () => {
     assert.equal(compareInterface(2, 2), 'same');
-    assert.equal(compareInterface({ package: '0.13.0', interface: 6 }, INTERFACE), 'same');
+    assert.equal(compareInterface({ package: '0.14.0', interface: 7 }, INTERFACE), 'same');
+    assert.equal(compareInterface({ package: '0.13.0', interface: 6 }, INTERFACE), 'repo-older');
     assert.equal(compareInterface({ package: '0.11.0', interface: 5 }, INTERFACE), 'repo-older');
     assert.equal(compareInterface({ package: '0.8.0', interface: 4 }, INTERFACE), 'repo-older');
     assert.equal(compareInterface({ package: '0.7.0', interface: 3 }, INTERFACE), 'repo-older');
@@ -258,6 +259,7 @@ describe('compareInterface', () => {
       'Trust: answer-based confirmations and the CI check',
       'Trust: real check runs, required sections and PR evidence',
       'Guardrails: always-on rails, protected paths, named actions and the Verify scope check',
+      'Lighter confirmations: the standard or light preset and checkpoint stages',
     ]);
   });
 });

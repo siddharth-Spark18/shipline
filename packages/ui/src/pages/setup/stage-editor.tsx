@@ -31,6 +31,7 @@ const STAGE_KEYS = [
   'blocks',
   'checks',
   'sections',
+  'checkpoint',
 ];
 
 export interface StageEditorProps {
@@ -230,6 +231,15 @@ export function StageEditor({
               onCheckedChange={(v) => setField('confirm_to_advance', v)}
             />
             <Label htmlFor={`${base}-confirm`}>Confirm to advance</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              id={`${base}-checkpoint`}
+              checked={stage.checkpoint === true}
+              disabled={stage.confirm_to_advance !== true}
+              onCheckedChange={(v) => setField('checkpoint', v)}
+            />
+            <Label htmlFor={`${base}-checkpoint`}>Checkpoint (asks in light mode)</Label>
           </div>
           <div className="flex items-center gap-2">
             <Switch

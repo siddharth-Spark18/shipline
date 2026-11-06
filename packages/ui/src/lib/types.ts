@@ -91,6 +91,8 @@ export interface StageModel {
   checks?: boolean | null;
   /** Headings the artifact must contain, each with some text under it. */
   sections?: string[] | null;
+  /** With confirm_to_advance: the stage still asks in `confirmations: light` mode. */
+  checkpoint?: boolean | null;
   [key: string]: unknown;
 }
 
@@ -106,6 +108,8 @@ export interface WorkflowModel {
 export interface ConfigModel {
   branch_pattern?: string | null;
   tracker?: string | null;
+  /** `standard` (the default) asks at every confirm_to_advance stage; `light` only at checkpoint stages. */
+  confirmations?: 'standard' | 'light' | null;
   commands?: {
     test?: string | null;
     lint?: string | null;
@@ -590,6 +594,8 @@ export interface InstallSelection {
   skills: string[];
   commands: { test: string; lint: string; build: string };
   tracker: 'jira' | 'github';
+  /** Optional: missing means standard. */
+  confirmations?: 'standard' | 'light';
   ci: boolean;
 }
 

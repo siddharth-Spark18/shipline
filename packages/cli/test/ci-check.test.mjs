@@ -536,3 +536,61 @@ describe('v2 summaries: the scope is shown, never a failure', () => {
     }
   });
 });
+
+// Teams Phase 4: ci-check uses needsAnswer with the PR tree's own config.yml, so `confirmations: light` only needs
+// an answer on checkpoint stages (feature's plan). Standard, a missing key and an unknown value fail as before.
+describe('confirmations: light (needsAnswer)', () => {
+  const setConfirmations = (mode) => {
+    setCi({ missing_block: 'fail', skip_label: 'shipline:skip' });
+    const f = path.join(dir, '.shipline', 'config.yml');
+    const text = readFileSync(f, 'utf8');
+    assert.match(text, /^confirmations: standard$/m);
+    writeFileSync(f, mode === undefined ? text.replace(/^confirmations: standard\n/m, '') : text.replace(/^confirmations: standard$/m, `confirmations: ${mode}`));
+  };
+  const AUTO = { questions: { confirmed: 'auto' }, wireframes: { confirmed: 'auto' }, verify: { confirmed: 'auto' } };
+  const needs = (id) => `::error title=Shipline::Stage "${id}" needs the developer's confirmation, but the summary doesn't show their answer.`;
+  after(() => setCi({ missing_block: 'fail', skip_label: 'shipline:skip' }));
+
+  test('light: auto on questions, wireframes and verify (not checkpoints) passes', () => {
+    setConfirmations('light');
+    const r = check(body(featureSummary(AUTO)));
+    assert.equal(r.code, 0, r.stdout);
+    assert.deepEqual(errors(r), []);
+    // An answer there is fine too.
+    assert.equal(check(body(featureSummary())).code, 0);
+  });
+
+  test('light: plan (a checkpoint) done without an answer fails with the existing message', () => {
+    setConfirmations('light');
+    for (const confirmed of ['auto', null, undefined]) {
+      const r = check(body(featureSummary({ ...AUTO, plan: { confirmed } })));
+      assert.equal(r.code, 1, `${confirmed}: ${r.stdout}`);
+      assert.deepEqual(errors(r), [needs('plan')]);
+    }
+  });
+
+  test('light: a checkpoint without confirm_to_advance needs nothing', () => {
+    setConfirmations('light');
+    const wf = path.join(dir, '.shipline', 'workflows', 'cp.yml');
+    writeFileSync(wf, 'id: cp\nname: CP\nstages:\n  - id: build\n    enforcement: guide\n    checkpoint: true\n');
+    try {
+      const r = check(body({ v: 1, workflow: 'cp', task: 'x', stages: [{ id: 'build', status: 'done', enforcement: 'guide', confirmed: 'auto' }] }));
+      assert.equal(r.code, 0, r.stdout);
+    } finally {
+      rmSync(wf, { force: true });
+    }
+  });
+
+  for (const mode of ['standard', undefined, 'lite']) {
+    test(`${mode === undefined ? 'no confirmations key' : `confirmations: ${mode}`}: the same summaries fail as before`, () => {
+      setConfirmations(mode);
+      const r = check(body(featureSummary(AUTO)));
+      assert.equal(r.code, 1, r.stdout);
+      assert.deepEqual(errors(r), [needs('questions'), needs('wireframes'), needs('verify')]);
+      const p = check(body(featureSummary({ plan: { confirmed: 'auto' } })));
+      assert.equal(p.code, 1, p.stdout);
+      assert.deepEqual(errors(p), [needs('plan')]);
+      assert.equal(check(body(featureSummary())).code, 0, 'every confirm stage answered still passes');
+    });
+  }
+});

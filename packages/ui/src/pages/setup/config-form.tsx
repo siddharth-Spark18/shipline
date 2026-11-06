@@ -18,6 +18,7 @@ import type { ConfigModel, SetupFile } from '@/lib/types';
 const TOP_KEYS = [
   'branch_pattern',
   'tracker',
+  'confirmations',
   'commands',
   'skills',
   'ci',
@@ -30,6 +31,18 @@ const TOP_KEYS = [
 const TRACKERS = [
   { value: 'jira', label: 'Jira' },
   { value: 'github', label: 'GitHub Issues' },
+];
+const CONFIRMATIONS = [
+  {
+    value: 'standard',
+    label: 'Standard',
+    hint: 'Claude asks before every stage marked "confirm to advance".',
+  },
+  {
+    value: 'light',
+    label: 'Light',
+    hint: 'Claude asks only at checkpoint stages (plan approval); skipping, failed checks and scope questions still ask.',
+  },
 ];
 const COMMAND_KEYS = ['test', 'lint', 'build'];
 const STALE_CHECKS = [
@@ -122,6 +135,7 @@ export function ConfigForm({
 
   const tracker = model.tracker || 'jira';
   const staleChecks = model.ci?.stale_checks || 'warn';
+  const confirmations = model.confirmations === 'light' ? 'light' : 'standard';
   const supported = TRACKERS.some((t) => t.value === tracker);
 
   return (
@@ -145,6 +159,24 @@ export function ConfigForm({
           </Select>
           <p className="text-xs text-muted-foreground">
             Where tickets live. Claude reads them; it never creates or edits issues.
+          </p>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="cfg-confirmations">Confirmations</Label>
+          <Select value={confirmations} onValueChange={(v) => setTop('confirmations', v)}>
+            <SelectTrigger id="cfg-confirmations" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CONFIRMATIONS.map((c) => (
+                <SelectItem key={c.value} value={c.value}>
+                  {c.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {CONFIRMATIONS.find((c) => c.value === confirmations)?.hint}
           </p>
         </div>
         <TextField

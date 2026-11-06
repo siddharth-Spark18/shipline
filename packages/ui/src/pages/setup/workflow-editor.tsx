@@ -18,6 +18,7 @@ import { OtherFields } from '@/pages/setup/other-fields';
 import { StageList } from '@/pages/setup/stage-list';
 import { ID_RE, setOptional, type WorkflowDraft } from '@/pages/setup/draft';
 import { api } from '@/lib/api';
+import { needsAnswer } from '@/lib/confirmations';
 import { queryKeys } from '@/lib/events';
 import type { SetupAgents, SetupFile, WorkflowModel } from '@/lib/types';
 
@@ -29,6 +30,8 @@ export interface WorkflowEditorProps {
   dirty: boolean;
   agents: SetupAgents;
   existingIds: string[];
+  /** The `confirmations` value in the drafted config (the saved one when the config isn't being edited). */
+  confirmations?: 'standard' | 'light' | null;
   /** The repo is newer than this UI: nothing can be written. */
   readOnly: boolean;
   rules: (stageId: string) => { text: string; exists: boolean };
@@ -44,6 +47,7 @@ export function WorkflowEditor({
   dirty,
   agents,
   existingIds,
+  confirmations,
   readOnly,
   rules,
   onChange,
@@ -175,6 +179,13 @@ export function WorkflowEditor({
           the ones that differ from your new list.
         </p>
       )}
+
+      {confirmations === 'light' &&
+        !(model.stages ?? []).some((s) => needsAnswer(s, { confirmations: 'light' })) && (
+          <p className="text-xs text-muted-foreground">
+            In light mode this workflow never asks before advancing.
+          </p>
+        )}
 
       <div className="flex flex-col gap-2">
         <h3 className="text-sm font-medium">Stages</h3>

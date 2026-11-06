@@ -418,3 +418,42 @@ describe('the same selection gives byte-identical files through init, init --yes
     );
   });
 });
+
+// Teams Phase 4: the wizard's Standard/Light choice. selection.confirmations 'light' writes it to config.yml; a
+// missing or unknown value leaves the template's standard, with no error (checkSelection doesn't require it).
+describe('selection.confirmations (Teams Phase 4)', () => {
+  const configOf = (plan) => plan.writes.find((w) => w.to === '.shipline/config.yml').data.toString('utf8');
+  const TEMPLATE_CONFIG = readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8');
+
+  test("'light' writes confirmations: light, keeping the rest of the template (comments included)", () => {
+    const dir = repo();
+    const info = installInfo(dir);
+    const text = configOf(planInstall(dir, info, full(info, { confirmations: 'light' })));
+    assert.equal(parseYaml(text).confirmations, 'light');
+    assert.equal(text, TEMPLATE_CONFIG.replace(/^confirmations: standard$/m, 'confirmations: light'));
+  });
+
+  test("missing, 'standard' or an unknown value: the template's standard, byte for byte, and no error", () => {
+    const dir = repo();
+    const info = installInfo(dir);
+    for (const confirmations of [undefined, 'standard', 'lite', 'Light', null, 1]) {
+      const sel = full(info, confirmations === undefined ? {} : { confirmations });
+      assert.doesNotThrow(() => checkSelection(info, sel), String(confirmations));
+      assert.equal(configOf(planInstall(dir, info, sel)), TEMPLATE_CONFIG, String(confirmations));
+    }
+    assert.ok(!('confirmations' in defaultSelection(info)), 'the default selection leaves it out (standard)');
+  });
+
+  test("'light' together with the other config answers (tracker, commands, skills)", () => {
+    const dir = repo({ '.claude/skills/deploy/SKILL.md': '# Deploy\n' });
+    const info = installInfo(dir);
+    const plan = planInstall(dir, info, full(info, { confirmations: 'light', tracker: 'github', skills: ['deploy'], commands: { test: 'npm test', lint: '', build: '' } }));
+    const cfg = parseYaml(configOf(plan));
+    assert.equal(cfg.confirmations, 'light');
+    assert.equal(cfg.tracker, 'github');
+    assert.deepEqual(cfg.skills, ['deploy']);
+    assert.equal(cfg.commands.test, 'npm test');
+    applyInstall(dir, plan);
+    assert.equal(parseYaml(read(dir, '.shipline/config.yml')).confirmations, 'light');
+  });
+});

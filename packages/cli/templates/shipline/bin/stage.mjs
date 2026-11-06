@@ -21,7 +21,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import {
-  findRoot, loadConfig, loadWorkflow, listWorkflows, readManifest, manifestPath, readSession, statePath,
+  findRoot, loadConfig, needsAnswer, loadWorkflow, listWorkflows, readManifest, manifestPath, readSession, statePath,
   tasksDir, writeJson, isDone, currentStage, slugify, stageEnforcement, confirmQuestion, readApprovals,
   consumeApproval, CONFIRM_OPTIONS, sameStage, findStage, fingerprint, findSection, sectionProblems, scopeOf, scopeText,
 } from './lib.mjs';
@@ -166,7 +166,7 @@ function describeCurrent(taskDir, manifest, wf) {
     sc.agent ? `Suggested agent: ${sc.agent}` : null,
     sections(sc).length ? `Required sections in the artifact (each needs real text under its heading): ${sections(sc).join(', ')}` : null,
     sc.checks === true ? 'Checks: run `node .shipline/bin/stage.mjs check` (Bash timeout 600000 ms, or in the background for slow suites) before advancing; rerun it after any code change.' : null,
-    `Enforcement: ${stageEnforcement(sc)}. Confirm with the developer before advancing: ${sc.confirm_to_advance ? 'YES (`advance` prints the question to ask them; it only goes through after they answer it)' : 'no (auto-advance)'}`,
+    `Enforcement: ${stageEnforcement(sc)}. Confirm with the developer before advancing: ${needsAnswer(sc, cfg) ? 'YES (`advance` prints the question to ask them; it only goes through after they answer it)' : sc.confirm_to_advance ? 'no (light confirmations: auto-advance)' : 'no (auto-advance)'}`,
   ].filter(Boolean);
   if (Array.isArray(cfg.skills) && cfg.skills.length) lines.push(`Repo skills you can use: ${cfg.skills.join(', ')}`);
   if (sameStage(cur.id, 'ticket')) lines.push(trackerLine(manifest));
@@ -233,6 +233,27 @@ function requireAnswer(kind, stageId, taskDir, manifest, extra) {
       `Then run \`${cmd}\` again. Do not pass any flag or edit any progress file to get around this.`,
   );
   process.exit(1);
+}
+
+// The developer's answer to an `advance` question that is pending for this stage, consumed with the same lookup
+// requireAnswer uses; null when there is no such question or no answer yet.
+function takePendingAdvanceAnswer(stageId, taskDir) {
+  if (!sessionId) return null;
+  const st = readSession(root, sessionId);
+  const pend = st && st.pending_confirm;
+  if (!pend || pend.kind !== 'advance' || pend.stage !== stageId || pend.task_dir !== taskDir) return null;
+  const issued = Date.parse(pend.issued_at);
+  return consumeApproval(
+    root,
+    sessionId,
+    (a) =>
+      a.kind === 'advance' &&
+      a.stage === stageId &&
+      typeof a.task_dir === 'string' && path.resolve(a.task_dir) === path.resolve(taskDir) &&
+      a.answer === CONFIRM_OPTIONS.advance.yes &&
+      (a.question === undefined || a.question === pend.question) &&
+      Date.parse(a.at) > issued,
+  );
 }
 
 // Moves to the next stage that applies; marks conditional stages that do not apply as skipped.
@@ -363,10 +384,16 @@ switch (cmd) {
         }
       }
       if (sc.checks === true) gateChecks(taskDir, manifest, cur);
-      if (sc.confirm_to_advance) {
+      if (needsAnswer(sc, cfg)) {
         const a = requireAnswer('advance', cur.id, taskDir, manifest);
         cur.confirmed = { via: 'answer', at: a.at };
-      } else clearPending();
+      } else {
+        // No question is needed (the stage doesn't ask, or light mode is on). An "Advance" answer the developer
+        // already gave for a pending question on this stage is still used; otherwise the stage finishes as auto.
+        const a = takePendingAdvanceAnswer(cur.id, taskDir);
+        if (a) cur.confirmed = { via: 'answer', at: a.at };
+        clearPending();
+      }
       cur.status = 'done';
     } else {
       const reason = typeof flags.reason === 'string' ? flags.reason : 'skipped';
@@ -478,7 +505,7 @@ function statusText(taskDir, manifest, wf) {
 
 // How a finished stage was decided: 'answer' (the developer's own answer), 'auto' (no question was needed), or null.
 function provenance(ms, sc) {
-  if (ms.status === 'done') return ms.confirmed && ms.confirmed.via === 'answer' ? 'answer' : sc.confirm_to_advance ? null : 'auto';
+  if (ms.status === 'done') return ms.confirmed && ms.confirmed.via === 'answer' ? 'answer' : needsAnswer(sc, cfg) ? null : 'auto';
   if (ms.status === 'skipped') return ms.skipped ? (ms.skipped.via === 'answer' ? 'answer' : 'auto') : 'auto';
   return null;
 }

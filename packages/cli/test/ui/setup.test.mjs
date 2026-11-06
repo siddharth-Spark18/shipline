@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { CLI_ROOT, makeRepo, removeDir, run, runInitAll, stage, storeOf } from '../helpers.mjs';
+import { BIN, CLI_ROOT, makeRepo, removeDir, run, runInitAll, stage, storeOf } from '../helpers.mjs';
 import { api, openEvents, startUi } from './helpers.mjs';
 import { headerFor } from '../../src/setup-schema.mjs';
 import { INTERFACE } from '../../src/interface.mjs';
@@ -127,13 +127,14 @@ describe('saving', () => {
     assert.deepEqual(snapshot(dir), before);
   });
 
-  test('editing enforcement and saving is reflected by `stage.mjs status`', async () => {
+  test('editing enforcement and saving is reflected by `stage.mjs status --verbose`', async () => {
+    // tracker: none (the default) skips the ticket stage, so the task starts at feasibility.
     assert.equal(stage(dir, ['start', '--workflow', 'feature', '--title', 'Add export'], 's1').code, 0);
-    assert.match(stage(dir, ['status'], 's1').stdout, /Enforcement: guide\./);
+    assert.match(stage(dir, ['status', '--verbose'], 's1').stdout, /Enforcement: guide\./);
     const s = await getSetup();
     const f = wfEntry(s, 'feature');
     const model = clone(f.model);
-    model.stages.find((x) => x.id === 'ticket').enforcement = 'warn'; // `jira` before 0.10.0
+    model.stages.find((x) => x.id === 'feasibility').enforcement = 'warn';
     const before = read('.shipline/workflows/feature.yml');
     const r = await save([{ kind: 'workflow', id: 'feature', model, baseHash: f.hash }]);
     assert.equal(r.status, 200, r.text);
@@ -144,7 +145,7 @@ describe('saving', () => {
     const b = after.split('\n');
     assert.equal(a.length, b.length);
     assert.deepEqual(a.map((l, i) => [l, b[i]]).filter(([x, y]) => x !== y), [['    enforcement: guide', '    enforcement: warn']]);
-    assert.match(stage(dir, ['status'], 's1').stdout, /Enforcement: warn\./);
+    assert.match(stage(dir, ['status', '--verbose'], 's1').stdout, /Enforcement: warn\./);
   });
 
   test('a save logs the hashes before and after', async () => {
@@ -181,7 +182,7 @@ describe('saving', () => {
     assert.equal(s3.config.model.commands.typecheck, 'pnpm tsc');
     // The template ends with the comment documenting `setup` (Teams Phase 1, E); unknown keys follow it. The guardrail
     // keys (Teams Phase 3) sit between ci and that comment, and the protected_paths block list is written back as is.
-    assert.match(read('.shipline/config.yml'), /\n {2}typecheck: pnpm tsc\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\n# stale_checks:[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n {2}stale_checks: warn\n\n# Guardrails:[^]*\nprotected_paths:\n {2}- migrations\/\*\*\n[^]*\n {2}- go\.sum\n\n# At Verify[^]*\nscope_check:\n {2}enabled: true\n {2}sensitive_extra: \[\]\n\n# Set to `done`[^\n]*\n# Until then[^\n]*\n\nteam_owner: platform\n$/);
+    assert.match(read('.shipline/config.yml'), /\n {2}typecheck: pnpm tsc\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\n# stale_checks:[^\n]*\n# The check runs the checker[^\n]*\n# \(the PR that first adds Shipline[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n {2}stale_checks: warn\n\n# Guardrails:[^]*\nprotected_paths:\n {2}- migrations\/\*\*\n[^]*\n {2}- go\.sum\n\n# At Verify[^]*\nscope_check:\n {2}enabled: true\n {2}sensitive_extra: \[\]\n\n# Set to `done`[^\n]*\n# Until then[^\n]*\n\nteam_owner: platform\n$/);
   });
 
   test('a file changed on disk gives 409, and in a two-file save nothing is written', async () => {
@@ -326,7 +327,7 @@ describe('preview', () => {
 
   test('a team comment in config.yml is shown as removed', async () => {
     const cfgText = read('.shipline/config.yml');
-    write('.shipline/config.yml', cfgText.replace('tracker: jira', 'tracker: jira # cloud instance'));
+    write('.shipline/config.yml', cfgText.replace('tracker: none', 'tracker: none # cloud instance'));
     try {
       const s = await getSetup();
       const r = await preview([{ kind: 'config', model: s.config.model, baseHash: s.config.hash }]);
@@ -587,7 +588,7 @@ describe('agents and skills (prepublish plan, Setup -> Agents & skills)', () => 
     assert.deepEqual(v.excluded, [AGENT('researcher'), AGENT('reviewer')]);
     assert.ok(!(AGENT('researcher') in v.files));
     assert.equal(v.interface, INTERFACE);
-    assert.equal(INTERFACE, 7);
+    assert.equal(INTERFACE, 1);
     let s = await getSetup(x.ui);
     assert.deepEqual(s.agents.shipline.find((a) => a.name === 'researcher'), { name: 'researcher', installed: false, excluded: true, hash: null });
     assert.equal(s.versionHash, sha256(xread(x, '.shipline/bin/VERSION')));
@@ -786,58 +787,57 @@ describe('version contract', () => {
     assert.equal((await api(x.ui, 'GET', '/api/tasks')).status, 200);
     const ev = await openEvents(x.ui);
     try {
-      const b = await ev.waitFor((e) => e.type === 'banner' && e.data.kind === 'version', 2000);
+      const b = await ev.waitFor((e) => e.type === 'banner' && e.data.kind === 'version', 10_000); // polls up to 10 s (Windows CI, 1.0 plan item 8)
       assert.equal(b.data.text, 'This repo was set up with Shipline 9.9.9. Run `npx @forgeyard/shipline@9.9.9 ui`.');
     } finally {
       ev.close();
     }
   });
 
-  test('a repo with no VERSION is "repo older": a banner, and saving still works', async () => {
-    const x = await scratchRepo((d) => rmSync(path.join(d, '.shipline/bin/VERSION')));
-    const status = await api(x.ui, 'GET', '/api/status');
-    assert.equal(status.json.versionState, 'repo-older');
-    assert.deepEqual(status.json.repoVersion, { legacy: true, interface: 1 });
-    assert.equal(status.json.needsUpgrade, true);
-    const ev = await openEvents(x.ui);
-    try {
-      const b = await ev.waitFor((e) => e.type === 'banner' && e.data.kind === 'version', 2000);
-      assert.equal(b.data.text, 'Task data is still stored in this repo. Run `npx @forgeyard/shipline upgrade` to move it to ~/.shipline.');
-    } finally {
-      ev.close();
-    }
-    const s = await getSetup(x.ui);
-    const model = clone(s.config.model);
-    model.commands.test = 'pnpm test';
-    assert.equal((await save([{ kind: 'config', model, baseHash: s.config.hash }], x.ui)).status, 200);
-  });
-
-  test('an interface-2 repo: the upgrade banner, and saving config.yml keeps artifact_root and folder_pattern as unknown keys', async () => {
-    const x = await scratchRepo((d) => {
-      writeFileSync(path.join(d, '.shipline/bin/VERSION'), '{"package":"0.6.0","interface":2}\n');
-      const cfg = readFileSync(path.join(d, '.shipline/config.yml'), 'utf8');
-      writeFileSync(path.join(d, '.shipline/config.yml'), `artifact_root: work/tasks\nfolder_pattern: "{slug}"\n${cfg}`);
+  // 1.0 plan, follow-up: a repo set up before 1.0 (a VERSION package below 1.0.0, or no or an unreadable VERSION) gets
+  // the same guidance as `upgrade`'s refusal, and saves are refused as for a newer repo. Tasks stays readable.
+  for (const [label, prepare, shown] of [
+    ['VERSION 0.14.0 (interface 7)', (d) => writeFileSync(path.join(d, '.shipline/bin/VERSION'), '{"package":"0.14.0","interface":7}\n'), '0.14.0'],
+    ['VERSION 0.6.0 (interface 2)', (d) => writeFileSync(path.join(d, '.shipline/bin/VERSION'), '{"package":"0.6.0","interface":2}\n'), '0.6.0'],
+    ['no VERSION', (d) => rmSync(path.join(d, '.shipline/bin/VERSION')), 'unknown version'],
+    ['an unreadable VERSION', (d) => writeFileSync(path.join(d, '.shipline/bin/VERSION'), 'not json\n'), 'unknown version'],
+  ]) {
+    test(`a pre-1.0 repo (${label}): the uninstall-then-init banner, saves refused (423 pre-1.0), Tasks still works`, async () => {
+      const x = await scratchRepo(prepare);
+      const message = `This repo was set up with a pre-1.0 Shipline (${shown}). Run \`npx @forgeyard/shipline uninstall --yes\` then \`init\`; task data in ~/.shipline is kept.`;
+      const status = await api(x.ui, 'GET', '/api/status');
+      assert.equal(status.json.versionState, 'pre-1.0');
+      assert.equal(status.json.versionMessage, message);
+      const ev = await openEvents(x.ui);
+      try {
+        const b = await ev.waitFor((e) => e.type === 'banner' && e.data.kind === 'version', 10_000);
+        assert.equal(b.data.text, message);
+      } finally {
+        ev.close();
+      }
+      const before = snapshot(x.dir);
+      const s = await getSetup(x.ui);
+      const model = clone(s.config.model);
+      model.commands.test = 'pnpm test';
+      const r = await save([{ kind: 'config', model, baseHash: s.config.hash }], x.ui);
+      assert.equal(r.status, 423, r.text);
+      assert.equal(r.json.error.code, 'pre-1.0');
+      assert.equal(r.json.error.message, message);
+      const copy = await api(x.ui, 'POST', '/api/setup/workflows', { body: { action: 'copy', from: 'feature', id: 'review' } });
+      assert.equal(copy.status, 423);
+      assert.deepEqual(snapshot(x.dir), before);
+      assert.equal((await api(x.ui, 'GET', '/api/tasks')).status, 200);
     });
+  }
+
+  test('the pre-1.0 message is the one `upgrade` refuses with', async () => {
+    const { preOneMessage } = await import('../../src/interface.mjs');
+    const x = await scratchRepo((d) => writeFileSync(path.join(d, '.shipline/bin/VERSION'), '{"package":"0.13.0","interface":6}\n'));
+    const r = run(process.execPath, [BIN, 'upgrade', '--dir', x.dir, '--yes'], { cwd: x.dir });
+    assert.equal(r.code, 1);
     const status = await api(x.ui, 'GET', '/api/status');
-    assert.equal(status.json.versionState, 'repo-older');
-    assert.equal(status.json.needsUpgrade, true);
-    const ev = await openEvents(x.ui);
-    try {
-      const b = await ev.waitFor((e) => e.type === 'banner' && e.data.kind === 'version', 2000);
-      assert.match(b.data.text, /Task data is still stored in this repo\. Run `npx @forgeyard\/shipline upgrade`/);
-    } finally {
-      ev.close();
-    }
-    const s = await getSetup(x.ui);
-    assert.equal(s.config.model.artifact_root, 'work/tasks');
-    const model = clone(s.config.model);
-    model.commands.test = 'pnpm test';
-    const r = await save([{ kind: 'config', model, baseHash: s.config.hash }], x.ui);
-    assert.equal(r.status, 200, r.text);
-    const saved = readFileSync(path.join(x.dir, '.shipline/config.yml'), 'utf8');
-    assert.match(saved, /^artifact_root: work\/tasks$/m);
-    assert.match(saved, /^folder_pattern: "\{slug\}"$/m);
-    assert.match(saved, /^ {2}test: pnpm test$/m);
+    assert.equal(r.stderr, `shipline: ${status.json.versionMessage} Nothing was changed.\n`);
+    assert.equal(status.json.versionMessage, preOneMessage({ package: '0.13.0' }));
   });
 });
 
@@ -1531,9 +1531,8 @@ describe('confirmations and checkpoint (Teams Phase 4)', () => {
     // The stage text follows the saved setting.
     const st = stage(x.dir, ['start', '--workflow', 'feature', '--title', 'light setup', '--ui', 'false'], 'conf-setup');
     assert.equal(st.code, 0, st.stderr);
-    writeFileSync(path.join(storeOf(x.dir), 'tasks', 'light-setup', 'ticket.md'), '# Ticket\n\nEnough real text here.\n');
+    // tracker: none skipped the ticket stage, so the task is at feasibility.
     writeFileSync(path.join(storeOf(x.dir), 'tasks', 'light-setup', 'feasibility.md'), '# F\n\n## Risks\n\nEnough real text to pass the minimum.\n');
-    assert.equal(stage(x.dir, ['advance'], 'conf-setup').code, 0);
     const a = stage(x.dir, ['advance'], 'conf-setup');
     assert.equal(a.code, 0, a.stderr);
     assert.match(a.stdout, /Confirm with the developer before advancing: no \(light confirmations: auto-advance\)/);

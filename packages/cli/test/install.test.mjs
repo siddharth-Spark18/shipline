@@ -123,7 +123,7 @@ describe('defaultSelection, fillSelection and checkSelection', () => {
       stageAgents: {},
       skills: [],
       commands: { test: '', lint: '', build: '' },
-      tracker: 'jira',
+      tracker: 'none',
       ci: false,
     });
     const withUi = defaultSelection(installInfo(repo({ 'package.json': JSON.stringify({ dependencies: { svelte: '4' } }) })));
@@ -145,7 +145,7 @@ describe('defaultSelection, fillSelection and checkSelection', () => {
       stageAgents: {},
       skills: [],
       commands: { test: '', lint: '', build: '' },
-      tracker: 'jira',
+      tracker: 'none',
       ci: false,
     });
   });

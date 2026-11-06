@@ -17,10 +17,13 @@ import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
 import type { BannerEvent, BannerKind, Status } from '@/lib/types';
 
-// Shown for every repo older than interface 3 (its tasks and state are still inside the repo). Mirrors UPGRADE_TEXT
-// in packages/cli/src/ui/server.mjs.
+// A repo on an older 1.x interface than this UI (none yet: 1.0 is interface 1).
 const UPGRADE_TEXT =
-  'Task data is still stored in this repo. Run `npx @forgeyard/shipline upgrade` to move it to ~/.shipline.';
+  'This repo was set up with an older Shipline. Run `npx @forgeyard/shipline upgrade` to update it.';
+
+// Fallback only: the server sends the pre-1.0 text in status.versionMessage (shared with `upgrade`).
+const PRE_ONE_TEXT =
+  'This repo was set up with a pre-1.0 Shipline. Run `npx @forgeyard/shipline uninstall --yes` then `init`; task data in ~/.shipline is kept.';
 
 const TITLES: Record<BannerKind, string> = {
   version: 'Shipline version',
@@ -38,7 +41,9 @@ function repoPackage(status: Status): string {
 /** The version banner built from /api/status, used when the server has not sent one over SSE. */
 export function versionBanner(status: Status | undefined): BannerEvent | null {
   if (!status) return null;
-  if (status.needsUpgrade) return { id: 'version', kind: 'version', text: UPGRADE_TEXT };
+  if (status.versionState === 'pre-1.0') {
+    return { id: 'version', kind: 'version', text: status.versionMessage ?? PRE_ONE_TEXT };
+  }
   if (status.versionState === 'same') return null;
   if (status.versionState === 'repo-older') {
     return {
@@ -172,7 +177,9 @@ export function useBanners(status: Status | undefined) {
   if (derived && !all.some((b) => b.kind === 'version')) all.unshift(derived);
 
   const isDestructive = (b: BannerEvent) =>
-    b.kind !== 'version' || status?.versionState === 'repo-newer';
+    b.kind !== 'version' ||
+    status?.versionState === 'repo-newer' ||
+    status?.versionState === 'pre-1.0';
   const dismiss = (id: string) => setDismissed((prev) => new Set(prev).add(id));
   return { all, visible: all.filter((b) => !dismissed.has(b.id)), isDestructive, dismiss };
 }

@@ -98,7 +98,7 @@ export function removeDir(dir) {
 export function runInit(dir, ...flags) {
   let yes = true;
   if (flags.length && typeof flags[0] === 'object' && flags[0] !== null) yes = flags.shift().yes !== false;
-  return run(process.execPath, [BIN, 'init', dir, ...(yes ? ['--yes'] : []), ...flags], { cwd: dir });
+  return run(process.execPath, [BIN, 'init', '--dir', dir, ...(yes ? ['--yes'] : []), ...flags], { cwd: dir });
 }
 
 // `shipline init` with everything chosen (every workflow with its UI stages, every agent, the standalone

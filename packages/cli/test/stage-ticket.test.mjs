@@ -1,7 +1,8 @@
 // Teams Phase 1, D: the ticket stage in the vendored stage.mjs. GitHub Issues keys (`--ticket 123 | #123 |
 // issue-123` with tracker: github), `Closes #n` in pr-summary, the tracker line at the ticket stage, and the
 // jira/ticket alias in both directions (a 0.9.0 manifest against a 0.10.0 workflow, and the reverse): advance, skip,
-// status, reopen and rules loading. Runs the scripts of a real temp repo. Node 18+.
+// status, reopen and rules loading. 1.0 (plan item 19): tracker: none, the default, skips the ticket stage on its own.
+// Runs the scripts of a real temp repo. Node 18+.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -15,7 +16,7 @@ const session = () => `ticket-${++n}`;
 const tasks = () => path.join(storeOf(dir), 'tasks');
 const manifest = (folder) => JSON.parse(readFileSync(path.join(tasks(), folder, 'manifest.json'), 'utf8'));
 const cfgFile = () => path.join(dir, '.shipline', 'config.yml');
-const setTracker = (tracker) => writeFileSync(cfgFile(), configText.replace('tracker: jira', `tracker: ${tracker}`));
+const setTracker = (tracker) => writeFileSync(cfgFile(), configText.replace(/^tracker: jira$/m, `tracker: ${tracker}`));
 const ok = (r, what) => {
   assert.equal(r.code, 0, `${what}: ${r.stderr}`);
   return r;
@@ -23,8 +24,11 @@ const ok = (r, what) => {
 
 before(() => {
   dir = makeRepo({ commitInit: true });
-  configText = readFileSync(cfgFile(), 'utf8');
-  assert.match(configText, /^tracker: jira$/m);
+  const installed = readFileSync(cfgFile(), 'utf8');
+  assert.match(installed, /^tracker: none$/m, 'none is the default');
+  // Most tests below need a ticket stage to work with, so the base config here uses jira.
+  configText = installed.replace(/^tracker: none$/m, 'tracker: jira');
+  writeFileSync(cfgFile(), configText);
 });
 after(() => removeDir(dir));
 
@@ -81,7 +85,7 @@ describe('tracker: github', () => {
   });
 });
 
-describe('tracker: jira (the default)', () => {
+describe('tracker: jira', () => {
   test('--ticket is upper-cased as before; pr-summary has no Closes line even for a numeric key', () => {
     const s = session();
     const r = ok(stage(dir, ['start', '--workflow', 'small', '--title', 'Jira one', '--ticket', 'll-12'], s), 'start');
@@ -144,7 +148,7 @@ describe('the jira/ticket alias', () => {
       const s = taskAcross(from, to, title);
       assert.equal(manifest(slug).stages[0].id, from, 'the manifest keeps its own id');
 
-      const st = ok(stage(dir, ['status'], s), 'status');
+      const st = ok(stage(dir, ['status', '--verbose'], s), 'status');
       assert.match(st.stdout, new RegExp(`^\\[>\\] ${from}$`, 'm'));
       assert.match(st.stdout, new RegExp(`^Current stage: Ticket \\[${from}\\]$`, 'm'), 'the stage name comes from the workflow');
       assert.match(st.stdout, /^Artifact to produce: .*ticket\.md$/m);
@@ -188,7 +192,7 @@ describe('the jira/ticket alias', () => {
       const r = ok(stage(dir, ['start', '--workflow', 'hotfix', '--title', `Rules ${id}`], s), 'start');
       assert.match(r.stdout, /Repo rules for this stage \(\.shipline\/rules\/ticket\.md\):\n# Ticket rules\n\n- from ticket\.md/, id);
       rmSync(path.join(rulesDir(), 'ticket.md'));
-      const st = ok(stage(dir, ['status'], s), 'status');
+      const st = ok(stage(dir, ['status', '--verbose'], s), 'status');
       assert.match(st.stdout, /Repo rules for this stage \(\.shipline\/rules\/jira\.md\):\n# Jira rules\n\n- from jira\.md/, id);
       writeFileSync(path.join(rulesDir(), 'ticket.md'), '# Ticket rules\n\n- from ticket.md\n');
       rmSync(path.join(tasks(), `rules-${id}`), { recursive: true });
@@ -217,6 +221,87 @@ describe('the jira/ticket alias', () => {
     assert.match(a.stdout, /^Artifact to produce: .*ticket\.md$/m);
     rmSync(path.join(tasks(), 'both'), { recursive: true });
     writeFileSync(wfFile(), wfText);
+  });
+});
+
+// 1.0 plan, item 19: with no tracker there is no ticket to read, so the ticket stage is skipped on its own.
+describe('tracker: none (the default)', () => {
+  const wfDir = () => path.join(dir, '.shipline', 'workflows');
+  before(() => setTracker('none'));
+  after(() => {
+    writeFileSync(cfgFile(), configText);
+    rmSync(path.join(wfDir(), 'strict.yml'), { force: true });
+  });
+
+  test('every shipped workflow: the optional ticket stage is skipped on start ("No tracker", via optional), no question', () => {
+    for (const wf of ['feature', 'bugfix', 'hotfix', 'small']) {
+      const s = session();
+      const r = ok(stage(dir, ['start', '--workflow', wf, '--title', `None ${wf}`, '--ui', 'false'], s), wf);
+      const m = manifest(`none-${wf}`);
+      const t = m.stages.find((x) => x.id === 'ticket');
+      assert.equal(t.status, 'skipped', wf);
+      assert.equal(t.reason, 'No tracker', wf);
+      assert.equal(t.skipped.via, 'optional', wf);
+      assert.equal(t.skipped.reason, 'No tracker', wf);
+      assert.ok(!Number.isNaN(Date.parse(t.skipped.at)), wf);
+      assert.notEqual(m.stages.find((x) => x.status === 'in_progress').id, 'ticket', wf);
+      assert.ok(!/^Current stage: Ticket/m.test(r.stdout), r.stdout);
+      const st = ok(stage(dir, ['status'], s), 'status');
+      assert.match(st.stdout, /^\[-\] ticket \(No tracker\)$/m, wf);
+      rmSync(path.join(tasks(), `none-${wf}`), { recursive: true });
+    }
+  });
+
+  test('a custom workflow whose ticket stage is not optional: skipped via auto; the PR summary marks it skipped', () => {
+    writeFileSync(
+      path.join(wfDir(), 'strict.yml'),
+      'id: strict\nname: Strict\nstages:\n  - id: ticket\n    name: Ticket\n    artifact: ticket.md\n    enforcement: block\n  - id: build\n    name: Build\n    enforcement: guide\n',
+    );
+    const s = session();
+    ok(stage(dir, ['start', '--workflow', 'strict', '--title', 'Strict one'], s), 'start');
+    const t = manifest('strict-one').stages[0];
+    assert.equal(t.status, 'skipped');
+    assert.equal(t.skipped.via, 'auto');
+    assert.equal(t.skipped.reason, 'No tracker');
+    assert.equal(manifest('strict-one').stages[1].status, 'in_progress');
+    const pr = ok(stage(dir, ['pr-summary'], s), 'pr-summary');
+    const data = JSON.parse(/<!-- shipline:summary (.*) -->/.exec(pr.stdout)[1]);
+    assert.deepEqual(data.stages[0], { id: 'ticket', status: 'skipped', enforcement: 'block', confirmed: 'auto' });
+    rmSync(path.join(tasks(), 'strict-one'), { recursive: true });
+  });
+
+  test('a --ticket key is still used in the branch and folder; the stage is still skipped', () => {
+    const s = session();
+    const r = ok(stage(dir, ['start', '--workflow', 'small', '--title', 'Keyed', '--ticket', 'll-9'], s), 'start');
+    assert.match(r.stdout, /^Suggested branch: small\/LL-9-keyed$/m);
+    assert.equal(manifest('LL-9-keyed').stages[0].status, 'skipped');
+    rmSync(path.join(tasks(), 'LL-9-keyed'), { recursive: true });
+  });
+
+  test('an old manifest stage named `jira` is matched too', () => {
+    const wf = path.join(wfDir(), 'hotfix.yml');
+    const text = readFileSync(wf, 'utf8');
+    try {
+      writeFileSync(wf, text.replace('  - id: ticket\n', '  - id: jira\n'));
+      const s = session();
+      ok(stage(dir, ['start', '--workflow', 'hotfix', '--title', 'Old id'], s), 'start');
+      assert.equal(manifest('old-id').stages[0].id, 'jira');
+      assert.equal(manifest('old-id').stages[0].status, 'skipped');
+      rmSync(path.join(tasks(), 'old-id'), { recursive: true });
+    } finally {
+      writeFileSync(wf, text);
+    }
+  });
+
+  test('a missing or empty tracker key counts as none', () => {
+    for (const cfg of [configText.replace(/^tracker: jira\n/m, ''), configText.replace(/^tracker: jira$/m, 'tracker: ""')]) {
+      writeFileSync(cfgFile(), cfg);
+      const s = session();
+      ok(stage(dir, ['start', '--workflow', 'small', '--title', 'Keyless'], s), 'start');
+      assert.equal(manifest('keyless').stages[0].status, 'skipped');
+      rmSync(path.join(tasks(), 'keyless'), { recursive: true });
+    }
+    setTracker('none');
   });
 });
 

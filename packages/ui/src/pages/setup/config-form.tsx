@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/select';
 import { OtherFields } from '@/pages/setup/other-fields';
 import { setOptional } from '@/pages/setup/draft';
+import { TRACKER_OPTIONS } from '@/lib/stages';
 import type { ConfigModel, SetupFile } from '@/lib/types';
 
 // `skills` is edited in the Agents & skills section, `ci` in the CI check section and the guardrail keys in the
@@ -28,10 +29,7 @@ const TOP_KEYS = [
   'protected_paths',
   'scope_check',
 ];
-const TRACKERS = [
-  { value: 'jira', label: 'Jira' },
-  { value: 'github', label: 'GitHub Issues' },
-];
+const TRACKERS = TRACKER_OPTIONS;
 const CONFIRMATIONS = [
   {
     value: 'standard',
@@ -133,7 +131,7 @@ export function ConfigForm({
   const setStaleChecks = (value: string) =>
     onChange({ ...model, ci: { ...(model.ci ?? {}), stale_checks: value } });
 
-  const tracker = model.tracker || 'jira';
+  const tracker = model.tracker || 'none';
   const staleChecks = model.ci?.stale_checks || 'warn';
   const confirmations = model.confirmations === 'light' ? 'light' : 'standard';
   const supported = TRACKERS.some((t) => t.value === tracker);
@@ -158,7 +156,8 @@ export function ConfigForm({
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            Where tickets live. Claude reads them; it never creates or edits issues.
+            Where tickets live. With None the ticket stage is skipped. Claude reads tickets; it
+            never creates or edits issues.
           </p>
         </div>
         <div className="flex flex-col gap-1.5">

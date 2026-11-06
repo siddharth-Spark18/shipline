@@ -37,32 +37,49 @@ const MIME = {
   '.json': 'application/json; charset=utf-8',
 };
 
-// Every repo older than interface 3 still has its tasks and state inside the repo.
-const UPGRADE_TEXT =
-  'Task data is still stored in this repo. Run `npx @forgeyard/shipline upgrade` to move it to ~/.shipline.';
-
 function fail(message) {
   console.error(message);
   process.exit(1);
 }
 
-// ui [dir] [--port <n>] [--no-open]. The first argument that isn't a flag or a flag's value is `dir`.
+const UI_USAGE = `Usage: npx @forgeyard/shipline ui [--dir <path>] [--port <n>] [--no-open]
+
+Local web UI for setup and tasks (Node 20+).
+
+Options:
+  --dir <path>   Target folder (default: the current directory)
+  --port <n>     Port to listen on (default: a free one)
+  --no-open      Don't open the browser
+  -h, --help     Show this help`;
+
+function usageError(message) {
+  console.error(`shipline: ${message}`);
+  process.exit(2);
+}
+
+// ui [--dir <path>] [--port <n>] [--no-open] [--help]. A bare argument is an error: the folder is given with --dir.
 export function parseUiArgs(argv) {
   let dir = null;
   let port = 0;
   let open = true;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--no-open') open = false;
-    else if (a === '--port' || a.startsWith('--port=')) {
+    if (a === '--help' || a === '-h') {
+      console.log(UI_USAGE);
+      process.exit(0);
+    } else if (a === '--no-open') open = false;
+    else if (a === '--dir' || a.startsWith('--dir=')) {
+      const value = a === '--dir' ? argv[++i] : a.slice('--dir='.length);
+      if (!value) usageError('--dir needs a path (see shipline ui --help)');
+      dir = value;
+    } else if (a === '--port' || a.startsWith('--port=')) {
       const value = a === '--port' ? argv[++i] : a.slice('--port='.length);
       if (value === undefined || !/^\d+$/.test(value) || Number(value) > 65535) {
-        fail('--port needs a number from 0 to 65535.');
+        usageError('--port needs a number from 0 to 65535 (see shipline ui --help)');
       }
       port = Number(value);
-    } else if (a.startsWith('-'))
-      fail(`Unknown option ${a}. Usage: npx @forgeyard/shipline ui [dir] [--port <n>] [--no-open]`);
-    else if (dir === null) dir = a;
+    } else if (a.startsWith('-')) usageError(`unknown option ${a} (see shipline ui --help)`);
+    else usageError(`unexpected argument ${a} (use --dir)`);
   }
   return { dir: dir === null ? process.cwd() : path.resolve(dir), port, open };
 }
@@ -130,8 +147,8 @@ export async function startRepoMode(app, root, repo = null) {
   log('version', { repo: repo.version, ui: INTERFACE, state: repo.state });
 
   app.repo = repo;
-  if (repo.state === 'repo-older') {
-    app.addBanner({ id: 'version', kind: 'version', text: UPGRADE_TEXT });
+  if (repo.state === 'pre-1.0') {
+    app.addBanner({ id: 'version', kind: 'version', text: repo.versionMessage });
   } else if (repo.state === 'repo-newer') {
     const v = repo.version.package || 'latest';
     app.addBanner({

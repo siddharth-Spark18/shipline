@@ -5,26 +5,11 @@ import path from 'node:path';
 
 // Bump when stage.mjs commands or flags, the manifest or state file shape, the YAML subset, the hook
 // entry points in settings-hooks.json, or what the hooks print change.
-// 1 = the 0.3.0 shape. 2 = lost-task warning and visible warn reminders in the guard.
-// 3 = tasks, session state and UI data live in the store (~/.shipline/projects/<repo>/), artifact_root and
-// folder_pattern are gone from config.yml, and VERSION carries the `files` hash map.
-// 4 = Trust: answer-based confirmations (record-answer.mjs, the PostToolUse hook, no --confirmed/--force),
-// the store guard, `stage.mjs pr-summary` and the optional CI check.
-// 5 = Trust, phase 2: `stage.mjs check`, the `checks` and `sections` stage fields, the `accept` confirmation, the
-// v2 PR summary and `ci.stale_checks`.
-// 6 = Guardrails: always-on rails and protected paths in the guard (the PreToolUse matcher gains Read), the
-// `actions` block type, `stage.mjs check` scope (`base_commit`, `checks.scope`, the `scope` confirmation) and the
-// optional `scope` in the PR summary.
-// 7 = Lighter confirmations: the `confirmations` config key, the `checkpoint` stage field and `needsAnswer` in lib.mjs
-// (stage.mjs and ci-check.mjs ask only where it says so).
-export const INTERFACE = 7;
+// 1 = the 1.0.0 shape.
+export const INTERFACE = 1;
 
-// The first interface whose tasks and session state live in the store (interface 3). Below it, `upgrade` moves
-// the data out of the repo, and the UI chat stays disabled until then.
-export const STORE_INTERFACE = 3;
-
-// What interface-1 repos lack. Used only for banner text.
-export const MISSING_BEFORE = ['the lost-task warning', 'visible warn reminders', 'task storage outside the repo (the store)', 'Trust: answer-based confirmations and the CI check', 'Trust: real check runs, required sections and PR evidence', 'Guardrails: always-on rails, protected paths, named actions and the Verify scope check', 'Lighter confirmations: the standard or light preset and checkpoint stages'];
+// What older interfaces lack, for banner text. Empty until interface 2.
+export const MISSING_BEFORE = [];
 
 // Returns { package, interface, files, excluded }, or { legacy: true, interface: 1 } when the file is missing or unreadable.
 export function readRepoVersion(root) {
@@ -39,6 +24,29 @@ export function readRepoVersion(root) {
     // Missing or unreadable: treated as a legacy repo below.
   }
   return { legacy: true, interface: 1 };
+}
+
+// True when a (semver-ish) version a is greater than b. Missing parts count as 0.
+export function semverGt(a, b) {
+  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  }
+  return false;
+}
+
+// A repo set up with a Shipline before 1.0: its VERSION names a package below 1.0.0, names none, or is missing or
+// unreadable (readRepoVersion's { legacy: true }). 1.0 is the first version with an upgrade path, so such a repo starts
+// over: uninstall, then init. Used by `upgrade` and the UI.
+export function isPreOne(version) {
+  return !version || Boolean(version.legacy) || !version.package || semverGt('1.0.0', version.package);
+}
+
+// The guidance for a pre-1.0 repo, shared by `upgrade`'s refusal and the UI.
+export function preOneMessage(version) {
+  const v = version && version.package ? version.package : 'unknown version';
+  return `This repo was set up with a pre-1.0 Shipline (${v}). Run \`npx @forgeyard/shipline uninstall --yes\` then \`init\`; task data in ~/.shipline is kept.`;
 }
 
 // repo and ui are interface numbers or { interface } objects.

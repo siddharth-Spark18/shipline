@@ -4,7 +4,13 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { INTERFACE, STORE_INTERFACE, compareInterface, readRepoVersion } from '../interface.mjs';
+import {
+  INTERFACE,
+  compareInterface,
+  isPreOne,
+  preOneMessage,
+  readRepoVersion,
+} from '../interface.mjs';
 import { HttpError } from './http.mjs';
 
 // Walks up from `dir` to the first folder with .shipline/config.yml. Unlike findRoot in lib.mjs it
@@ -51,7 +57,9 @@ export async function resolveRepo(dir) {
   // Used only for parseYaml and loadConfig.
   const lib = await import(pathToFileURL(path.join(root, '.shipline', 'bin', 'lib.mjs')).href);
   const version = readRepoVersion(root);
-  const state = compareInterface(version, INTERFACE);
+  // 'pre-1.0' (set up before 1.0: uninstall, then init), or how the repo's interface compares with this UI's.
+  const state = isPreOne(version) ? 'pre-1.0' : compareInterface(version, INTERFACE);
+  const versionMessage = state === 'pre-1.0' ? preOneMessage(version) : null;
 
   let current = null;
   const load = () => {
@@ -69,22 +77,14 @@ export async function resolveRepo(dir) {
     lib,
     version,
     state,
-    // True until the repo is upgraded: its tasks and state still live in the repo (interface below 3).
-    needsUpgrade: version.interface < STORE_INTERFACE,
+    // The pre-1.0 guidance (the same text `upgrade` refuses with), or null.
+    versionMessage,
     // { cfg } or { cfg: null, error }; a config that doesn't parse never stops the server.
     getConfig: () => current,
     reloadConfig: load,
-    // Chat is disabled for a repo whose old hooks still write state to .shipline/.state/.
-    requireUpgraded() {
-      if (version.interface < STORE_INTERFACE) {
-        throw new HttpError(
-          423,
-          'needs-upgrade',
-          'Task data is still stored in this repo. Run `npx @forgeyard/shipline upgrade` to move it to ~/.shipline.',
-        );
-      }
-    },
+    // Saves, chat start, messages and ! commands: refused for a pre-1.0 repo and for one set up with a newer Shipline.
     requireWritable() {
+      if (state === 'pre-1.0') throw new HttpError(423, 'pre-1.0', versionMessage);
       if (state === 'repo-newer') {
         const v = version.package ? `${version.package}` : `interface ${version.interface}`;
         throw new HttpError(

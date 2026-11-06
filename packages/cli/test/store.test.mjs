@@ -124,10 +124,10 @@ describe('repo.json collision guard', () => {
     assert.ok(!existsSync(path.join(store, 'tasks')));
   });
 
-  test('init, stage.mjs and upgrade all stop with the collision message', () => {
+  test('init and stage.mjs stop with the collision message; upgrade (which no longer touches the store) is unaffected', () => {
     const fresh = keep(tmpDir());
     plantCollision(fresh);
-    const r = run(process.execPath, [BIN, 'init', fresh, '--yes'], { cwd: fresh });
+    const r = run(process.execPath, [BIN, 'init', '--dir', fresh, '--yes'], { cwd: fresh });
     assert.equal(r.code, 1);
     assert.match(r.stderr, /Shipline store collision at .*belongs to \/somewhere\/else/);
     assert.ok(!existsSync(path.join(fresh, '.shipline')));
@@ -137,9 +137,10 @@ describe('repo.json collision guard', () => {
     const s = stage(repo, ['start', '--workflow', 'feature', '--title', 'X'], 's1');
     assert.equal(s.code, 1);
     assert.match(s.stderr, /Shipline store collision/);
-    const u = run(process.execPath, [BIN, 'upgrade', repo, '--yes'], { cwd: repo });
-    assert.equal(u.code, 1);
-    assert.match(u.stderr, /Shipline store collision/);
+    // 1.0 removed the move of task data into the store, so upgrade never opens it.
+    const u = run(process.execPath, [BIN, 'upgrade', '--dir', repo, '--yes'], { cwd: repo });
+    assert.equal(u.code, 0, u.stderr);
+    assert.equal(u.stdout, 'Already up to date.\n');
   });
 
   test('a hook fails open with a visible systemMessage', () => {
@@ -183,16 +184,15 @@ describe('success criterion 2: a fresh install leaves the repo clean', () => {
     assert.equal(start.code, 0, start.stderr);
     const taskDir = path.join(tasks, 'LL-12-add-export');
     assert.ok(start.stdout.includes(`Started Feature task in ${taskDir}`), start.stdout);
-    assert.ok(start.stdout.includes(`Artifact to produce: ${taskDir}/ticket.md`), start.stdout);
-    // Stage 1 (jira) and stage 2 (feasibility): write each artifact where stage.mjs says, then advance.
-    writeFileSync(path.join(taskDir, 'ticket.md'), '# LL-12\n');
-    assert.equal(stage(repo, ['advance'], 's1').code, 0);
+    // Stage 1 (ticket) is skipped on start with tracker: none (the default); stage 2 (feasibility): write the artifact
+    // where stage.mjs says, then advance.
+    assert.ok(start.stdout.includes(`Artifact to produce: ${taskDir}/feasibility.md`), start.stdout);
     writeFileSync(path.join(taskDir, 'feasibility.md'), '## Risks\nNone: a contained, additive change behind a flag.\n');
     const adv = stage(repo, ['advance'], 's1');
     assert.equal(adv.code, 0, adv.stderr);
     const m = JSON.parse(readFileSync(path.join(taskDir, 'manifest.json'), 'utf8'));
-    assert.deepEqual(m.stages.slice(0, 2).map((s) => s.status), ['done', 'done']);
-    assert.deepEqual(readdirSync(taskDir).sort(), ['feasibility.md', 'manifest.json', 'ticket.md']);
+    assert.deepEqual(m.stages.slice(0, 2).map((s) => s.status), ['skipped', 'done']);
+    assert.deepEqual(readdirSync(taskDir).sort(), ['feasibility.md', 'manifest.json']);
     // Hooks ran too (state and a lost-task check) and wrote only to the store.
     hook(repo, 'session-start.mjs', { session_id: 's2', cwd: repo });
     hook(repo, 'guard.mjs', { session_id: 's2', cwd: repo, tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'src/a.js') } });
@@ -213,9 +213,14 @@ describe('success criterion 2: a fresh install leaves the repo clean', () => {
     assert.equal(byPath.code, 0, byPath.stderr);
     assert.ok(byPath.stdout.startsWith(`Resumed ${abs} (bugfix workflow).`), byPath.stdout);
     assert.equal(JSON.parse(readFileSync(path.join(storeOf(repo), 'state', 's3.json'), 'utf8')).task_dir, abs);
-    const st = stage(repo, ['status'], 's3');
+    // The short status names the task; --verbose adds the full store path.
+    const st = stage(repo, ['status', '--verbose'], 's3');
     assert.equal(st.code, 0, st.stderr);
     assert.ok(st.stdout.includes(abs), st.stdout);
+    const short = stage(repo, ['status'], 's3');
+    assert.equal(short.code, 0, short.stderr);
+    assert.ok(!short.stdout.includes(abs), short.stdout);
+    assert.match(short.stdout, /^Task fix-crash \(bugfix\) UI work: unknown$/m);
     assert.equal(stage(repo, ['resume', 'nope'], 's4').code, 1);
   });
 

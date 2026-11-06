@@ -3,9 +3,10 @@
 # {key} = ticket key (Jira key, or issue-123 for GitHub; dropped when there is no ticket), {slug} = short task name, {type} = workflow id.
 branch_pattern: "{type}/{key}-{slug}"
 
-# Where tickets live: jira | github. Jira is read through the Atlassian MCP when it is connected; GitHub Issues
-# through the `gh` CLI. Shipline ships no tracker code and only reads tickets. Any other value skips the ticket stage.
-tracker: jira
+# Where tickets live: none | github | jira. With none (the default) the ticket stage is skipped. Jira is read
+# through the Atlassian MCP when it is connected; GitHub Issues through the `gh` CLI. Shipline ships no tracker
+# code and only reads tickets. Any other value skips the ticket stage too.
+tracker: none
 
 # How often Claude asks before moving to the next stage: standard | light.
 # standard: it asks at every stage marked confirm_to_advance in the workflows.
@@ -26,6 +27,8 @@ skills: []
 # Optional. The pull-request check (.github/workflows/shipline.yml, added from `init` or Setup, CI check) reads this.
 # missing_block: what happens when the PR description has no Shipline summary: fail-unless-label | warn | fail
 # stale_checks: what happens when the checks in the summary ran on different code than the PR's: warn | fail
+# The check runs the checker and reads this file from the PR's base branch, so a PR can't relax its own check
+# (the PR that first adds Shipline runs its own copy). Branch protection and CODEOWNERS close the rest (README, CI check).
 ci:
   missing_block: fail-unless-label
   # The PR label that lets a PR without a summary pass (with fail-unless-label).

@@ -342,7 +342,7 @@ describe('selection logic (prompts stubbed)', () => {
     assert.ok(!('.shipline/config.yml' in versionOf(dir).files), 'config.yml stays team-owned');
     const st = stage(dir, ['start', '--workflow', 'small', '--title', 'Fix typo'], 'sk1');
     assert.equal(st.code, 0, st.stderr);
-    assert.match(stage(dir, ['status'], 'sk1').stdout, /^Repo skills you can use: deploy, lint$/m);
+    assert.match(stage(dir, ['status', '--verbose'], 'sk1').stdout, /^Repo skills you can use: deploy, lint$/m);
   });
 
   test('no skills chosen: config.yml is the template and stage.mjs prints no skills line', async () => {
@@ -351,7 +351,7 @@ describe('selection logic (prompts stubbed)', () => {
     assert.equal(r.code, 0, r.stderr);
     assert.equal(read(dir, '.shipline/config.yml'), readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8'));
     assert.equal(stage(dir, ['start', '--workflow', 'small', '--title', 'Fix typo'], 'sk2').code, 0);
-    assert.ok(!/Repo skills you can use/.test(stage(dir, ['status'], 'sk2').stdout));
+    assert.ok(!/Repo skills you can use/.test(stage(dir, ['status', '--verbose'], 'sk2').stdout));
   });
 
   test('deselecting every agent is allowed; every suggested agent then counts as missing', async () => {
@@ -450,24 +450,24 @@ describe('commands and tracker (Teams Phase 1)', () => {
     return dir;
   };
 
-  test('--yes writes the detected commands and tracker: jira, keeping the template\'s comments', () => {
+  test('--yes writes the detected commands and tracker: none, keeping the template\'s comments', () => {
     const dir = repo(NODE_REPO);
     const r = runInit(dir);
     assert.equal(r.code, 0, r.stderr);
     const cfg = config(dir);
     assert.deepEqual(cfg.commands, { test: 'pnpm test', lint: 'pnpm run lint', build: 'pnpm run typecheck' });
-    assert.equal(cfg.tracker, 'jira');
+    assert.equal(cfg.tracker, 'none');
     const text = read(dir, '.shipline/config.yml');
     assert.match(text, /^# Optional\. The verify stage runs only the commands you set here\./m);
     assert.match(text, /^commands:\n {2}test: pnpm test\n {2}lint: pnpm run lint\n {2}build: pnpm run typecheck\n/m);
     assert.match(r.stdout, /Commands for the verify stage:\n {2}test: pnpm test \(from package\.json\)\n {2}lint: pnpm run lint \(from package\.json\)\n {2}build: pnpm run typecheck \(from package\.json\)/);
-    assert.match(r.stdout, /Tracker: Jira/);
+    assert.match(r.stdout, /Tracker: none, so the ticket stage is skipped\. Change it in \.shipline\/config\.yml\./);
   });
 
-  test('--yes keeps jira even when origin is on github.com', () => {
+  test('--yes keeps none even when origin is on github.com', () => {
     const dir = withOrigin(repo(), 'git@github.com:acme/app.git');
     assert.equal(runInit(dir).code, 0);
-    assert.equal(config(dir).tracker, 'jira');
+    assert.equal(config(dir).tracker, 'none');
   });
 
   test('--yes with nothing detected writes the template unchanged', () => {
@@ -502,6 +502,9 @@ describe('commands and tracker (Teams Phase 1)', () => {
     assert.match(r.stdout, /^ {2}build: pnpm run typecheck \(from package\.json\)$/m);
     assert.ok(!/^ {2}lint:/m.test(r.stdout), 'a cleared command is not listed');
     assert.match(r.stdout, /Tracker: GitHub Issues/);
+    const j = await initWith(repo(), selection({ tracker: 'jira' }));
+    assert.equal(j.code, 0, j.stderr);
+    assert.match(j.stdout, /Tracker: Jira \(read through the Atlassian MCP\)\. Change it/);
 
     for (const bad of [{ commands: { deploy: 'x' } }, { commands: { test: 1 } }, { commands: ['pnpm test'] }, { tracker: 'linear' }]) {
       const d = repo();
@@ -519,17 +522,18 @@ describe('commands and tracker (Teams Phase 1)', () => {
     assert.deepEqual(config(dir).commands, { test: '', lint: '', build: '' });
   });
 
-  test('the tracker default: github when origin is on github.com, otherwise jira (also with no git at all)', async () => {
+  // 1.0 plan, item 19: the default is none; a GitHub remote no longer picks it.
+  test('the tracker default: none, whatever the remote (also with no git at all)', async () => {
     const cases = [
-      [withOrigin(repo(), 'https://github.com/acme/app.git'), 'github'],
-      [withOrigin(repo(), 'git@github.com:acme/app.git'), 'github'],
-      [withOrigin(repo(), 'https://gitlab.com/acme/app.git'), 'jira'],
+      [withOrigin(repo(), 'https://github.com/acme/app.git'), 'none'],
+      [withOrigin(repo(), 'git@github.com:acme/app.git'), 'none'],
+      [withOrigin(repo(), 'https://gitlab.com/acme/app.git'), 'none'],
       [(() => {
         const d = repo();
         git(d, 'init', '-q');
         return d;
-      })(), 'jira'],
-      [repo(), 'jira'],
+      })(), 'none'],
+      [repo(), 'none'],
     ];
     for (const [dir, want] of cases) {
       const r = await initWith(dir, selection());

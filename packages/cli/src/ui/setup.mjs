@@ -295,7 +295,7 @@ function prepare(app, entry, override = {}) {
 
 function openTasksOf(app) {
   const { cfg } = app.repo.getConfig();
-  return cfg ? readOpenTasks(app.repo.root, cfg, app.repo.needsUpgrade) : [];
+  return cfg ? readOpenTasks(app.repo.root) : [];
 }
 
 // Open tasks whose manifest keeps a stage list different from the new one.

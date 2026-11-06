@@ -58,7 +58,7 @@ export default function SetupPage({
   onChatStarted: (id: string) => void;
 }) {
   const queryClient = useQueryClient();
-  const readOnly = versionState === 'repo-newer';
+  const readOnly = versionState === 'repo-newer' || versionState === 'pre-1.0';
 
   const { data, dataUpdatedAt, error, isPending, refetch } = useQuery({
     queryKey: queryKeys.setup,

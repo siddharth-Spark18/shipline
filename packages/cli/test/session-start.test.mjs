@@ -23,6 +23,9 @@ function both(payload) {
 
 before(() => {
   dir = makeRepo({ commitInit: true });
+  // The feature task below skips its ticket stage by hand, so this repo has a tracker (none would skip it on start).
+  const cfgFile = path.join(dir, '.shipline', 'config.yml');
+  writeFileSync(cfgFile, readFileSync(cfgFile, 'utf8').replace(/^tracker: none$/m, 'tracker: jira'));
   copyFileSync(path.join(FIXTURES, 'session-start', 'session-start.v1.mjs'), path.join(dir, '.shipline', 'bin', 'session-start-v1.mjs'));
   // Two open tasks: a feature task with one stage skipped and one done, and an untouched bugfix task.
   tasks = path.join(storeOf(dir), 'tasks');

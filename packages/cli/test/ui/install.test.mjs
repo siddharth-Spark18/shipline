@@ -500,3 +500,38 @@ describe('the confirmations choice (Teams Phase 4)', () => {
     });
   }
 });
+
+// 1.0 plan, item 19: the wizard defaults to no tracker; the API accepts none, jira and github and nothing else.
+describe('the tracker choice (1.0)', () => {
+  const trackerOf = (dir) => /^tracker: (.*)$/m.exec(readFileSync(path.join(dir, '.shipline', 'config.yml'), 'utf8'))[1];
+
+  test('the defaults (trackerDefault and the selection) are none; installing writes tracker: none', async () => {
+    const dir = cleanRepo();
+    const u = await start(dir);
+    const i = await info(u);
+    assert.equal(i.trackerDefault, 'none');
+    assert.equal(i.defaults.tracker, 'none');
+    const p = await preview(u, i.defaults);
+    assert.equal(p.status, 200, p.text);
+    assert.equal((await install(u, i.defaults, p.json.base)).status, 200);
+    assert.equal(trackerOf(dir), 'none');
+  });
+
+  test('jira and github install as chosen; an unknown tracker is a 400 and nothing is written', async () => {
+    for (const tracker of ['jira', 'github']) {
+      const dir = cleanRepo();
+      const u = await start(dir);
+      const i = await info(u);
+      const sel = { ...i.defaults, tracker };
+      const p = await preview(u, sel);
+      assert.equal((await install(u, sel, p.json.base)).status, 200, tracker);
+      assert.equal(trackerOf(dir), tracker);
+    }
+    const dir = cleanRepo();
+    const u = await start(dir);
+    const i = await info(u);
+    const bad = await preview(u, { ...i.defaults, tracker: 'linear' });
+    assert.equal(bad.status, 400, bad.text);
+    assert.ok(!existsSync(path.join(dir, '.shipline')));
+  });
+});

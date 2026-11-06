@@ -1,6 +1,6 @@
 {
   "name": "@forgeyard/shipline",
-  "version": "0.14.0",
+  "version": "1.0.0",
   "description": "Install a repo-committed Claude Code workflow (stages, rules, enforcement hooks, task artifacts stored outside the repo) with `npx @forgeyard/shipline init`.",
   "type": "module",
   "bin": {
@@ -10,7 +10,9 @@
     "bin",
     "src",
     "templates",
-    "ui-dist"
+    "ui-dist",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "scripts": {
     "test": "node scripts/run-tests.mjs",
@@ -24,7 +26,7 @@
   "engines": {
     "node": ">=18"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "publishConfig": {
     "access": "public"
   },

@@ -66,7 +66,7 @@ function startRelay(env = {}) {
     child,
     exited,
     send: (msg) => child.stdin.write((typeof msg === 'string' ? msg : JSON.stringify(msg)) + '\n'),
-    next: (ms = 5000) =>
+    next: (ms = 10_000) =>
       new Promise((resolve, reject) => {
         if (lines.length) return resolve(lines.shift());
         const t = setTimeout(() => reject(new Error('no relay response')), ms);
@@ -76,6 +76,25 @@ function startRelay(env = {}) {
         });
       }),
   };
+}
+
+// 1.0 plan, item 8: how long to poll for a process exit or an event before failing (Windows CI is slow).
+const WAIT_MS = 10_000;
+
+// Resolves with the exit code once the relay has exited, or 'still running' after `ms`.
+function exitWithin(r, ms = WAIT_MS) {
+  let t;
+  return Promise.race([r.exited, new Promise((resolve) => (t = setTimeout(() => resolve('still running'), ms)))]).finally(() => clearTimeout(t));
+}
+
+// Closes the relay's stdin and waits for it to exit (it exits on EOF); killed if it is still running after 10 s, so a
+// slow exit never leaves a process behind to fail the file.
+async function closeRelay(r) {
+  r.child.stdin.end();
+  if ((await exitWithin(r)) === 'still running') {
+    r.child.kill();
+    await exitWithin(r, 2000);
+  }
 }
 
 before(async () => {
@@ -119,8 +138,7 @@ describe('relay.mjs over MCP stdio', () => {
       assert.deepEqual(tool.inputSchema.properties, { tool_name: { type: 'string' }, input: { type: 'object' }, tool_use_id: { type: 'string' } });
       assert.ok(!(tool.inputSchema.required || []).includes('tool_use_id'), 'tool_use_id is optional');
     } finally {
-      r.child.stdin.end();
-      await r.exited;
+      await closeRelay(r);
     }
   });
 
@@ -139,8 +157,7 @@ describe('relay.mjs over MCP stdio', () => {
       r.send({ jsonrpc: '2.0', id: 9, method: 'tools/list' });
       assert.equal((await r.next()).id, 9);
     } finally {
-      r.child.stdin.end();
-      await r.exited;
+      await closeRelay(r);
     }
   });
 
@@ -157,8 +174,7 @@ describe('relay.mjs over MCP stdio', () => {
       const res = await r.next();
       assert.deepEqual(JSON.parse(res.result.content[0].text), { behavior: 'deny', message: 'Shipline UI is not reachable' });
     } finally {
-      r.child.stdin.end();
-      await r.exited;
+      await closeRelay(r);
     }
   });
 
@@ -167,7 +183,7 @@ describe('relay.mjs over MCP stdio', () => {
     r.send({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
     await r.next();
     r.child.stdin.end();
-    const code = await Promise.race([r.exited, sleep(3000).then(() => 'still running')]);
+    const code = await exitWithin(r);
     if (code === 'still running') r.child.kill();
     assert.equal(code, 0);
   });
@@ -243,7 +259,7 @@ describe('POST /api/relay', () => {
   test('no Origin, no cookie and the right secret: a prompt is created, held open, and answered', async () => {
     const since = ev.mark();
     const pending = relayPost(ui, secret, { tool_name: 'Bash', input: { command: 'npm test' }, tool_use_id: 'toolu_a' });
-    const p = await ev.waitFor(isPrompt, 5000, since);
+    const p = await ev.waitFor(isPrompt, WAIT_MS, since);
     assert.deepEqual(Object.keys(p.data).sort(), ['chatId', 'expiresAt', 'id', 'input', 'tool']);
     assert.equal(p.data.chatId, id);
     assert.equal(p.data.tool, 'Bash');
@@ -258,7 +274,7 @@ describe('POST /api/relay', () => {
     const res = await pending;
     assert.equal(res.status, 200);
     assert.deepEqual(res.json, { behavior: 'allow', updatedInput: { command: 'npm test' } });
-    const resolved = await ev.waitFor(resolvedOf(p.data.id), 5000, since);
+    const resolved = await ev.waitFor(resolvedOf(p.data.id), WAIT_MS, since);
     assert.equal(resolved.data.outcome, 'allow');
     // Already resolved: 404.
     const again = await api(ui, 'POST', `/api/prompts/${p.data.id}`, { body: { decision: 'deny' } });
@@ -298,20 +314,20 @@ describe('POST /api/relay', () => {
   test('a pending prompt is sent again on every SSE connect (reload), and resolution reaches every tab', async () => {
     const since = ev.mark();
     const pending = relayPost(ui, secret, { tool_name: 'Write', input: { file_path: 'x.txt', content: 'hi' } });
-    const p = await ev.waitFor(isPrompt, 5000, since);
+    const p = await ev.waitFor(isPrompt, WAIT_MS, since);
     const tab2 = await openEvents(ui);
     try {
-      const again = await tab2.waitFor((e) => e.type === 'prompt' && e.data.id === p.data.id, 5000);
+      const again = await tab2.waitFor((e) => e.type === 'prompt' && e.data.id === p.data.id, WAIT_MS);
       assert.deepEqual(again.data, p.data);
       // A third connection after a reload gets it too.
       const tab3 = await openEvents(ui);
-      await tab3.waitFor((e) => e.type === 'prompt' && e.data.id === p.data.id, 5000);
+      await tab3.waitFor((e) => e.type === 'prompt' && e.data.id === p.data.id, WAIT_MS);
       tab3.close();
       await api(ui, 'POST', `/api/prompts/${p.data.id}`, { body: { decision: 'deny' } });
       const res = await pending;
       assert.deepEqual(res.json, { behavior: 'deny', message: DENY_MESSAGE });
-      assert.equal((await tab2.waitFor(resolvedOf(p.data.id), 5000)).data.outcome, 'deny');
-      assert.equal((await ev.waitFor(resolvedOf(p.data.id), 5000, since)).data.outcome, 'deny');
+      assert.equal((await tab2.waitFor(resolvedOf(p.data.id), WAIT_MS)).data.outcome, 'deny');
+      assert.equal((await ev.waitFor(resolvedOf(p.data.id), WAIT_MS, since)).data.outcome, 'deny');
       // Once resolved it is not re-sent.
       const tab4 = await openEvents(ui);
       await sleep(200);
@@ -325,7 +341,7 @@ describe('POST /api/relay', () => {
   test('stop() denies pending prompts; the ended chat\'s secret no longer works', async () => {
     const since = ev.mark();
     const pending = relayPost(ui, secret);
-    const p = await ev.waitFor(isPrompt, 5000, since);
+    const p = await ev.waitFor(isPrompt, WAIT_MS, since);
     await stopChat(ui, ev, id);
     const stoppedId = id;
     id = null;
@@ -333,7 +349,7 @@ describe('POST /api/relay', () => {
     assert.equal(res.status, 200);
     assert.equal(res.json.behavior, 'deny');
     assert.equal(typeof res.json.message, 'string');
-    assert.equal((await ev.waitFor(resolvedOf(p.data.id), 5000, since)).data.outcome, 'deny');
+    assert.equal((await ev.waitFor(resolvedOf(p.data.id), WAIT_MS, since)).data.outcome, 'deny');
     const late = await relayPost(ui, secret);
     assert.equal(late.status, 403);
     assert.equal(late.json.error.code, 'bad-secret');
@@ -352,7 +368,7 @@ describe('round trips through claude and the relay', () => {
       assert.equal(p.data.tool, 'Bash');
       assert.deepEqual(p.data.input, { command: 'npm test' });
       assert.equal((await api(ui, 'POST', `/api/prompts/${p.data.id}`, { body: { decision: 'allow' } })).status, 200);
-      assert.equal((await ev.waitFor(resolvedOf(p.data.id), 5000, since)).data.outcome, 'allow');
+      assert.equal((await ev.waitFor(resolvedOf(p.data.id), WAIT_MS, since)).data.outcome, 'allow');
       await ev.waitFor(isEventType(id, 'result'), 10_000, since);
       const [rec] = fake.relayAnswers();
       assert.deepEqual(rec.answer, { behavior: 'allow', updatedInput: { command: 'npm test' } });
@@ -373,7 +389,7 @@ describe('round trips through claude and the relay', () => {
     try {
       const p = await ev.waitFor(isPrompt, 10_000, since);
       assert.equal((await api(ui, 'POST', `/api/prompts/${p.data.id}`, { body: { decision: 'deny' } })).status, 200);
-      assert.equal((await ev.waitFor(resolvedOf(p.data.id), 5000, since)).data.outcome, 'deny');
+      assert.equal((await ev.waitFor(resolvedOf(p.data.id), WAIT_MS, since)).data.outcome, 'deny');
       await ev.waitFor(isEventType(id, 'result'), 10_000, since);
       assert.deepEqual(fake.relayAnswers()[0].answer, { behavior: 'deny', message: 'Denied by the developer in Shipline UI' });
       const toolResult = ev.events.slice(since).find(isEventType(id, 'user'));
@@ -474,11 +490,11 @@ describe('timeout', () => {
       const since = tev.mark();
       const t0 = Date.now();
       const pending = relayPost(tui, secretOf(tdir, id));
-      const p = await tev.waitFor(isPrompt, 5000, since);
+      const p = await tev.waitFor(isPrompt, WAIT_MS, since);
       assert.ok(p.data.expiresAt - t0 <= 1500 && p.data.expiresAt - t0 >= 500, 'expiresAt follows the override');
       const res = await pending;
       assert.deepEqual(res.json, { behavior: 'deny', message: timeoutMessage(1000) });
-      assert.equal((await tev.waitFor(resolvedOf(p.data.id), 5000, since)).data.outcome, 'timeout');
+      assert.equal((await tev.waitFor(resolvedOf(p.data.id), WAIT_MS, since)).data.outcome, 'timeout');
       const late = await api(tui, 'POST', `/api/prompts/${p.data.id}`, { body: { decision: 'allow' } });
       assert.equal(late.status, 404);
     } finally {

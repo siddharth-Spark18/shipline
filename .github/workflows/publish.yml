@@ -24,6 +24,14 @@ jobs:
             exit 1
           fi
 
+      - name: CHANGELOG.md must have a heading for this version
+        run: |
+          version=$(node -p "require('./packages/cli/package.json').version")
+          if ! grep -qF "## [${version}]" packages/cli/CHANGELOG.md; then
+            echo "packages/cli/CHANGELOG.md has no '## [${version}]' heading. Add the release notes before tagging." >&2
+            exit 1
+          fi
+
       # Every hash of the templates being published must be recorded (hash-templates.mjs was run). A release that
       # changes no template adds no entry, so this checks the hashes rather than an entry for the version.
       - name: known-hashes.json must record every current template hash

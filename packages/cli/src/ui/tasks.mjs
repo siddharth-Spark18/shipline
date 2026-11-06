@@ -4,7 +4,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'n
 const GIT_NULL = '/dev/null';
 import path from 'node:path';
 import { findStage, fingerprint } from '../../templates/shipline/bin/lib.mjs';
-import { isInside, tasksDir } from '../store.mjs';
+import { tasksDir } from '../store.mjs';
 import { HttpError } from './http.mjs';
 import { fileDiff, gitOk, gitRun, looksBinary } from './git.mjs';
 import { log } from './log.mjs';
@@ -67,19 +67,17 @@ function readManifest(dir) {
   }
 }
 
-// The folder task folders are read from: the store's tasks/ folder, or (legacy, read-only) the old in-repo
-// artifact_root for a repo that hasn't been upgraded yet (interface below 3).
-export function tasksBase(root, cfg, legacy = false) {
-  if (legacy) return path.join(root, (cfg && cfg.artifact_root) || 'docs/shipline');
+// The folder task folders are read from: the store's tasks/ folder (every 1.x repo keeps its tasks there).
+export function tasksBase(root) {
   return tasksDir(root);
 }
 
 // Every task folder under the tasks base whose manifest still has a stage that isn't done or skipped,
 // with its manifest. `dir` is the absolute folder path (an opaque id for the browser). The UI's own copy of
 // the scan, used for every repo whatever its interface.
-export function readOpenTasks(root, cfg, legacy = false) {
+export function readOpenTasks(root) {
   const open = [];
-  const base = tasksBase(root, cfg, legacy);
+  const base = tasksBase(root);
   if (!existsSync(base)) return open;
   let entries;
   try {
@@ -108,8 +106,8 @@ export function readOpenTasks(root, cfg, legacy = false) {
 }
 
 // Same shape as listOpenTasks in the vendored lib.mjs: { dir, slug, workflow, branch, done, next }.
-export function listOpenTasks(root, cfg, legacy = false) {
-  return readOpenTasks(root, cfg, legacy).map(({ manifest, ...task }) => task);
+export function listOpenTasks(root) {
+  return readOpenTasks(root).map(({ manifest, ...task }) => task);
 }
 
 // One task folder in the store, finished or not: { dir, slug, workflow, branch, done, next, manifest }, or null when
@@ -283,7 +281,7 @@ export async function collectTasks(app) {
   if (!cfg) return { tasks: [], changes, configError: error };
 
   const taskView = makeTaskView(app);
-  const tasks = readOpenTasks(root, cfg, app.repo.needsUpgrade).map(taskView);
+  const tasks = readOpenTasks(root).map(taskView);
   return { tasks, changes };
 }
 
@@ -422,15 +420,9 @@ async function resolveRequested(app, requested) {
   if (path.posix.isAbsolute(rel) || rel === '..' || rel.startsWith('../') || rel === '.')
     throw notFound();
 
-  const { cfg } = app.repo.getConfig();
   const changes = await gitChanges(root);
   const change = changes.find((c) => c.path === rel);
-  const abs = path.resolve(root, rel);
-  // Only reachable for an interface-2 repo: its tasks are still in the repo, read-only.
-  const inTask = app.repo.needsUpgrade
-    ? readOpenTasks(root, cfg, true).some((t) => isInside(t.dir, abs))
-    : false;
-  if (!change && !inTask) throw notFound();
+  if (!change) throw notFound();
 
   let real = null;
   if (existsSync(path.join(root, rel))) {
@@ -440,8 +432,6 @@ async function resolveRequested(app, requested) {
       if (e instanceof AssetError) throw notFound();
       throw e;
     }
-  } else if (!change) {
-    throw notFound(); // a deleted file is only reachable through the status list
   } else {
     // Deleted path: no realpath, so check containment lexically.
     const lex = path.relative(root, path.resolve(root, rel));

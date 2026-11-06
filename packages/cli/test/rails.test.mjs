@@ -162,13 +162,14 @@ describe('credential paths (isCredentialPath, also behind read_credentials)', ()
     for (const f of ['.env', '.env.local', 'config/.env.production', 'certs/server.pem', 'tls.key', 'id_rsa', 'deploy/id_ed25519', '.npmrc', '.pypirc']) {
       assert.ok(isCredentialPath(f, c, null), f);
     }
-    for (const f of ['~/.ssh/config', '~/.ssh/id_rsa', '~/.aws/credentials', '~/.config/gcloud/application_default_credentials.json', '~/.kube/config']) {
+    // 1.0: anything inside ~/.ssh, ~/.aws or ~/.docker counts, and so does the folder itself.
+    for (const f of ['~/.ssh/config', '~/.ssh/id_rsa', '~/.aws/credentials', '~/.aws/config', '~/.aws', '~/.ssh', '~/.docker/config.json', '~/.config/gcloud/application_default_credentials.json', '~/.kube/config']) {
       assert.ok(isCredentialPath(f, c, null), f);
     }
     assert.ok(isCredentialPath(path.join(home, '.ssh', 'known_hosts'), c, null), 'an absolute path under ~/.ssh');
   });
   test('not credentials', () => {
-    for (const f of ['.env.example', '.env.sample', '.env.template', 'id_rsa.pub', 'src/env.js', 'environment.md', '~/.aws/config', 'keys.json', 'monkey']) {
+    for (const f of ['.env.example', '.env.sample', '.env.template', 'id_rsa.pub', 'src/env.js', 'environment.md', '~/.awsome/config', '~/.kube/cache', 'keys.json', 'monkey']) {
       assert.ok(!isCredentialPath(f, c, null), f);
     }
   });
@@ -451,11 +452,14 @@ describe('the guard: decisions and config', () => {
     assert.equal(decision(bash('fly deploy > migrations/log.txt')), 'ask');
   });
 
-  test('a broken config.yml fails open: the rails are off, nothing is denied', () => {
-    writeFileSync(path.join(dir, '.shipline', 'config.yml'), 'rails:\n\tdeploy: deny\n');
+  // 1.0 plan, item 14: a config.yml that can't be read no longer turns the rails off; they use their defaults, and
+  // every call says so (hardening.test.mjs has the rest).
+  test('a broken config.yml: the rails use their defaults, with the warning', () => {
+    writeFileSync(path.join(dir, '.shipline', 'config.yml'), 'rails:\n\tdeploy: off\n');
     const r = bash('cat .env');
     assert.equal(r.code, 0);
-    assert.notEqual(decision(r), 'deny');
+    assert.equal(decision(r), 'deny');
+    assert.match(r.json.systemMessage, /^Shipline: \.shipline\/config\.yml can't be read \(.+\); guardrails are using their defaults\.$/);
     setRails({});
   });
 });

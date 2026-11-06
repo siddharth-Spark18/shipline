@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 // The Shipline pull-request check (run by .github/workflows/shipline.yml). Reads the PR description and labels
 // from $GITHUB_EVENT_PATH, plus .shipline/config.yml and .shipline/workflows/<workflow>.yml from the checkout.
+// `--config-from <dir>` reads config.yml and the workflow files from <dir>/.shipline/ instead (the workflow passes the
+// PR's base branch, so a PR can't relax its own check); the git tree and fingerprint still come from this checkout.
 // A v2 summary may carry `scope` (test, lint and CI files edited, files outside the plan); it is shown, never a failure.
 // With a v2 summary it also compares the code the checks ran on (summary.checks.fingerprint, a git tree id) with
 // this checkout's `git rev-parse HEAD^{tree}`; a mismatch warns or fails per `ci.stale_checks`.
 // Exit 0 = pass, 1 = fail. Writes GitHub annotations and, when it has a summary, a table to $GITHUB_STEP_SUMMARY.
 // Node 18+, no dependencies. It needs no secrets, so it also works on PRs from forks.
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { findRoot, findStage, loadConfig, loadWorkflow, needsAnswer, stageEnforcement } from './lib.mjs';
 
@@ -43,9 +46,23 @@ const labels = Array.isArray(pr.labels) ? pr.labels.map((l) => (l && l.name) || 
 
 const root = findRoot(process.cwd());
 if (!root) fail('No .shipline/config.yml in this checkout; Shipline is not installed in this repo.');
+
+// Where config.yml and the workflow files come from: this checkout, or the folder given with --config-from.
+let configRoot = root;
+const argv = process.argv.slice(2);
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === '--config-from' || a.startsWith('--config-from=')) {
+    const value = a === '--config-from' ? argv[++i] : a.slice('--config-from='.length);
+    if (!value) fail('--config-from needs a folder.');
+    configRoot = path.resolve(process.cwd(), value);
+  } else fail(`Unknown option ${a}. Usage: ci-check.mjs [--config-from <dir>]`);
+}
+if (!existsSync(path.join(configRoot, '.shipline', 'config.yml'))) fail(`No .shipline/config.yml in ${configRoot}; there is nothing to read the check's settings from.`);
+
 let cfg;
 try {
-  cfg = loadConfig(root);
+  cfg = loadConfig(configRoot);
 } catch (e) {
   fail(`.shipline/config.yml could not be read: ${e.message}`);
 }
@@ -84,7 +101,7 @@ if (data.v !== undefined && data.v !== 1 && data.v !== 2) {
 
 let wf;
 try {
-  wf = loadWorkflow(root, data.workflow);
+  wf = loadWorkflow(configRoot, data.workflow);
 } catch (e) {
   fail(`The Shipline summary names a workflow this repo doesn't have (${e.message}).`);
 }

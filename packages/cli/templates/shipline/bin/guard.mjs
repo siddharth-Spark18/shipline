@@ -7,7 +7,8 @@
 // Then, with an active task: stage block patterns (regexes, tool/path blocks and named actions). No active task =>
 // nothing more, except one warning per session when the current git branch belongs to an unfinished task this
 // session isn't tracking. The strictest decision wins: deny over ask over a stage warning.
-// Malformed config => fails open with a visible warning.
+// A config.yml that can't be read => the rails use their built-in defaults, and every call says so.
+// Any other unexpected error => fails open with a visible warning.
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,7 +16,7 @@ import {
   findRoot, loadConfig, loadWorkflow, readSession, readManifest, readStdinJson, stateDir, storeDir, shiplineHome,
   isInside, stageEnforcement, findStage, isDone, globToRegExp, listOpenTasks, currentBranch, safeId, out, failOpen,
   parseCommand, makeMatchCtx, matchAction, matchRail, bashWriteTargets, isCredentialPath, resolveTarget, repoRelative,
-  globMatches, railReason, RAIL_IDS, ACTIONS,
+  globMatches, globMatchesCredential, defaultConfig, railReason, RAIL_IDS, ACTIONS,
 } from './lib.mjs';
 
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -23,8 +24,21 @@ const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const STORE_DENY =
   'Shipline: progress and approvals can only change through `stage.mjs` and your answers to its questions.';
 
+// Set when config.yml can't be read: added as the system message to everything this hook prints.
+let configWarning = null;
+let emitted = false;
+function emit(obj) {
+  emitted = true;
+  out(configWarning ? { ...obj, systemMessage: obj.systemMessage ? `${configWarning} ${obj.systemMessage}` : configWarning } : obj);
+}
+// Ends the hook; a call with nothing else to say still carries the config warning.
+function quit() {
+  if (configWarning && !emitted) emit({});
+  process.exit(0);
+}
+
 const deny = (reason) =>
-  out({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });
+  emit({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });
 
 // The real path of p, resolving symlinks in the part that exists (the file itself may not exist yet).
 function realish(p) {
@@ -69,6 +83,8 @@ function bashReachesProgress(command, store) {
       c.includes(storeFwd) ||
       c.includes(shiplineHome().replace(/\\/g, '/')) ||
       c.includes('~/.shipline') ||
+      c.includes('$HOME/.shipline') ||
+      c.includes('${HOME}/.shipline') ||
       c.includes('$SHIPLINE_HOME') ||
       c.includes('${SHIPLINE_HOME}') ||
       c.includes('%SHIPLINE_HOME%'),
@@ -77,10 +93,10 @@ function bashReachesProgress(command, store) {
 }
 
 const ask = (reason) =>
-  out({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: reason } });
+  emit({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: reason } });
 
-// Paths the agent's own configuration lives in: .claude/**, .shipline/**, CLAUDE.md, .mcp.json (repo-relative).
-const isAgentConfigPath = (rel) => /^(\.claude|\.shipline)(\/|$)/.test(rel) || rel === 'CLAUDE.md' || rel === '.mcp.json';
+// Paths the agent's own configuration lives in: .claude/**, .shipline/**, CLAUDE.md, .mcp.json (repo-relative, any case).
+const isAgentConfigPath = (rel) => /^(\.claude|\.shipline)(\/|$)/i.test(rel) || /^(CLAUDE\.md|\.mcp\.json)$/i.test(rel);
 
 // The guardrails for one tool call: { deny, ask } (the first reason of each, or null). A rail set to `off` is skipped.
 function railDecisions(input, root, cfg) {
@@ -108,6 +124,12 @@ function railDecisions(input, root, cfg) {
   } else if (tool === 'Read') {
     const p = ti.file_path;
     if (on('read_credentials') && typeof p === 'string' && p && isCredentialPath(p, ctx, null)) raise('read_credentials', `${p} holds credentials`);
+  } else if (tool === 'Grep') {
+    // Searching a credential file prints its lines: Grep goes through the same rail as Read.
+    if (on('read_credentials')) {
+      if (typeof ti.path === 'string' && ti.path && isCredentialPath(ti.path, ctx, null)) raise('read_credentials', `${ti.path} holds credentials`);
+      else if (typeof ti.glob === 'string' && globMatchesCredential(ti.glob)) raise('read_credentials', `the glob ${ti.glob} matches credential files`);
+    }
   } else if (tool === 'Bash' && typeof ti.command === 'string') {
     const parts = parseCommand(ti.command);
     for (const id of RAIL_IDS) {
@@ -141,7 +163,7 @@ function warnIfLostTask(root, sessionId) {
     if (!task) return;
     mkdirSync(path.dirname(marker), { recursive: true });
     writeFileSync(marker, '');
-    out({
+    emit({
       systemMessage:
         `Shipline: branch ${branch} belongs to unfinished task ${task.dir}, but this session isn't tracking it, ` +
         `so its stage rules are not enforced. Run: node .shipline/bin/stage.mjs resume ${task.dir}`,
@@ -151,64 +173,72 @@ function warnIfLostTask(root, sessionId) {
   }
 }
 
+// A rail's ask, kept until the stage blocks have had their say. Outside the try, so an error after the rails decided
+// (for example a store that can't be read for the session) still shows it.
+let pendingAsk = null;
 try {
   const input = await readStdinJson();
   const root = findRoot(input.cwd);
 
-  // Protecting the store comes first: it applies whether or not this session has a task.
+  // A config.yml that can't be read does not turn the guardrails off: they use the built-in defaults.
+  let cfg0 = null;
   if (root) {
-    const tool0 = String(input.tool_name || '');
-    const ti0 = input.tool_input || {};
-    if (FILE_TOOLS.has(tool0)) {
-      let p = ti0.file_path || ti0.notebook_path;
-      if (typeof p === 'string' && p) {
-        if (p === '~' || p.startsWith('~/')) p = path.join(os.homedir(), p.slice(1));
-        if (isProtectedStorePath(storeDir(root), path.resolve(input.cwd || root, p))) {
-          deny(STORE_DENY);
-          process.exit(0);
+    try {
+      cfg0 = loadConfig(root);
+    } catch (e) {
+      cfg0 = defaultConfig();
+      configWarning = `Shipline: .shipline/config.yml can't be read (${e && e.message ? e.message : e}); guardrails are using their defaults.`;
+    }
+  }
+
+  // Protecting the store comes first: it applies whether or not this session has a task. An error in this step
+  // only skips it; the guardrails below still run.
+  if (root) {
+    try {
+      const tool0 = String(input.tool_name || '');
+      const ti0 = input.tool_input || {};
+      if (FILE_TOOLS.has(tool0)) {
+        let p = ti0.file_path || ti0.notebook_path;
+        if (typeof p === 'string' && p) {
+          if (p === '~' || p.startsWith('~/')) p = path.join(os.homedir(), p.slice(1));
+          if (isProtectedStorePath(storeDir(root), path.resolve(input.cwd || root, p))) {
+            deny(STORE_DENY);
+            process.exit(0);
+          }
         }
+      } else if (tool0 === 'Bash' && typeof ti0.command === 'string' && bashReachesProgress(ti0.command, storeDir(root))) {
+        deny(STORE_DENY);
+        process.exit(0);
       }
-    } else if (tool0 === 'Bash' && typeof ti0.command === 'string' && bashReachesProgress(ti0.command, storeDir(root))) {
-      deny(STORE_DENY);
-      process.exit(0);
+    } catch {
+      // Store protection is skipped for this call.
     }
   }
 
   // The guardrails come next, for every session and every stage: a deny ends the call here; an ask is kept and
-  // shown once the stage blocks (which can still deny) have had their say. A broken config.yml is reported by the
-  // task flow below, so it only turns the guardrails off here.
-  let pendingAsk = null;
-  if (root) {
-    let cfg0 = null;
-    try {
-      cfg0 = loadConfig(root);
-    } catch {
-      cfg0 = null;
+  // shown once the stage blocks (which can still deny) have had their say.
+  if (root && cfg0) {
+    const d = railDecisions(input, root, cfg0);
+    if (d.deny) {
+      deny(d.deny);
+      process.exit(0);
     }
-    if (cfg0) {
-      const d = railDecisions(input, root, cfg0);
-      if (d.deny) {
-        deny(d.deny);
-        process.exit(0);
-      }
-      pendingAsk = d.ask;
-    }
+    pendingAsk = d.ask;
   }
   const finishAsk = () => {
     if (pendingAsk) ask(pendingAsk);
-    process.exit(0);
+    quit();
   };
 
   const session = root && readSession(root, input.session_id);
   if (!session || !session.task_dir) {
     if (pendingAsk) finishAsk();
     if (root && input.session_id) warnIfLostTask(root, input.session_id);
-    process.exit(0);
+    quit();
   }
 
   const manifest = readManifest(root, session.task_dir);
   if (!manifest) finishAsk();
-  loadConfig(root); // a broken config surfaces as the visible fail-open warning
   const wf = loadWorkflow(root, session.workflow);
 
   const tool = String(input.tool_name || '');
@@ -230,7 +260,7 @@ try {
   const denies = [];
   const warns = [];
   const parts = command !== null ? parseCommand(command) : [];
-  const actx = makeMatchCtx(root, input.cwd || root, loadConfig(root));
+  const actx = makeMatchCtx(root, input.cwd || root, cfg0);
 
   for (const stage of wf.stages) {
     const mode = stageEnforcement(stage);
@@ -257,14 +287,14 @@ try {
       const what = isFileTool ? `${tool} on ${rel}` : `"${command.slice(0, 80)}"`;
       const msg =
         `Shipline (${wf.name || wf.id} workflow, task ${manifest.task.slug}): ${what} needs the "${stage.name || stage.id}" stage to be done first. ` +
-        `Finish it, then record it with: node .shipline/bin/stage.mjs advance`;
+        `Finish it, then record it with: node .shipline/bin/stage.mjs advance.`;
       (mode === 'block' ? denies : warns).push(msg);
       break;
     }
   }
 
   if (denies.length) {
-    out({
+    emit({
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
@@ -274,12 +304,19 @@ try {
   } else if (pendingAsk) {
     ask(pendingAsk);
   } else if (warns.length) {
-    out({
+    emit({
       systemMessage: `Shipline reminder: ${warns[0]}`,
       hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: `Reminder: ${warns[0]}` },
     });
   }
-  process.exit(0);
+  quit();
 } catch (e) {
+  if (pendingAsk) {
+    emit({
+      systemMessage: `Shipline: ignoring a problem and continuing without enforcement. ${e && e.message ? e.message : e}`,
+      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: pendingAsk },
+    });
+    process.exit(0);
+  }
   failOpen(e);
 }

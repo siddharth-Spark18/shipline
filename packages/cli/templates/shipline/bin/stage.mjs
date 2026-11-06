@@ -3,7 +3,7 @@
 //   node .shipline/bin/stage.mjs workflows
 //   node .shipline/bin/stage.mjs start --workflow feature --title "Add export" [--ticket PROJ-12 | 123] [--ui true|false]
 //   node .shipline/bin/stage.mjs resume <task folder name or absolute path>
-//   node .shipline/bin/stage.mjs status [--json]
+//   node .shipline/bin/stage.mjs status [--json] [--verbose]   (without a session: the unfinished tasks on this branch)
 //   node .shipline/bin/stage.mjs advance
 //   node .shipline/bin/stage.mjs skip [--reason "..."]
 //   node .shipline/bin/stage.mjs reopen <stage>
@@ -24,6 +24,7 @@ import {
   findRoot, loadConfig, needsAnswer, loadWorkflow, listWorkflows, readManifest, manifestPath, readSession, statePath,
   tasksDir, writeJson, isDone, currentStage, slugify, stageEnforcement, confirmQuestion, readApprovals,
   consumeApproval, CONFIRM_OPTIONS, sameStage, findStage, fingerprint, findSection, sectionProblems, scopeOf, scopeText,
+  listOpenTasks, currentBranch,
 } from './lib.mjs';
 
 function die(msg) {
@@ -148,6 +149,7 @@ function trackerLine(manifest) {
   if (tracker === 'jira') {
     return 'Tracker: jira. Read the ticket through the Atlassian tools (read-only) and save it to the artifact. Skip with `stage.mjs skip --reason "Jira not connected"` when they are unavailable.';
   }
+  if (tracker === 'none') return 'Tracker: none. This stage is skipped automatically; if you are here anyway, run `stage.mjs skip --reason "No tracker"`.';
   return `Tracker: "${tracker}" is not supported; skip this stage with \`stage.mjs skip --reason "Tracker not supported"\`.`;
 }
 
@@ -261,6 +263,14 @@ function activateNext(manifest, wf) {
   for (const ms of manifest.stages) {
     if (isDone(ms.status)) continue;
     const sc = stageCfg(wf, ms.id);
+    // No tracker: there is no ticket to read, so the ticket stage is skipped without a question.
+    if (cfg.tracker === 'none' && sameStage(ms.id, 'ticket')) {
+      ms.status = 'skipped';
+      ms.reason = 'No tracker';
+      ms.skipped = { via: sc.optional ? 'optional' : 'auto', at: now(), reason: ms.reason };
+      ms.updated = now();
+      continue;
+    }
     if (sc.condition === 'ui_only') {
       if (manifest.flags.ui === null || manifest.flags.ui === undefined) {
         die(`stage "${ms.id}" only applies to UI work. Decide first: node .shipline/bin/stage.mjs flag ui true|false`);
@@ -347,11 +357,16 @@ switch (cmd) {
   }
 
   case 'status': {
+    // No session and no --task: say which unfinished tasks belong to this branch instead of failing.
+    if (typeof flags.task !== 'string' && !sessionId) {
+      listBranchTasks();
+      break;
+    }
     const taskDir = activeTaskDir();
     const { manifest, wf } = load(taskDir);
     if (flags.json) console.log(JSON.stringify({ task_dir: taskDir, ...manifest }, null, 2));
     else {
-      console.log(statusText(taskDir, manifest, wf));
+      console.log(flags.verbose ? statusText(taskDir, manifest, wf) : shortStatus(taskDir, manifest, wf));
       // A confirmation question that is still open (for example after resuming in a new session) is printed again.
       const cur = currentStage(manifest);
       const st = sessionId ? readSession(root, sessionId) : null;
@@ -462,7 +477,7 @@ switch (cmd) {
       recordScope(taskDir, manifest, wf);
       save(taskDir, manifest);
       console.log('No test, lint or build commands are configured in .shipline/config.yml.');
-      printScope(manifest.checks.scope);
+      printScope(manifest.checks.scope, wf);
       break;
     }
     // The fingerprint is taken before the commands run: it is the code they saw.
@@ -477,7 +492,7 @@ switch (cmd) {
     save(taskDir, manifest);
     const failed = results.filter((r) => r.exit !== 0);
     console.log(`\n${checksLine(results)}`);
-    printScope(manifest.checks.scope);
+    printScope(manifest.checks.scope, wf);
     for (const r of failed) console.log(`\n--- ${r.name} (${r.exit === null ? 'did not run' : `exit ${r.exit}`}) last output ---\n${r.tail}`);
     console.log(`\nFingerprint: ${fp ? fp.slice(0, 12) : 'none'}`);
     if (failed.length) process.exit(1);
@@ -497,10 +512,59 @@ switch (cmd) {
     process.exit(cmd ? 1 : 0);
 }
 
-function statusText(taskDir, manifest, wf) {
+function uiWork(manifest) {
+  return manifest.flags.ui === true ? 'yes' : manifest.flags.ui === false ? 'no' : 'unknown';
+}
+
+function stageRows(manifest) {
   const mark = { done: '[x]', skipped: '[-]', in_progress: '[>]', pending: '[ ]' };
-  const rows = manifest.stages.map((s) => `${mark[s.status] || '[ ]'} ${s.id}${s.reason ? ` (${s.reason})` : ''}`);
-  return `Task ${taskDir} (${wf.id}) ui=${manifest.flags.ui}\n${rows.join('\n')}\n\n${describeCurrent(taskDir, manifest, wf)}`;
+  return manifest.stages.map((s) => `${mark[s.status] || '[ ]'} ${s.id}${s.reason ? ` (${s.reason})` : ''}`);
+}
+
+function statusText(taskDir, manifest, wf) {
+  return `Task ${taskDir} (${wf.id}) UI work: ${uiWork(manifest)}\n${stageRows(manifest).join('\n')}\n\n${describeCurrent(taskDir, manifest, wf)}`;
+}
+
+// The short status: the stage list, then the current stage's name, artifact, checks line and next step.
+// --verbose adds the rules text and the full store paths (statusText).
+function shortStatus(taskDir, manifest, wf) {
+  const lines = [`Task ${manifest.task.slug} (${wf.id}) UI work: ${uiWork(manifest)}`, ...stageRows(manifest), ''];
+  const cur = currentStage(manifest);
+  if (!cur) return [...lines, 'All stages are done. The task is complete.'].join('\n');
+  const sc = stageCfg(wf, cur.id);
+  lines.push(`Current stage: ${sc.name || cur.id} [${cur.id}]`);
+  if (sc.artifact) lines.push(`Artifact: ${sc.artifact}${existsSync(path.join(taskDir, sc.artifact)) ? '' : ' (not written yet)'}`);
+  const ch = manifest.checks && Array.isArray(manifest.checks.results) ? manifest.checks : null;
+  if (sc.checks === true) lines.push(`Checks: ${ch && ch.results.length ? checksLine(ch.results, acceptedNames(ch, cur)) : 'not run'}`);
+  const asks = needsAnswer(sc, cfg) ? ' (it asks the developer to confirm)' : '';
+  if (sc.checks === true && !(ch && ch.results.length)) lines.push('Next: node .shipline/bin/stage.mjs check');
+  else if (sc.artifact && !existsSync(path.join(taskDir, sc.artifact))) lines.push(`Next: write ${sc.artifact}, then node .shipline/bin/stage.mjs advance${asks}`);
+  else lines.push(`Next: node .shipline/bin/stage.mjs advance${asks}`);
+  lines.push('(--verbose adds the stage rules and full paths)');
+  return lines.join('\n');
+}
+
+// `status` with no session: the unfinished tasks whose branch is the current one (all of them outside git).
+function listBranchTasks() {
+  const branch = currentBranch(root);
+  let tasks;
+  try {
+    tasks = listOpenTasks(root);
+  } catch (e) {
+    die(e.message);
+  }
+  if (branch && branch !== 'HEAD') tasks = tasks.filter((t) => t.branch === branch);
+  if (flags.json) {
+    console.log(JSON.stringify({ branch: branch || null, tasks: tasks.map((t) => ({ slug: t.slug, workflow: t.workflow, stage: t.next, task_dir: t.dir })) }, null, 2));
+    return;
+  }
+  if (!tasks.length) {
+    console.log(branch && branch !== 'HEAD' ? `No unfinished tasks on ${branch}.` : 'No unfinished tasks.');
+    return;
+  }
+  console.log(`Unfinished tasks${branch && branch !== 'HEAD' ? ` on ${branch}` : ''}:`);
+  for (const t of tasks) console.log(`  ${t.slug} (${t.workflow}) - current stage: ${t.next || 'none'}`);
+  console.log('\nTo continue one, start Claude Code in this repo and run: node .shipline/bin/stage.mjs resume <slug>');
 }
 
 // How a finished stage was decided: 'answer' (the developer's own answer), 'auto' (no question was needed), or null.
@@ -596,9 +660,18 @@ function scopeAccepted(checks, stage) {
   return Boolean(checks && a && a.fingerprint === checks.fingerprint && a.ran_at === checks.ran_at);
 }
 
+// The stage whose artifact is the plan: the one whose `sections` include "Files to touch", else the `plan` stage.
+function planStage(wf) {
+  return wf.stages.find((st) => st.artifact && sections(st).some((h) => h.trim().replace(/:+$/, '').trim().toLowerCase() === 'files to touch')) || wf.stages.find((st) => st.id === 'plan' && st.artifact);
+}
+
+function hasPlanStage(wf) {
+  return Boolean(planStage(wf));
+}
+
 // The text of the plan: the artifact of the stage whose `sections` include "Files to touch" (else the `plan` stage).
 function planText(taskDir, wf) {
-  const sc = wf.stages.find((st) => st.artifact && sections(st).some((h) => h.trim().replace(/:+$/, '').trim().toLowerCase() === 'files to touch')) || wf.stages.find((st) => st.id === 'plan' && st.artifact);
+  const sc = planStage(wf);
   if (!sc) return null;
   try {
     return readFileSync(path.join(taskDir, sc.artifact), 'utf8');
@@ -617,9 +690,9 @@ function recordScope(taskDir, manifest, wf) {
   }
 }
 
-function printScope(sc) {
+function printScope(sc, wf) {
   if (!sc) return;
-  console.log(`Scope: ${scopeText(sc, cfg)}`);
+  console.log(`Scope: ${scopeText(sc, cfg, hasPlanStage(wf))}`);
   if (sc.changed === null) return;
   if (sc.sensitive.length) console.log(`  Test, lint and CI files edited:\n${sc.sensitive.map((f) => `    ${f}`).join('\n')}`);
   if (sc.outside_plan && sc.outside_plan.length) console.log(`  Files outside the plan's "Files to touch":\n${sc.outside_plan.map((f) => `    ${f}`).join('\n')}`);
@@ -681,7 +754,7 @@ function prSummary(taskDir, manifest, wf) {
     if (sc) {
       const ok = scopeAccepted(ch, ms);
       const any = sc.sensitive.length || (sc.outside_plan && sc.outside_plan.length);
-      out.push('', `**Scope:** ${any ? `edits ${scopeText(sc, cfg)}${ok ? ' (accepted)' : ''}` : scopeText(sc, cfg)}`);
+      out.push('', `**Scope:** ${any ? `edits ${scopeText(sc, cfg, hasPlanStage(wf))}${ok ? ' (accepted)' : ''}` : scopeText(sc, cfg, hasPlanStage(wf))}`);
       if (sc.sensitive.length) out.push('', '<details><summary>Test, lint and CI files edited</summary>', '', ...sc.sensitive.map((f) => `- \`${f}\``), '', '</details>');
       if (sc.outside_plan && sc.outside_plan.length) out.push('', '<details><summary>Files outside the plan</summary>', '', ...sc.outside_plan.map((f) => `- \`${f}\``), '', '</details>');
       json.scope = { sensitive: sc.sensitive, outside_plan: sc.outside_plan, accepted: Boolean(any && ok) };

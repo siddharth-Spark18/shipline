@@ -21,8 +21,9 @@ try {
     const wfs = listWorkflows(root).map((w) => `${w.id}${w.description ? ` (${w.description})` : ''}`);
     ctx =
       `Shipline: no workflow is active. If this request is a task (building, fixing or changing something), ` +
-      `classify it (${wfs.join('; ') || 'no workflows found'}), say which workflow you will follow and ask the developer to confirm or switch, ` +
-      `then use the shipline-workflow skill. Quick questions and chatter do not start a workflow.`;
+      `classify it (${wfs.join('; ') || 'no workflows found'}) and say which workflow you will follow, then use the shipline-workflow skill. ` +
+      `For a Small change (a typo, a rename, a config or copy tweak, a one-file fix with an obvious cause) announce it and start right away, without waiting for an OK. ` +
+      `For any other workflow, ask the developer once to confirm or switch. Quick questions and chatter do not start a workflow.`;
   }
   if (ctx) out({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: ctx } });
   process.exit(0);

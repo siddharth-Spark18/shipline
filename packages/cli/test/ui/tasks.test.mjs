@@ -1,7 +1,7 @@
 // Plan item 45, Tasks (Goals 6 and 7): GET /api/tasks, SSE `tasks` updates from the watcher, and /api/file.
 // Phase 1: tasks live in the store ($SHIPLINE_HOME/projects/<encoded>/tasks/), Task.dir is the absolute store
 // path, /api/file accepts absolute paths inside the store's tasks/ (anything absolute outside the repo and the
-// store is 400 bad-path), and an interface-2 repo is read from its old artifact_root, read-only.
+// store is 400 bad-path). (1.0 dropped the pre-store interface-2 layout: every 1.x repo keeps its tasks in the store.)
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -36,6 +36,10 @@ async function quiet(ms = 600, limit = 5000) {
 
 before(async () => {
   dir = makeRepo({ commitInit: true });
+  // The feature task below starts at its ticket stage, so this repo has a tracker (none skips it on start).
+  const cfgFile = path.join(dir, '.shipline', 'config.yml');
+  writeFileSync(cfgFile, readFileSync(cfgFile, 'utf8').replace(/^tracker: none$/m, 'tracker: jira'));
+  git(dir, 'commit', '-q', '-am', 'tracker: jira');
   outside = tmpDir();
   writeFileSync(path.join(outside, 'secret.txt'), 'outside the repo\n');
   TASK = path.join(storeOf(dir), 'tasks', 'add-export');
@@ -410,45 +414,6 @@ describe('a repo with no commits yet', () => {
       const r = await api(u, 'GET', '/api/file?path=first.txt&mode=diff');
       assert.equal(r.status, 200, r.text);
       assert.deepEqual(r.json.hunks[0].lines.map((l) => [l.type, l.text]), [['add', 'hello']]);
-    } finally {
-      if (u) await u.close();
-      removeDir(d);
-    }
-  });
-});
-
-describe('an interface-2 repo (not upgraded yet)', () => {
-  test('tasks are read from the old artifact_root, read-only: absolute dirs, and /api/file reads its files', async () => {
-    const d = makeRepo({ commitInit: true });
-    let u;
-    try {
-      // Build an in-repo task the way 0.6.0 left it: a task folder under a custom artifact_root, committed.
-      assert.equal(stage(d, ['start', '--workflow', 'feature', '--title', 'Old task'], 'o1').code, 0);
-      const legacyTask = path.join(d, 'work', 'tasks', 'old-task');
-      mkdirSync(path.dirname(legacyTask), { recursive: true });
-      cpSync(path.join(storeOf(d), 'tasks', 'old-task'), legacyTask, { recursive: true });
-      rmSync(path.join(storeOf(d), 'tasks', 'old-task'), { recursive: true });
-      writeFileSync(path.join(legacyTask, 'ticket.md'), '# old\n');
-      const cfg = readFileSync(path.join(d, '.shipline/config.yml'), 'utf8');
-      writeFileSync(path.join(d, '.shipline/config.yml'), `artifact_root: work/tasks\n${cfg}`);
-      writeFileSync(path.join(d, '.shipline/bin/VERSION'), '{"package":"0.6.0","interface":2}\n');
-      git(d, 'add', '-A');
-      git(d, 'commit', '-q', '-m', 'legacy layout');
-
-      u = await startUi(d);
-      const status = await api(u, 'GET', '/api/status');
-      assert.equal(status.json.needsUpgrade, true);
-      const t = await api(u, 'GET', '/api/tasks');
-      assert.equal(t.status, 200);
-      assert.deepEqual(t.json.tasks.map((k) => k.dir), [legacyTask]);
-      assert.deepEqual(t.json.tasks[0].files.map((f) => f.name).sort(), ['manifest.json', 'ticket.md']);
-      // Committed and unchanged, but inside an open legacy task folder: readable by its repo-relative path.
-      const r = await api(u, 'GET', `/api/file?path=${encodeURIComponent('work/tasks/old-task/ticket.md')}&mode=content`);
-      assert.equal(r.status, 200, r.text);
-      assert.equal(r.json.content, '# old\n');
-      // Reading never moves or writes anything in the repo.
-      assert.equal(git(d, 'status', '--porcelain', '--untracked-files=all'), '');
-      assert.ok(existsSync(path.join(legacyTask, 'manifest.json')));
     } finally {
       if (u) await u.close();
       removeDir(d);

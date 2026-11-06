@@ -75,7 +75,6 @@ export function routes(app) {
   const ghCache = {}; // the 60 s `gh auth status` result, per server
 
   const preflight = async () => {
-    app.repo.requireUpgraded();
     app.repo.requireWritable();
     const activeId = app.chats.activeId();
     if (activeId)
@@ -126,7 +125,7 @@ export function routes(app) {
         const current = tasks.find((t) => t.dir === chat.task_dir);
         const stage =
           current && current.stages.find((s) => s.status !== 'done' && s.status !== 'skipped');
-        const ticket = await ticketStatus((cfg && cfg.tracker) || 'jira', init, {
+        const ticket = await ticketStatus((cfg && cfg.tracker) || 'none', init, {
           atTicketStage: Boolean(stage && sameStage(stage.id, 'ticket')),
           ghCache,
         });
@@ -140,7 +139,7 @@ export function routes(app) {
       path: '/api/chats/:id/message',
       maxBody: MAX_IMAGE_BODY,
       handler: ({ params, body }) => {
-        app.repo.requireUpgraded();
+        app.repo.requireWritable();
         requireChat(app, params.id);
         if (!body || typeof body.text !== 'string')
           throw new HttpError(400, 'bad-request', 'text is required');

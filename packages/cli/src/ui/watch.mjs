@@ -58,8 +58,7 @@ function pollSignature(root, taskBases, gitDir) {
 // those, and a watch on a single file stops firing). onChange({ configChanged }) runs 300 ms after the last
 // event. On a startup throw or any later 'error' event (ENOSPC on Linux) it switches to polling and calls
 // opts.onFallback(reason). Returns { mode, close }; `mode` is 'watch' or 'poll'.
-// opts.taskBases(): the absolute task folders to watch (the store's tasks/, plus the old artifact_root for an
-// interface-2 repo), read on every poll. The store folders live outside the repo, so they are watched separately.
+// opts.taskBases(): the absolute task folders to watch (the store's tasks/), read on every poll. The store folders live outside the repo, so they are watched separately.
 export async function watchRepo(root, onChange, opts = {}) {
   const handle = { mode: 'watch', close: () => {} };
   const watchers = [];
@@ -151,7 +150,7 @@ export async function watchRepo(root, onChange, opts = {}) {
 
 // Starts the watch for the Tasks panel on `app`. Every change recomputes the tasks once (single-flight: a
 // change during a run schedules exactly one more run) and sends an SSE `tasks` event. A change to config.yml
-// reloads the config; a changed artifact_root (interface-2 repos) restarts the watch.
+// reloads the config.
 export async function startTaskWatch(app) {
   let handle = null;
   let running = false;
@@ -159,14 +158,8 @@ export async function startTaskWatch(app) {
   let closed = false;
   let configChanged = false;
 
-  // The store's tasks/ folder, plus the old in-repo artifact_root until the repo is upgraded.
-  const taskBases = () => {
-    const { cfg } = app.repo.getConfig();
-    return [
-      tasksBase(app.repo.root, cfg, false),
-      ...(app.repo.needsUpgrade ? [tasksBase(app.repo.root, cfg, true)] : []),
-    ];
-  };
+  // The store's tasks/ folder.
+  const taskBases = () => [tasksBase(app.repo.root)];
 
   const onFallback = (reason) => {
     app.addBanner({
@@ -199,12 +192,7 @@ export async function startTaskWatch(app) {
         again = false;
         if (configChanged) {
           configChanged = false;
-          const before = taskBases().join('\n');
           app.repo.reloadConfig();
-          if (taskBases().join('\n') !== before) {
-            handle.close();
-            await start();
-          }
         }
         app.hub.send('tasks', await collectTasks(app));
       } while (again && !closed);

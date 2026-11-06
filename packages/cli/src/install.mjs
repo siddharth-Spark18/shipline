@@ -2,7 +2,6 @@
 // files and writes nothing), and the all-or-nothing write. Node 18+, no dependencies.
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { detectEol, isInside, parseYaml, toEol } from '../templates/shipline/bin/lib.mjs';
 import { INTERFACE } from './interface.mjs';
 import {
@@ -168,14 +167,9 @@ export function installState(root) {
   return { state: found.length ? 'partial' : 'clean', found };
 }
 
-// 'github' when `origin` points at github.com, otherwise 'jira' (also with no remote or no git).
-function trackerDefault(root) {
-  try {
-    const url = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
-    return url.includes('github.com') ? 'github' : 'jira';
-  } catch {
-    return 'jira';
-  }
+// New installs start with no tracker: the ticket stage is skipped until the team picks GitHub Issues or Jira.
+function trackerDefault() {
+  return 'none';
 }
 
 // What the repo already has, and what Shipline offers.
@@ -191,7 +185,7 @@ export function installInfo(root) {
     repoAgents: listNames(path.join(root, '.claude', 'agents')),
     repoSkills: listNames(path.join(root, '.claude', 'skills'), { dirs: true }),
     detected: detectCommands(root),
-    trackerDefault: trackerDefault(root),
+    trackerDefault: trackerDefault(),
     uiDetected: detectUi(root).ui,
     agentUse,
     state,
@@ -212,14 +206,14 @@ export function defaultSelection(info) {
     stageAgents: {},
     skills: [],
     commands: pickCommands(info.detected),
-    tracker: 'jira',
+    tracker: 'none',
     ci: false,
   };
 }
 
 // Terminal init: fills what an answer left out (the API requires every field instead).
 export function fillSelection(info, sel) {
-  const out = { ui: info.uiDetected, clashes: {}, stageAgents: {}, skills: [], tracker: 'jira', ci: false, ...sel };
+  const out = { ui: info.uiDetected, clashes: {}, stageAgents: {}, skills: [], tracker: 'none', ci: false, ...sel };
   out.commands = sel.commands === undefined ? pickCommands(info.detected) : { ...pickCommands(null), ...sel.commands };
   return out;
 }
@@ -451,7 +445,7 @@ export function planWorkflowAdd(root, id, ui) {
   const needed = defaultAgents(info, [id], ui);
   const missing = needed.filter((a) => !existsSync(path.join(root, AGENT_PATH(a))));
   // Agents already on disk (Shipline's or the team's own) are used as they are; the rest are installed.
-  const selection = { workflows: [id], ui, agents: needed, clashes: {}, stageAgents: {}, skills: [], commands: pickCommands(null), tracker: 'jira', ci: false };
+  const selection = { workflows: [id], ui, agents: needed, clashes: {}, stageAgents: {}, skills: [], commands: pickCommands(null), tracker: 'none', ci: false };
   const writes = [];
   for (const f of templateFiles()) {
     let m;

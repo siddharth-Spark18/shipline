@@ -117,11 +117,9 @@ describe('stage.mjs check', () => {
     setCommands({});
     const r = check();
     assert.equal(r.code, 0, r.stderr);
-    // Teams Phase 3, E: the scope of the change is reported even with no commands (the small workflow has no plan).
-    assert.equal(
-      r.stdout,
-      'No test, lint or build commands are configured in .shipline/config.yml.\nScope: no test, lint or CI files touched (the plan lists no files, so changes outside it are not checked)\n',
-    );
+    // Teams Phase 3, E: the scope of the change is reported even with no commands. The small workflow has no plan
+    // stage, so (1.0 plan, item 21) the line doesn't mention a plan.
+    assert.equal(r.stdout, 'No test, lint or build commands are configured in .shipline/config.yml.\nScope: no test, lint or CI files touched\n');
     const { checks } = manifest();
     assert.deepEqual(checks.results, []);
     assert.equal(checks.fingerprint, fingerprint(dir));

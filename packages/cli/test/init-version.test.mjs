@@ -2,6 +2,7 @@
 // Phase 1: INTERFACE 3, VERSION.files (hashes of the Shipline-owned files and the two virtual entries),
 // the allow rules for ~/.shipline, no .shipline/.gitignore, and the @forgeyard/shipline name.
 import { test, describe, after } from 'node:test';
+import { nextSteps } from '../src/install.mjs';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -35,7 +36,7 @@ describe('init writes VERSION', () => {
     assert.equal(v.package, PACKAGE_VERSION);
     assert.equal(v.interface, INTERFACE);
     assert.equal(INTERFACE, 1);
-    assert.equal(PACKAGE_VERSION, '1.0.0');
+    assert.equal(PACKAGE_VERSION, '1.1.0');
     assert.deepEqual(readRepoVersion(dir), { package: PACKAGE_VERSION, interface: INTERFACE, files: v.files, excluded });
   });
 
@@ -121,9 +122,10 @@ describe('init writes VERSION', () => {
     assert.ok(!existsSync(path.join(dir, '.shipline')));
   });
 
-  test('the success message ends with the setup nudge (Teams Phase 1, E)', () => {
+  test('the success message ends with the next-steps checklist (Setup polish plan, item 5)', () => {
     const r = runInit(fresh());
-    assert.match(r.stdout, /Next: tailor the rules to this repo\. Run `\/shipline-setup` in Claude Code, or open `npx @forgeyard\/shipline ui` and use Setup -> Set up with Claude\./);
+    assert.ok(r.stdout.includes(`\n\n${nextSteps({ ci: false }).join('\n')}\n`), r.stdout);
+    assert.ok(!/^Next: /m.test(r.stdout));
     assert.ok(!/npx shipline/.test(r.stdout));
   });
 

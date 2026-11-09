@@ -5,7 +5,7 @@ import { toolOnPath } from './detect-commands.mjs';
 import { CI_WORKFLOW, VERSION_FILE } from './hashes.mjs';
 import {
   COMMAND_KEYS, applyInstall, checkSelection, clashOf, defaultAgents, defaultSelection, fillSelection, installInfo,
-  missingStageAgents, planInstall,
+  missingStageAgents, nextSteps, planInstall,
 } from './install.mjs';
 
 // Other modules (upgrade, uninstall) still import these from here.
@@ -17,6 +17,43 @@ const trackerSummary = (t) =>
 function commandsSummary(commands, detected) {
   const rows = COMMAND_KEYS.filter((k) => commands[k]).map((k) => `  ${k}: ${commands[k]}${detected.sources[k] && commands[k] === detected[k] ? ` (from ${detected.sources[k]})` : ''}`);
   return rows.length ? `Commands for the verify stage:\n${rows.join('\n')}` : 'No test, lint or build commands set; add them under commands: in .shipline/config.yml.';
+}
+
+// The file list `--dry-run` prints and the review shows: `+` create, `~` overwrite or merge, `=` not installed.
+function fileLines(plan) {
+  const lines = plan.writes.map((f) => `  ${f.overwrite ? '~' : '+'} ${f.to}`);
+  lines.push(`  + ${VERSION_FILE}`);
+  lines.push(`  ${plan.settings.before === null ? '+' : '~'} .claude/settings.json (hooks and allow rules merged)`);
+  lines.push(`  ${plan.claudeMd.before === null ? '+' : '~'} CLAUDE.md (marked block ${plan.claudeMd.before === null ? 'created' : 'appended'})`);
+  for (const p of plan.excluded) lines.push(`  = ${p} (not installed; recorded as excluded)`);
+  return lines;
+}
+
+// The settings summary and the file list, printed before the final question of an interactive run.
+function reviewText(info, selection, plan) {
+  const list = (a) => (a.length ? a.join(', ') : 'none');
+  const clashes = selection.agents
+    .map((a) => [a, clashOf(info, selection, a)])
+    .filter(([, c]) => c)
+    .map(([a, c]) => `${a}: ${c === 'keep' ? 'keep yours' : c === 'ours' ? "use Shipline's" : 'skip'}`);
+  const stageAgents = Object.entries(selection.stageAgents || {}).map(([k, v]) => `${k} -> ${v || 'none'}`);
+  const commands = COMMAND_KEYS.map((k) => `${k}: ${selection.commands[k] || 'none'}`).join('; ');
+  return [
+    'Review',
+    `  Workflows:      ${list(selection.workflows)} (${selection.ui ? 'with the UI-only stages' : 'no UI: UI-only stages left out'})`,
+    `  Commands:       ${commands}`,
+    `  Tracker:        ${selection.tracker}`,
+    `  Confirmations:  ${selection.confirmations === 'light' ? 'light (asks only at plan approval)' : 'standard'}`,
+    `  Guardrails:     ${selection.guardrails === 'off' ? 'off (every rail off, no protected paths)' : 'on'}`,
+    `  Branch pattern: ${selection.branchPattern}`,
+    `  Agents:         ${list(selection.agents)}${clashes.length ? ` (name clashes: ${clashes.join('; ')})` : ''}`,
+    ...(stageAgents.length ? [`  Stage agents:   ${stageAgents.join('; ')}`] : []),
+    `  Skills:         ${list(selection.skills)}`,
+    `  CI check:       ${selection.ci ? 'yes (.github/workflows/shipline.yml)' : 'no'}`,
+    '',
+    'Files:',
+    ...fileLines(plan),
+  ].join('\n');
 }
 
 const insideGit = (root) => {
@@ -44,9 +81,14 @@ function warnings(root, commands, detected) {
 // Returns a process exit code. Preflights everything, then writes. `prompts` (optional) replaces the interactive
 // questions in-process: an async function (info) => selection, where info is
 // { workflows, agents, repoAgents, repoSkills, detected, trackerDefault, uiDetected, agentUse, missingStageAgents(selection),
-//   defaultAgents(workflowIds, ui) }. `where` (optional) replaces the browser-or-terminal question, and `startUi`
-// the start of the browser UI (both for tests).
-export async function runInit({ target, dryRun = false, yes = false, prompts = null, where = null, startUi = null }) {
+//   defaultAgents(workflowIds, ui) }. A terminal run with questions (and no --yes) shows a review and asks
+// before writing; `confirm` (optional, an async (reviewText) => boolean) replaces that question. Without --terminal
+// or `prompts`, an interactive run on Node 20+ opens the browser wizard; `startUi` replaces that start (for tests),
+// and `nodeMajor` the Node version it checks.
+export async function runInit({
+  target, dryRun = false, yes = false, terminal = false, prompts = null, confirm = null, startUi = null,
+  nodeMajor = Number(process.versions.node.split('.')[0]),
+}) {
   const root = path.resolve(target);
   if (!existsSync(root) || !lstatSync(root).isDirectory()) {
     console.error(`shipline: ${root} is not a directory.`);
@@ -72,17 +114,11 @@ export async function runInit({ target, dryRun = false, yes = false, prompts = n
     return 1;
   }
 
-  // Interactive runs on Node 20+ may set up in the browser instead (the UI needs Node 20).
-  const nodeMajor = Number(process.versions.node.split('.')[0]);
-  if (!useDefaults && !dryRun && nodeMajor >= 20 && (where || !prompts)) {
-    let place;
-    try {
-      place = await (where || (await import('./init-prompts.mjs')).askWhere)();
-    } catch (e) {
-      console.error(`shipline: init cancelled, nothing was written. ${e.message}`);
-      return 1;
-    }
-    if (place === 'browser') {
+  // An interactive run sets up in the browser wizard by default (the UI needs Node 20); --terminal, or an
+  // injected `prompts`, asks here instead.
+  if (!useDefaults && !dryRun && !terminal) {
+    if (nodeMajor < 20) console.log('The setup wizard needs Node 20+; asking here instead.');
+    else if (!prompts) {
       const start = startUi || (async () => (await import('./ui/server.mjs')).startServer({ dir: root, port: 0, open: true }));
       await start(root);
       return 0; // the server keeps the process alive until it is stopped
@@ -122,13 +158,26 @@ export async function runInit({ target, dryRun = false, yes = false, prompts = n
 
   if (dryRun) {
     console.log('Dry run, nothing written. Would create:');
-    for (const f of writes) console.log(`  ${f.overwrite ? '~' : '+'} ${f.to}`);
-    console.log(`  + ${VERSION_FILE}`);
-    console.log(`  ${settingsText === null ? '+' : '~'} .claude/settings.json (hooks and allow rules merged)`);
-    console.log(`  ${claudeMd === null ? '+' : '~'} CLAUDE.md (marked block ${claudeMd === null ? 'created' : 'appended'})`);
-    for (const p of excluded) console.log(`  = ${p} (not installed; recorded as excluded)`);
+    for (const line of fileLines(plan)) console.log(line);
     if (!yes && !prompts && !process.stdin.isTTY) console.log('\nNo terminal, so this previews the defaults that --yes installs.');
     return 0;
+  }
+
+  // The review: what was chosen and what will be written, then one question. --yes skips it, as it skips every question.
+  if (!useDefaults) {
+    const text = reviewText(info, selection, plan);
+    console.log(`\n${text}\n`);
+    let go;
+    try {
+      go = confirm ? await confirm(text) : await (await import('./init-prompts.mjs')).askConfirmInstall();
+    } catch (e) {
+      console.error(`shipline: init cancelled, nothing was written. ${e.message}`);
+      return 1;
+    }
+    if (!go) {
+      console.error('Cancelled, nothing was written.');
+      return 1;
+    }
   }
 
   try {
@@ -160,8 +209,7 @@ ${kept.length ? `\nKept your own agents (used where Shipline's would be): ${kept
 ${commandsSummary(selection.commands, info.detected)}
 Tracker: ${trackerSummary(selection.tracker)} Change it in .shipline/config.yml.
 
-Next: tailor the rules to this repo. Run \`/shipline-setup\` in Claude Code, or open \`npx @forgeyard/shipline ui\` and use Setup -> Set up with Claude.
-Then commit .shipline/, .claude/ and CLAUDE.md so teammates get the same flow on clone (Node 18+ required).`);
+${nextSteps(selection).join('\n')}`);
   const warns = warnings(root, selection.commands, info.detected);
   if (warns.length) console.log(`\nWarnings\n${warns.map((w) => `  ! ${w}`).join('\n')}`);
   return 0;

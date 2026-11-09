@@ -7,7 +7,9 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { runInit as runInitInProcess } from '../src/init.mjs';
-import { parseYaml } from '../templates/shipline/bin/lib.mjs';
+import { DEFAULT_BRANCH_PATTERN, GUARDRAILS_OFF_NOTE, nextSteps } from '../src/install.mjs';
+import { RAIL_IDS } from '../src/setup-schema.mjs';
+import { RAIL_IDS as HOOK_RAIL_IDS, loadConfig, parseYaml } from '../templates/shipline/bin/lib.mjs';
 import { CLI_ROOT, TEMPLATES, git, homeFor, removeDir, runInit, stage, tmpDir } from './helpers.mjs';
 
 const sha = (data) => createHash('sha256').update(data).digest('hex');
@@ -49,9 +51,15 @@ function tree(dir) {
   return out;
 }
 
-// runInit in this process with a stubbed prompts function. Returns { code, stdout, stderr, calls, infos }.
+// runInit in this process with a stubbed prompts function. The review's Install question is answered Yes unless
+// extra.confirm says otherwise. Returns { code, stdout, stderr, calls, reviews }.
 async function initWith(dir, answer, extra = {}) {
   const calls = [];
+  const reviews = [];
+  const confirm = async (text) => {
+    reviews.push(text);
+    return extra.confirm ? extra.confirm(text) : true;
+  };
   const prompts =
     answer === undefined
       ? undefined
@@ -68,15 +76,30 @@ async function initWith(dir, answer, extra = {}) {
   console.error = (...a) => err.push(a.join(' '));
   let code;
   try {
-    code = await runInitInProcess({ target: dir, ...(prompts ? { prompts } : {}), ...extra });
+    code = await runInitInProcess({ target: dir, ...(prompts ? { prompts } : {}), ...extra, confirm });
   } finally {
     console.log = log;
     console.error = error;
   }
-  return { code, stdout: out.join('\n'), stderr: err.join('\n'), calls };
+  return { code, stdout: out.join('\n'), stderr: err.join('\n'), calls, reviews };
 }
 
 const selection = (patch = {}) => ({ workflows: [...ALL_WORKFLOWS], agents: [...ALL_AGENTS], clashes: {}, stageAgents: {}, skills: [], ...patch });
+
+// Runs fn with process.stdin looking like a terminal (the wizard and the questions need one).
+async function withTty(fn) {
+  const had = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+  Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true, writable: true });
+  try {
+    return await fn();
+  } finally {
+    if (had) Object.defineProperty(process.stdin, 'isTTY', had);
+    else delete process.stdin.isTTY;
+  }
+}
+const mustNotStart = async () => {
+  throw new Error('the wizard must not start');
+};
 
 describe('an existing install', () => {
   test('init --yes prints "already initialized" and writes nothing', () => {
@@ -542,17 +565,18 @@ describe('commands and tracker (Teams Phase 1)', () => {
     }
   });
 
-  test('the final message nudges to tailor the rules', async () => {
+  test('the final message ends with the next-steps checklist (tailoring the rules is step 4)', async () => {
     const r = await initWith(repo(), selection());
-    assert.match(r.stdout, /Next: tailor the rules to this repo\. Run `\/shipline-setup` in Claude Code, or open `npx @forgeyard\/shipline ui` and use Setup -> Set up with Claude\./);
+    assert.ok(r.stdout.includes(`\n${nextSteps({}).join('\n')}`), r.stdout);
+    assert.match(r.stdout, /^ {2}4\. Tailor the rules to this repo: run \/shipline-setup in Claude Code/m);
+    assert.ok(!/^Next: /m.test(r.stdout));
   });
 });
 
 // Setup wizard plan, B and C: the questions init adds (the UI question and the standalone agents get what they
 // need through info), the browser-or-terminal question (Node 20+, interactive runs only), and the dry run.
 describe('setup wizard: the new questions', () => {
-  const NODE20 = Number(process.versions.node.split('.')[0]) >= 20;
-
+  
   test('info carries the detected UI, which stages use each agent, and the default agents for an answer', async () => {
     const dir = repo({ 'web/app.tsx': 'x' });
     const r = await initWith(dir, selection({ ui: true }));
@@ -584,65 +608,72 @@ describe('setup wizard: the new questions', () => {
     assert.ok(!exists(notDetected, '.shipline/rules/wireframes.md'));
   });
 
-  test('"Browser" starts the UI on the folder instead of asking, and writes nothing itself', { skip: NODE20 ? false : 'the browser option needs Node 20' }, async () => {
+  // Setup polish plan, item 1: an interactive run opens the browser wizard by default (start function injected).
+  test('a terminal run with no flags starts the wizard on the folder, asks nothing and writes nothing itself', async () => {
     const dir = repo();
     const started = [];
-    let asked = 0;
-    const r = await initWith(dir, selection(), {
-      where: async () => {
-        asked++;
-        return 'browser';
-      },
-      startUi: async (root) => started.push(root),
-    });
+    const r = await withTty(() => initWith(dir, undefined, { nodeMajor: 20, startUi: async (root) => started.push(root) }));
     assert.equal(r.code, 0, r.stderr);
-    assert.equal(asked, 1);
     assert.deepEqual(started, [dir]);
-    assert.equal(r.calls.length, 0, 'the terminal questions are not asked');
+    assert.equal(r.reviews.length, 0);
     assert.deepEqual(readdirSync(dir), []);
   });
 
-  test('"Terminal" goes on to the questions', { skip: NODE20 ? false : 'the browser option needs Node 20' }, async () => {
+  test('--terminal asks the questions here (the wizard is not started), then reviews and installs', async () => {
     const dir = repo();
     let started = 0;
-    const r = await initWith(dir, selection(), { where: async () => 'terminal', startUi: async () => started++ });
+    const r = await withTty(() => initWith(dir, selection(), { terminal: true, nodeMajor: 24, startUi: async () => started++ }));
     assert.equal(r.code, 0, r.stderr);
     assert.equal(r.calls.length, 1);
     assert.equal(started, 0);
+    assert.equal(r.reviews.length, 1);
+    assert.ok(!/The setup wizard needs Node 20/.test(r.stdout));
     assert.ok(exists(dir, '.shipline/config.yml'));
   });
 
-  test('a cancelled browser-or-terminal question writes nothing', { skip: NODE20 ? false : 'the browser option needs Node 20' }, async () => {
-    const dir = repo();
-    const r = await initWith(dir, selection(), {
-      where: async () => {
-        throw new Error('User force closed the prompt');
-      },
-    });
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /init cancelled, nothing was written\. User force closed the prompt/);
-    assert.deepEqual(readdirSync(dir), []);
+  test('injected prompts never start the wizard (as `where` behaved before)', async () => {
+    const r = await withTty(() => initWith(repo(), selection(), { nodeMajor: 24, startUi: mustNotStart }));
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.calls.length, 1);
   });
 
-  test('the question is offered only on interactive runs on Node 20+: never with --yes, --dry-run, below Node 20, or on an existing install', async () => {
-    let asked = 0;
-    const where = async () => {
-      asked++;
-      return 'browser';
-    };
-    const startUi = async () => {
-      throw new Error('must not start');
-    };
-    assert.equal((await initWith(repo(), selection(), { yes: true, where, startUi })).code, 0);
-    assert.equal((await initWith(repo(), selection(), { dryRun: true, where, startUi })).code, 0);
-    assert.equal((await initWith(repo({ '.shipline/config.yml': 'tracker: jira\n' }), selection(), { where, startUi })).code, 0);
-    assert.equal(asked, 0);
-    if (!NODE20) {
-      // The CI hooks job (Node 18): the UI can't run, so the question is skipped silently.
-      const r = await initWith(repo(), selection(), { where, startUi });
-      assert.equal(r.code, 0, r.stderr);
-      assert.equal(asked, 0);
+  test('the wizard never starts with --yes, --dry-run or on an existing install', async () => {
+    for (const extra of [{ yes: true }, { dryRun: true }, { yes: true, terminal: true }]) {
+      const r = await withTty(() => initWith(repo(), extra.yes ? undefined : selection(), { ...extra, nodeMajor: 24, startUi: mustNotStart }));
+      assert.equal(r.code, 0, `${JSON.stringify(extra)}: ${r.stderr}`);
+      assert.equal(r.reviews.length, 0, `${JSON.stringify(extra)}: no review`);
     }
+    const r = await withTty(() => initWith(repo({ '.shipline/config.yml': 'tracker: jira\n' }), undefined, { nodeMajor: 24, startUi: mustNotStart }));
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /already initialized/);
+  });
+
+  test('Node below 20: asks here instead, after the note; --terminal, --yes and --dry-run print no note', async () => {
+    const dir = repo();
+    const r = await withTty(() => initWith(dir, selection(), { nodeMajor: 18, startUi: mustNotStart }));
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.stdout.split('\n')[0], 'The setup wizard needs Node 20+; asking here instead.');
+    assert.equal(r.calls.length, 1);
+    assert.ok(exists(dir, '.shipline/config.yml'));
+    for (const extra of [{ terminal: true }, { yes: true }, { dryRun: true }]) {
+      const o = await withTty(() => initWith(repo(), selection(), { ...extra, nodeMajor: 18, startUi: mustNotStart }));
+      assert.equal(o.code, 0, o.stderr);
+      assert.ok(!/The setup wizard needs Node 20/.test(o.stdout), JSON.stringify(extra));
+    }
+  });
+
+  test('init --terminal without a terminal is refused like any interactive run; --terminal --yes installs the defaults', () => {
+    const dir = repo();
+    const r = runInit(dir, { yes: false }, '--terminal');
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /init asks questions, and this is not a terminal\. Run it in a terminal, or pass --yes/);
+    assert.deepEqual(readdirSync(dir), []);
+    const y = repo();
+    const ry = runInit(y, '--terminal');
+    assert.equal(ry.code, 0, ry.stderr);
+    const plain = repo();
+    assert.equal(runInit(plain).code, 0);
+    assert.deepEqual(tree(y), tree(plain), '--terminal --yes is --yes');
   });
 
   test('the --dry-run format is unchanged: + created, ~ overwritten or merged, = excluded', async () => {
@@ -660,5 +691,138 @@ describe('setup wizard: the new questions', () => {
     assert.ok(lines.includes('  ~ CLAUDE.md (marked block appended)'));
     for (const n of ['planner', 'researcher', 'reviewer', 'wireframe-proposer']) assert.ok(lines.includes(`  = ${AGENT(n)} (not installed; recorded as excluded)`), n);
     assert.ok(lines.every((l, i) => i === 0 || /^ {2}[+~=] \S/.test(l)), r.stdout);
+  });
+});
+
+// Setup polish plan, item 4: the terminal review before writing. --yes skips it.
+describe('the review before writing', () => {
+  test('shows every setting and the file list in the --dry-run format, then asks', async () => {
+    const dir = repo({ 'CLAUDE.md': '# Team\n' });
+    const r = await initWith(dir, selection({ workflows: ['hotfix'], agents: ['builder'], tracker: 'jira', confirmations: 'light', guardrails: 'off', branchPattern: 'feat/{slug}', ci: true }));
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.reviews.length, 1);
+    const lines = r.reviews[0].split('\n');
+    assert.equal(lines[0], 'Review');
+    for (const want of [
+      /^ {2}Workflows: +hotfix \(no UI: UI-only stages left out\)$/,
+      /^ {2}Commands: +test: none; lint: none; build: none$/,
+      /^ {2}Tracker: +jira$/,
+      /^ {2}Confirmations: +light \(asks only at plan approval\)$/,
+      /^ {2}Guardrails: +off \(every rail off, no protected paths\)$/,
+      /^ {2}Branch pattern: feat\/\{slug\}$/,
+      /^ {2}Agents: +builder$/,
+      /^ {2}Skills: +none$/,
+      /^ {2}CI check: +yes \(\.github\/workflows\/shipline\.yml\)$/,
+    ]) {
+      assert.ok(lines.some((l) => want.test(l)), `${want}\n${r.reviews[0]}`);
+    }
+    const files = lines.slice(lines.indexOf('Files:') + 1);
+    assert.ok(files.length > 10);
+    assert.ok(files.every((l) => /^ {2}[+~=] \S/.test(l)), r.reviews[0]);
+    for (const l of ['  + .shipline/workflows/hotfix.yml', '  + .shipline/bin/VERSION', '  + .claude/settings.json (hooks and allow rules merged)', '  ~ CLAUDE.md (marked block appended)', '  + .github/workflows/shipline.yml', '  = .claude/agents/planner.md (not installed; recorded as excluded)']) {
+      assert.ok(files.includes(l), l);
+    }
+    // It is printed too, before the question.
+    assert.ok(r.stdout.includes(r.reviews[0]));
+  });
+
+  test('No: "Cancelled, nothing was written.", exit 1, and nothing is written', async () => {
+    const dir = repo();
+    const r = await initWith(dir, selection(), { confirm: () => false });
+    assert.equal(r.code, 1);
+    assert.equal(r.stderr, 'Cancelled, nothing was written.');
+    assert.deepEqual(readdirSync(dir), []);
+    assert.ok(!existsSync(homeFor(dir)) || readdirSync(homeFor(dir)).length === 0, 'no task store either');
+  });
+
+  test('Yes installs; a cancelled question (Ctrl+C) writes nothing', async () => {
+    const dir = repo();
+    const r = await initWith(dir, selection(), { confirm: () => true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(exists(dir, '.shipline/bin/VERSION'));
+    const c = repo();
+    const rc = await initWith(c, selection(), {
+      confirm: () => {
+        throw new Error('User force closed the prompt');
+      },
+    });
+    assert.equal(rc.code, 1);
+    assert.match(rc.stderr, /init cancelled, nothing was written\. User force closed the prompt/);
+    assert.deepEqual(readdirSync(c), []);
+  });
+
+  test('--yes and --dry-run show no review', async () => {
+    assert.equal((await initWith(repo(), undefined, { yes: true })).reviews.length, 0);
+    const d = await initWith(repo(), selection(), { dryRun: true });
+    assert.equal(d.code, 0, d.stderr);
+    assert.equal(d.reviews.length, 0);
+  });
+});
+
+// Setup polish plan, item 2: guardrails and the branch pattern in config.yml.
+describe('guardrails and the branch pattern', () => {
+  const configText = (dir) => read(dir, '.shipline/config.yml');
+  const template = () => readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8');
+
+  test('guardrails off: every rail off, protected_paths: [], and the note right above rails:; the hooks read it back', async () => {
+    const dir = repo();
+    const r = await initWith(dir, selection({ guardrails: 'off' }));
+    assert.equal(r.code, 0, r.stderr);
+    const text = configText(dir);
+    const cfg = parseYaml(text);
+    assert.deepEqual(cfg.rails, Object.fromEntries(RAIL_IDS.map((id) => [id, 'off'])));
+    assert.deepEqual(cfg.protected_paths, []);
+    const lines = text.split('\n');
+    const at = lines.indexOf('rails:');
+    assert.ok(at > 0);
+    assert.equal(lines[at - 1], GUARDRAILS_OFF_NOTE);
+    assert.equal(GUARDRAILS_OFF_NOTE, '# Guardrails are off (chosen at setup). Turn them on here or in Setup → Guardrails.');
+    assert.equal(lines.filter((l) => l === GUARDRAILS_OFF_NOTE).length, 1);
+    assert.ok(!text.includes('\r'));
+    // The rest of the template's comments are kept.
+    assert.ok(template().split('\n').filter((l) => l.startsWith('# ')).every((l) => lines.includes(l)));
+    // The hook library reads every rail as off and protects nothing.
+    const loaded = loadConfig(dir);
+    assert.deepEqual(loaded.rails, Object.fromEntries(HOOK_RAIL_IDS.map((id) => [id, 'off'])));
+    assert.deepEqual(loaded.protected_paths, []);
+    // The next steps don't change.
+    assert.ok(r.stdout.includes(nextSteps({}).join('\n')));
+  });
+
+  test('guardrails on (or left out): config.yml is the template', async () => {
+    for (const sel of [selection({ guardrails: 'on' }), selection()]) {
+      const dir = repo();
+      assert.equal((await initWith(dir, sel)).code, 0);
+      assert.equal(configText(dir), template());
+    }
+  });
+
+  test('a custom branch pattern is written trimmed; the default (or none) leaves the template', async () => {
+    const dir = repo();
+    const r = await initWith(dir, selection({ branchPattern: '  {type}/{slug}  ' }));
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(parseYaml(configText(dir)).branch_pattern, '{type}/{slug}');
+    assert.equal(configText(dir).split('\n').length, template().split('\n').length, 'only the one line changed');
+    for (const sel of [selection({ branchPattern: DEFAULT_BRANCH_PATTERN }), selection()]) {
+      const d = repo();
+      assert.equal((await initWith(d, sel)).code, 0);
+      assert.equal(configText(d), template());
+    }
+  });
+
+  test('an invalid branch pattern or guardrails value is refused with nothing written', async () => {
+    for (const [bad, msg] of [
+      [{ branchPattern: '{type}/{key}' }, /branchPattern must contain \{slug\}/],
+      [{ branchPattern: '{slug}-{user}' }, /branchPattern \{user\} is not allowed here; use \{key\}, \{slug\} or \{type\}/],
+      [{ branchPattern: 7 }, /branchPattern must be text/],
+      [{ guardrails: 'maybe' }, /guardrails must be on or off/],
+      [{ confirmations: 'lite' }, /confirmations must be standard or light/],
+    ]) {
+      const d = repo();
+      const b = await initWith(d, selection(bad));
+      assert.equal(b.code, 1, JSON.stringify(bad));
+      assert.match(b.stderr, msg);
+      assert.deepEqual(readdirSync(d), [], JSON.stringify(bad));
+    }
   });
 });

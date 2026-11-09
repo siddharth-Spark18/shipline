@@ -12,7 +12,9 @@ import {
   defaultSelection,
   installInfo,
   installState,
+  nextSteps,
   planInstall,
+  DEFAULT_BRANCH_PATTERN,
 } from '../install.mjs';
 import { HttpError } from './http.mjs';
 import { gitRun, parseUnifiedDiff } from './git.mjs';
@@ -84,6 +86,7 @@ function infoBody(app) {
     detected: info.detected,
     trackerDefault: info.trackerDefault,
     uiDetected: info.uiDetected,
+    branchPatternDefault: DEFAULT_BRANCH_PATTERN,
     defaults: defaultSelection(info),
   };
 }
@@ -158,7 +161,7 @@ async function install(app, body) {
     );
   }
   log('installed', { root, workflows: selection.workflows, ui: selection.ui, ci: selection.ci });
-  return { installed: true };
+  return { installed: true, nextSteps: nextSteps(selection) };
 }
 
 export function routes(app) {

@@ -277,7 +277,7 @@ describe('edited files', () => {
     assert.ok(first.stdout.includes('  ! skip     .shipline/bin/guard.mjs: edited by your team; use --force to replace. Changes it would get:'), first.stdout);
     assert.ok(first.stdout.includes('    - // team tweak'), 'the diff shows the team line going away');
     assert.ok(first.stdout.includes('  ~ replace  .shipline/bin/lib.mjs\n'), first.stdout);
-    assert.match(first.stdout, /\nUpgraded to 1\.0\.0 \(interface 1\)\.\n/);
+    assert.ok(first.stdout.includes(`\nUpgraded to ${PACKAGE_VERSION} (interface 1).\n`), first.stdout);
     assert.equal(read(dir, '.shipline/bin/guard.mjs'), guard);
     assert.equal(read(dir, '.shipline/bin/lib.mjs'), template('.shipline/bin/lib.mjs').toString());
     assert.equal(version(dir).interface, 1);
@@ -553,3 +553,54 @@ describe('the CI workflow (.github/workflows/shipline.yml)', () => {
   });
 });
 
+
+// Setup polish plan, item 9: 1.1.0 keeps the 1.0.0 hashes, so an install 1.0.0 left gets the new /shipline-setup
+// skill when the team didn't edit it. The fixture is the skill exactly as 1.0.0 shipped it (git 43667bb).
+describe('from a 1.0.0 install: the shipline-setup skill', () => {
+  const SKILL = '.claude/skills/shipline-setup/SKILL.md';
+  const OLD = readFileSync(path.join(CLI_ROOT, 'test', 'fixtures', 'upgrade-1.0.0', 'shipline-setup-SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
+
+  // A fresh install turned back into what 1.0.0 left: the old skill, VERSION package 1.0.0 (and, with
+  // record: false, no VERSION.files entry for the skill, so only known-hashes.json can tell it is unedited).
+  function repo10({ record = true, text = OLD } = {}) {
+    const dir = makeRepo({ commitInit: true });
+    dirs.push(dir);
+    writeFileSync(path.join(dir, SKILL), text);
+    const v = version(dir);
+    v.package = '1.0.0';
+    if (record) v.files[SKILL] = sha(OLD);
+    else delete v.files[SKILL];
+    writeFileSync(path.join(dir, '.shipline/bin/VERSION'), JSON.stringify(v, null, 2) + '\n');
+    git(dir, 'commit', '-q', '-am', 'as 1.0.0 left it');
+    return dir;
+  }
+
+  test('the fixture is the 1.0.0 text known-hashes.json records', () => {
+    assert.equal(sha(OLD), 'dada383a26cf8d85288156129d53c3b684455bea529fa78c314c299667cc3c39');
+  });
+
+  for (const record of [true, false]) {
+    test(`unedited (${record ? 'recorded in VERSION.files' : 'no VERSION.files entry: known-hashes.json decides'}): replaced with the current skill`, () => {
+      const dir = repo10({ record });
+      const r = upgrade(dir, '--yes');
+      assert.equal(r.code, 0, r.stderr);
+      assert.ok(r.stdout.includes(`  ~ replace  ${SKILL}\n`), r.stdout);
+      assert.ok(r.stdout.includes(`\nUpgraded to ${PACKAGE_VERSION} (interface 1).\n`), r.stdout);
+      assert.equal(read(dir, SKILL), template(SKILL).toString());
+      assert.match(read(dir, SKILL), /\*\*Guardrails:\*\*/);
+      const v = version(dir);
+      assert.equal(v.package, PACKAGE_VERSION);
+      assert.equal(v.files[SKILL], sha(template(SKILL)));
+      assert.equal(upgrade(dir, '--yes').stdout, 'Already up to date.\n');
+    });
+  }
+
+  test('edited by the team: skipped with a diff, and kept', () => {
+    const edited = `${OLD}\nTeam note.\n`;
+    const dir = repo10({ text: edited });
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.stdout.includes(`  ! skip     ${SKILL}: edited by your team; use --force to replace.`), r.stdout);
+    assert.equal(read(dir, SKILL), edited);
+  });
+});

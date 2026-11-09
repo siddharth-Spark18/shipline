@@ -7,8 +7,10 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { runInit as runInitInProcess } from '../../src/init.mjs';
-import { homeFor, makeRepo, removeDir, runInit, storeOf, tmpDir } from '../helpers.mjs';
+import { TEMPLATES, homeFor, makeRepo, removeDir, runInit, storeOf, tmpDir } from '../helpers.mjs';
 import { api, openEvents, startUi } from './helpers.mjs';
+import { DEFAULT_BRANCH_PATTERN, GUARDRAILS_OFF_NOTE, nextSteps } from '../../src/install.mjs';
+import { RAIL_IDS } from '../../src/setup-schema.mjs';
 
 const sha = (data) => createHash('sha256').update(data).digest('hex');
 const AGENT = (n) => `.claude/agents/${n}.md`;
@@ -79,7 +81,7 @@ async function initWith(dir, selection, extra = {}) {
   console.log = () => {};
   console.error = (...a) => err.push(a.join(' '));
   try {
-    const code = await runInitInProcess({ target: dir, prompts: async () => selection, ...extra });
+    const code = await runInitInProcess({ target: dir, prompts: async () => selection, confirm: async () => true, ...extra });
     assert.equal(code, 0, err.join('\n'));
   } finally {
     console.log = log;
@@ -286,7 +288,7 @@ describe('POST /api/install', () => {
     const created = p.json.files.filter((f) => f.action === 'create').map((f) => f.path).sort();
     const r = await install(u, i.defaults, p.json.base);
     assert.equal(r.status, 200, r.text);
-    assert.deepEqual(r.json, { installed: true });
+    assert.deepEqual(r.json, { installed: true, nextSteps: nextSteps({ ci: false }) });
     // Exactly the files Review listed.
     const files = Object.keys(tree(dir)).filter((f) => !['README.md', 'src/a.js'].includes(f)).sort();
     assert.deepEqual(files, created);
@@ -474,7 +476,7 @@ describe('the confirmations choice (Teams Phase 4)', () => {
     const dir = cleanRepo();
     const u = await start(dir);
     const i = await info(u);
-    assert.ok(!('confirmations' in i.defaults), 'the wizard preselects Standard (nothing sent means standard)');
+    assert.equal(i.defaults.confirmations, 'standard');
     const sel = { ...i.defaults, confirmations: 'light' };
     const p = await preview(u, sel);
     assert.equal(p.status, 200, p.text);
@@ -486,12 +488,13 @@ describe('the confirmations choice (Teams Phase 4)', () => {
     assert.equal(setup.json.config.model.confirmations, 'light');
   });
 
-  for (const confirmations of [undefined, 'standard', 'lite']) {
+  for (const confirmations of [undefined, 'standard']) {
     test(`selection.confirmations ${confirmations === undefined ? 'missing' : `'${confirmations}'`}: standard, no error`, async () => {
       const dir = cleanRepo();
       const u = await start(dir);
       const i = await info(u);
-      const sel = confirmations === undefined ? i.defaults : { ...i.defaults, confirmations };
+      const sel = { ...i.defaults, confirmations };
+      if (confirmations === undefined) delete sel.confirmations;
       const p = await preview(u, sel);
       assert.equal(p.status, 200, p.text);
       const r = await install(u, sel, p.json.base);
@@ -533,5 +536,91 @@ describe('the tracker choice (1.0)', () => {
     const bad = await preview(u, { ...i.defaults, tracker: 'linear' });
     assert.equal(bad.status, 400, bad.text);
     assert.ok(!existsSync(path.join(dir, '.shipline')));
+  });
+});
+
+// Setup polish plan, items 2 and 5: the wizard's guardrails switch and branch pattern go through the API, which
+// checks them like the terminal does, and the install answer carries the next-steps checklist.
+describe('guardrails, the branch pattern and the next steps (Setup polish)', () => {
+  const configText = (dir) => readFileSync(path.join(dir, '.shipline', 'config.yml'), 'utf8');
+
+  test('info carries the default branch pattern; the defaults have guardrails on and that pattern', async () => {
+    const u = await start(cleanRepo());
+    const i = await info(u);
+    assert.equal(i.branchPatternDefault, '{type}/{key}-{slug}');
+    assert.equal(i.branchPatternDefault, DEFAULT_BRANCH_PATTERN);
+    assert.equal(i.defaults.guardrails, 'on');
+    assert.equal(i.defaults.branchPattern, DEFAULT_BRANCH_PATTERN);
+  });
+
+  test('guardrails off, a custom branch pattern and light: previewed, installed, and the same as interactive init', async () => {
+    const dir = cleanRepo();
+    const u = await start(dir);
+    const i = await info(u);
+    const sel = { ...i.defaults, guardrails: 'off', branchPattern: '  fix/{slug} ', confirmations: 'light', ci: true };
+    const p = await preview(u, sel);
+    assert.equal(p.status, 200, p.text);
+    const previewed = p.json.files.find((f) => f.path === '.shipline/config.yml').text;
+    const r = await install(u, sel, p.json.base);
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.json, { installed: true, nextSteps: nextSteps({ ci: true }) });
+    assert.equal(r.json.nextSteps.length, 7, 'step 5 (two lines) with the CI check');
+    const text = configText(dir);
+    assert.equal(text, previewed);
+    assert.match(text, /^branch_pattern: fix\/\{slug\}$/m);
+    assert.match(text, /^confirmations: light$/m);
+    assert.match(text, /^protected_paths: \[\]$/m);
+    for (const id of RAIL_IDS) assert.match(text, new RegExp(`^ {2}${id}: off$`, 'm'), id);
+    assert.ok(text.includes(`\n${GUARDRAILS_OFF_NOTE}\nrails:\n`));
+    // The normal UI reads it back.
+    const setup = await api(u, 'GET', '/api/setup');
+    assert.equal(setup.json.config.model.branch_pattern, 'fix/{slug}');
+    assert.deepEqual(setup.json.config.model.protected_paths, []);
+    // Interactive init with the same answers writes the same files.
+    const c = cleanRepo();
+    await initWith(c, sel);
+    assert.deepEqual(tree(c), tree(dir));
+  });
+
+  test('guardrails and branchPattern left out (an older wizard): the template, and nextSteps without the CI step', async () => {
+    const dir = cleanRepo();
+    const u = await start(dir);
+    const i = await info(u);
+    const sel = { ...i.defaults };
+    delete sel.guardrails;
+    delete sel.branchPattern;
+    delete sel.confirmations;
+    const p = await preview(u, sel);
+    assert.equal(p.status, 200, p.text);
+    const r = await install(u, sel, p.json.base);
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.json.nextSteps, nextSteps({}));
+    assert.equal(configText(dir), readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8'));
+  });
+
+  test('bad values give 400 invalid with checkSelection\'s message, from preview and install; nothing is written', async () => {
+    const dir = cleanRepo();
+    const before = snapshot(dir);
+    const u = await start(dir);
+    const i = await info(u);
+    for (const [patch, msg] of [
+      [{ guardrails: 'maybe' }, /^invalid selection: guardrails must be on or off$/],
+      [{ guardrails: false }, /guardrails must be on or off/],
+      [{ branchPattern: '{type}/{key}' }, /^invalid selection: branchPattern must contain \{slug\}$/],
+      [{ branchPattern: '{slug}/{who}' }, /branchPattern \{who\} is not allowed here; use \{key\}, \{slug\} or \{type\}/],
+      [{ branchPattern: '' }, /branchPattern must contain \{slug\}/],
+      [{ branchPattern: ['{slug}'] }, /branchPattern must be text/],
+      [{ confirmations: 'lite' }, /^invalid selection: confirmations must be standard or light$/],
+    ]) {
+      const sel = { ...i.defaults, ...patch };
+      const p = await preview(u, sel);
+      assert.equal(p.status, 400, `${JSON.stringify(patch)}: ${p.text}`);
+      assert.equal(p.json.error.code, 'invalid');
+      assert.match(p.json.error.message, msg);
+      const r = await install(u, sel, { settings: null, claudeMd: null });
+      assert.equal(r.status, 400, `${JSON.stringify(patch)}: ${r.text}`);
+      assert.match(r.json.error.message, msg);
+    }
+    assert.deepEqual(snapshot(dir), before);
   });
 });

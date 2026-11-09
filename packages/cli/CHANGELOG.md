@@ -4,6 +4,30 @@ All notable changes to `@forgeyard/shipline` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-11-09
+
+Setup is the same everywhere and ends with a clear next step. The hook contract (INTERFACE) is unchanged.
+
+### Added
+
+- **`init` opens the setup wizard in the browser by default** (a terminal, Node 20+). `init --terminal` asks the
+  questions in the terminal instead. On Node 18-19 `init` says the wizard needs Node 20+ and asks in the terminal.
+  `--yes` and `--dry-run` behave as before.
+- **Guardrails and branch pattern at setup.** The wizard and the terminal questions ask for confirmations (Standard or
+  Light, new in the terminal), a guardrails switch (off writes every rail as `off` and no protected paths) and the
+  branch pattern. The install selection gains optional `guardrails` and `branchPattern` fields.
+- **A terminal review before writing.** `init --terminal` prints the settings and the file list, then asks
+  `Install these files? (Y/n)`. No writes nothing and exits 1.
+- **A numbered next-steps checklist** after install, in the terminal and on the wizard's new "You're set up"
+  screen (copy buttons, and an Open Shipline button).
+- **An npm README** for the package page.
+- **`/shipline-setup` covers guardrails** (rails, `protected_paths`, `rails_commands`, `scope_check`) and describes
+  stage blocks with named `actions`.
+
+### Changed
+
+- The terminal questions are grouped into seven numbered steps. A command is left empty by typing `none`.
+
 ## [1.0.0] - 2026-11-06
 
 First public release. Shipline installs a Claude Code workflow into a repository with

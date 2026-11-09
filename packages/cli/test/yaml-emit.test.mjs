@@ -228,7 +228,7 @@ describe('quoting of inline-list items', () => {
     [["it's"], 'items: ["it\'s"]'],
     [['say "hi"'], 'items: [\'say "hi"\']'],
     [['true', '12', ''], 'items: ["true", "12", ""]'],
-    [['{artifact_root}/**'], 'items: [{artifact_root}/**]'],
+    [['{artifact_root}/**'], 'items: ["{artifact_root}/**"]'],
   ];
   for (const [list, line] of cases) {
     test(JSON.stringify(list), () => {

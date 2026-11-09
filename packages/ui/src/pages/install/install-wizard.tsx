@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { cn } from 'cn';
+import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -41,7 +42,24 @@ interface Draft {
   commands: { test: string; lint: string; build: string };
   tracker: TrackerId;
   confirmations: 'standard' | 'light';
+  guardrails: 'on' | 'off';
+  branchPattern: string;
   ci: boolean;
+}
+
+const GUARDRAILS_SUMMARY =
+  'On: force-push to main and printing credentials are denied; pushes to main, deploys, migrations, edits to agent config and protected paths (migrations/, infra/, CI files, lockfiles…) ask first.';
+
+/** The same rule as the server's: must contain {slug}; only {key}, {slug} and {type}. The server is the authority. */
+function branchPatternError(value: string): string | null {
+  const v = value.trim();
+  if (v === '') return null; // empty keeps the default
+  if (!v.includes('{slug}')) return 'must contain {slug}';
+  for (const m of v.matchAll(/\{([^}]*)\}/g)) {
+    if (!['key', 'slug', 'type'].includes(m[1]))
+      return `{${m[1]}} is not allowed here; use {key}, {slug} or {type}`;
+  }
+  return null;
 }
 
 function initialDraft(info: InstallInfo): Draft {
@@ -55,6 +73,8 @@ function initialDraft(info: InstallInfo): Draft {
     commands: { ...info.defaults.commands },
     tracker: info.trackerDefault,
     confirmations: 'standard',
+    guardrails: 'on',
+    branchPattern: '',
     ci: false,
   };
 }
@@ -93,6 +113,8 @@ function derive(info: InstallInfo, draft: Draft) {
     commands: draft.commands,
     tracker: draft.tracker,
     confirmations: draft.confirmations,
+    guardrails: draft.guardrails,
+    ...(draft.branchPattern.trim() ? { branchPattern: draft.branchPattern.trim() } : {}),
     ci: draft.ci,
   };
   return { selection, used, present, missing };
@@ -175,9 +197,6 @@ function Wizard({ info }: { info: InstallInfo }) {
 
   const install = useMutation({
     mutationFn: () => api.install(selection, preview.data!.base),
-    onSuccess: () => {
-      window.setTimeout(() => window.location.reload(), 600);
-    },
     onError: (e) => {
       if (e instanceof ApiError && e.code === 'installed') window.location.reload();
       else if (e instanceof ApiError && (e.code === 'changed' || e.code === 'collision')) {
@@ -191,9 +210,17 @@ function Wizard({ info }: { info: InstallInfo }) {
     if (step !== REVIEW) setStale(false);
   }, [step]);
 
-  const canNext = step !== 0 || selection.workflows.length > 0;
+  const patternError = branchPatternError(draft.branchPattern);
+  const canNext = (step !== 0 || selection.workflows.length > 0) && (step !== 2 || !patternError);
   const blocked = !preview.data || preview.isFetching || preview.data.collisions.length > 0;
   const installed = install.isSuccess;
+  if (install.data) {
+    return (
+      <Shell root={info.root}>
+        <DoneScreen steps={install.data.nextSteps} />
+      </Shell>
+    );
+  }
   const hardError =
     install.error && !(install.error instanceof ApiError && install.error.status === 409);
 
@@ -213,7 +240,11 @@ function Wizard({ info }: { info: InstallInfo }) {
               key={name}
               variant={step === i ? 'secondary' : 'ghost'}
               className="justify-start"
-              disabled={installed || (i > 0 && selection.workflows.length === 0)}
+              disabled={
+                installed ||
+                (i > 0 && selection.workflows.length === 0) ||
+                (i > 2 && !!patternError)
+              }
               onClick={() => setStep(i)}
             >
               {i + 1}. {name}
@@ -238,7 +269,9 @@ function Wizard({ info }: { info: InstallInfo }) {
                 missing={missing}
               />
             )}
-            {step === 2 && <CommandsStep info={info} draft={draft} patch={patch} />}
+            {step === 2 && (
+              <CommandsStep info={info} draft={draft} patch={patch} patternError={patternError} />
+            )}
             {step === 3 && (
               <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-3">
@@ -255,6 +288,7 @@ function Wizard({ info }: { info: InstallInfo }) {
             {step === REVIEW && (
               <>
                 <ReviewStep
+                  selection={selection}
                   preview={preview.data}
                   loading={preview.isFetching}
                   error={preview.error}
@@ -275,7 +309,6 @@ function Wizard({ info }: { info: InstallInfo }) {
                     </AlertDescription>
                   </Alert>
                 )}
-                {installed && <p className="text-sm font-medium">Installed. Opening Shipline...</p>}
               </>
             )}
 
@@ -516,7 +549,12 @@ function AgentsStep({
   );
 }
 
-function CommandsStep({ info, draft, patch }: StepProps) {
+function CommandsStep({
+  info,
+  draft,
+  patch,
+  patternError,
+}: StepProps & { patternError: string | null }) {
   return (
     <>
       <p className="text-xs text-muted-foreground">
@@ -586,6 +624,101 @@ function CommandsStep({ info, draft, patch }: StepProps) {
           ))}
         </RadioGroup>
       </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="wiz-branch-pattern">Branch pattern</Label>
+        <Input
+          id="wiz-branch-pattern"
+          className="font-mono"
+          placeholder={info.branchPatternDefault}
+          value={draft.branchPattern}
+          aria-invalid={!!patternError}
+          onChange={(e) => patch({ branchPattern: e.target.value })}
+        />
+        <p className="text-xs text-muted-foreground">
+          {'{type}'} = workflow, {'{key}'} = ticket key, {'{slug}'} = short task name. Leave empty
+          for {info.branchPatternDefault}.
+        </p>
+        {patternError && <p className="text-xs text-destructive">Branch pattern {patternError}.</p>}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-3">
+          <Switch
+            id="wiz-guardrails"
+            checked={draft.guardrails === 'on'}
+            onCheckedChange={(on) => patch({ guardrails: on ? 'on' : 'off' })}
+          />
+          <Label htmlFor="wiz-guardrails">Guardrails</Label>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {draft.guardrails === 'on'
+            ? GUARDRAILS_SUMMARY
+            : 'Off: every rail is written as off and no paths are protected. Turn them on later in .shipline/config.yml or Setup, Guardrails.'}
+        </p>
+      </div>
     </>
+  );
+}
+
+async function copy(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success('Copied');
+  } catch {
+    toast.error('Could not copy. Select the text and copy it by hand.');
+  }
+}
+
+/** The checklist from the server: numbered items (`  1. ...`) whose indented lines continue the item above. */
+function parseSteps(lines: string[]) {
+  const items: string[] = [];
+  for (const line of lines) {
+    if (/^\s{2}\d+\.\s/.test(line)) items.push(line.replace(/^\s{2}\d+\.\s/, ''));
+    else if (items.length && line.trim()) items[items.length - 1] += ` ${line.trim()}`;
+  }
+  return items;
+}
+
+/** The commands in a checklist item: the `git add ... && git commit ...` line and anything in backticks. */
+function commandsOf(item: string): string[] {
+  const out: string[] = [];
+  const git = /git add .*? && git commit -m "[^"]*"/.exec(item);
+  if (git) out.push(git[0]);
+  for (const m of item.matchAll(/`([^`]+)`/g)) out.push(m[1]);
+  return out;
+}
+
+/** Shown after a successful install: what to do now, with a copy button on each command. */
+function DoneScreen({ steps }: { steps: string[] }) {
+  const items = parseSteps(steps);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">You&apos;re set up</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <ol className="flex flex-col gap-3 text-sm">
+          {items.map((item, i) => (
+            <li key={i} className="flex flex-col gap-1.5">
+              <span>
+                {i + 1}. {item}
+              </span>
+              {commandsOf(item).map((c) => (
+                <div key={c} className="ml-4 flex items-center gap-2">
+                  <code className="min-w-0 flex-1 rounded bg-muted px-2 py-1 font-mono text-xs break-all">
+                    {c}
+                  </code>
+                  <Button variant="outline" size="sm" onClick={() => void copy(c)}>
+                    Copy
+                  </Button>
+                </div>
+              ))}
+            </li>
+          ))}
+        </ol>
+        <div>
+          <Button onClick={() => window.location.reload()}>Open Shipline</Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

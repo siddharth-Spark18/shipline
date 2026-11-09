@@ -600,6 +600,10 @@ export interface InstallSelection {
   tracker: TrackerId;
   /** Optional: missing means standard. */
   confirmations?: 'standard' | 'light';
+  /** Optional: missing means on. Off writes every rail as off and no protected paths. */
+  guardrails?: 'on' | 'off';
+  /** Optional: missing means the default pattern. */
+  branchPattern?: string;
   ci: boolean;
 }
 
@@ -615,6 +619,8 @@ export interface InstallInfo {
   detected: { test: string; lint: string; build: string; sources: Record<string, string> };
   trackerDefault: TrackerId;
   uiDetected: boolean;
+  /** The branch pattern used when none is chosen. */
+  branchPatternDefault: string;
   /** What `init --yes` would choose. */
   defaults: InstallSelection;
 }

@@ -5,7 +5,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { KNOWN_FIELDS, TRACKERS, configLayout, headerFor, validateConfig, validateWorkflow } from '../src/setup-schema.mjs';
+import { ACTIONS, KNOWN_FIELDS, RAIL_IDS, RAIL_LEVELS, TRACKERS, configLayout, headerFor, validateConfig, validateWorkflow } from '../src/setup-schema.mjs';
 import { parseYaml } from '../templates/shipline/bin/lib.mjs';
 import { CLI_ROOT, TEMPLATES } from './helpers.mjs';
 import { emitConfig, emitWorkflow } from '../src/yaml-emit.mjs';
@@ -518,5 +518,30 @@ describe('confirmations and checkpoint (Teams Phase 4)', () => {
     assert.equal(parseYaml(text).confirmations, 'light');
     assert.match(text, /# How often Claude asks before moving to the next stage: standard \| light\.\n(?:#[^\n]*\n)*confirmations: light\n/);
     assert.equal(text, raw.replace('confirmations: standard', 'confirmations: light'));
+  });
+});
+
+// Setup polish plan, item 6: /shipline-setup covers guardrails and the named actions.
+describe('the /shipline-setup skill text', () => {
+  const skill = readFileSync(path.join(CLI_ROOT, 'templates', 'claude', 'skills', 'shipline-setup', 'SKILL.md'), 'utf8');
+
+  test('a Guardrails topic naming every rail, protected_paths, rails_commands and scope_check', () => {
+    assert.match(skill, /\*\*Guardrails:\*\*/);
+    for (const id of RAIL_IDS) assert.ok(skill.includes(`\`${id}\``), id);
+    for (const key of ['rails:', 'protected_paths:', 'rails_commands:', 'scope_check:']) assert.ok(skill.includes(`\`${key}\``), key);
+    for (const level of RAIL_LEVELS) assert.ok(skill.includes(`\`${level}\``), level);
+    assert.match(skill, /defence in depth/);
+    assert.match(skill, /sandbox and managed settings/);
+  });
+
+  test('enforcement uses named actions (`actions: [commit, pr]` by default), with bash only as the escape hatch', () => {
+    assert.ok(skill.includes('`actions: [commit, pr]`'));
+    for (const a of ACTIONS) assert.ok(skill.includes(`\`${a}\``), a);
+    assert.match(skill, /\{ bash: 'regex' \}` only as the escape hatch/);
+    assert.ok(!skill.includes('block `git commit` and `gh pr create`'), 'the old regex-style default is gone');
+  });
+
+  test('the topic list includes the branch pattern with its placeholders', () => {
+    assert.match(skill, /`branch_pattern`, with `\{type\}`, `\{key\}` and `\{slug\}`; it must contain `\{slug\}`/);
   });
 });

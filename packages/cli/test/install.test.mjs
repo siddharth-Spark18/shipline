@@ -8,11 +8,12 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
-  applyInstall, baseHashes, checkSelection, defaultAgents, defaultSelection, fillSelection, installInfo, installState,
-  missingStageAgents, planInstall,
+  DEFAULT_BRANCH_PATTERN, GUARDRAILS_OFF_NOTE, applyInstall, baseHashes, checkSelection, defaultAgents, defaultSelection,
+  fillSelection, installInfo, installState, missingStageAgents, nextSteps, planInstall,
 } from '../src/install.mjs';
+import { RAIL_IDS, branchPatternError } from '../src/setup-schema.mjs';
 import { runInit as runInitInProcess } from '../src/init.mjs';
-import { parseYaml } from '../templates/shipline/bin/lib.mjs';
+import { RAIL_IDS as HOOK_RAIL_IDS, loadConfig, parseYaml } from '../templates/shipline/bin/lib.mjs';
 import { CLI_ROOT, TEMPLATES, homeFor, removeDir, runInit, storeOf, tmpDir } from './helpers.mjs';
 
 const sha = (data) => createHash('sha256').update(data).digest('hex');
@@ -69,7 +70,7 @@ async function initWith(dir, answer, extra = {}) {
   console.log = (...a) => out.push(a.join(' '));
   console.error = (...a) => err.push(a.join(' '));
   try {
-    const code = await runInitInProcess({ target: dir, prompts: async (info) => (typeof answer === 'function' ? answer(info) : answer), ...extra });
+    const code = await runInitInProcess({ target: dir, prompts: async (info) => (typeof answer === 'function' ? answer(info) : answer), confirm: async () => true, ...extra });
     return { code, stdout: out.join('\n'), stderr: err.join('\n') };
   } finally {
     console.log = log;
@@ -124,6 +125,9 @@ describe('defaultSelection, fillSelection and checkSelection', () => {
       skills: [],
       commands: { test: '', lint: '', build: '' },
       tracker: 'none',
+      confirmations: 'standard',
+      guardrails: 'on',
+      branchPattern: '{type}/{key}-{slug}',
       ci: false,
     });
     const withUi = defaultSelection(installInfo(repo({ 'package.json': JSON.stringify({ dependencies: { svelte: '4' } }) })));
@@ -146,6 +150,9 @@ describe('defaultSelection, fillSelection and checkSelection', () => {
       skills: [],
       commands: { test: '', lint: '', build: '' },
       tracker: 'none',
+      confirmations: 'standard',
+      guardrails: 'on',
+      branchPattern: '{type}/{key}-{slug}',
       ci: false,
     });
   });
@@ -173,6 +180,9 @@ describe('defaultSelection, fillSelection and checkSelection', () => {
       { commands: { deploy: 'x', test: '', lint: '', build: '' } },
       { tracker: 'linear' },
       { ci: 'yes' },
+      { confirmations: 'lite' },
+      { guardrails: true },
+      { branchPattern: '{type}/{key}' },
     ]) {
       assert.throws(() => checkSelection(info, { ...ok, ...bad }), /invalid selection/, JSON.stringify(bad));
     }
@@ -433,15 +443,21 @@ describe('selection.confirmations (Teams Phase 4)', () => {
     assert.equal(text, TEMPLATE_CONFIG.replace(/^confirmations: standard$/m, 'confirmations: light'));
   });
 
-  test("missing, 'standard' or an unknown value: the template's standard, byte for byte, and no error", () => {
+  // Setup polish plan: confirmations is now checked like the other fields; missing still means standard.
+  test("missing or 'standard': the template's standard, byte for byte; an unknown value is refused", () => {
     const dir = repo();
     const info = installInfo(dir);
-    for (const confirmations of [undefined, 'standard', 'lite', 'Light', null, 1]) {
-      const sel = full(info, confirmations === undefined ? {} : { confirmations });
+    for (const confirmations of [undefined, 'standard']) {
+      const sel = full(info);
+      if (confirmations === undefined) delete sel.confirmations;
+      else sel.confirmations = confirmations;
       assert.doesNotThrow(() => checkSelection(info, sel), String(confirmations));
       assert.equal(configOf(planInstall(dir, info, sel)), TEMPLATE_CONFIG, String(confirmations));
     }
-    assert.ok(!('confirmations' in defaultSelection(info)), 'the default selection leaves it out (standard)');
+    for (const confirmations of ['lite', 'Light', null, 1]) {
+      assert.throws(() => checkSelection(info, full(info, { confirmations })), /invalid selection: confirmations must be standard or light/, String(confirmations));
+    }
+    assert.equal(defaultSelection(info).confirmations, 'standard');
   });
 
   test("'light' together with the other config answers (tracker, commands, skills)", () => {
@@ -455,5 +471,120 @@ describe('selection.confirmations (Teams Phase 4)', () => {
     assert.equal(cfg.commands.test, 'npm test');
     applyInstall(dir, plan);
     assert.equal(parseYaml(read(dir, '.shipline/config.yml')).confirmations, 'light');
+  });
+});
+
+// Setup polish plan, items 2 and 5: guardrails, the branch pattern, and the next-steps checklist.
+describe('selection.guardrails and selection.branchPattern (Setup polish)', () => {
+  const configOf = (plan) => plan.writes.find((w) => w.to === '.shipline/config.yml').data.toString('utf8');
+  const TEMPLATE_CONFIG = readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8');
+
+  test("guardrails 'off': every rail (from RAIL_IDS) off, protected_paths: [], the note above rails:; 'on' or missing: the template", () => {
+    const dir = repo();
+    const info = installInfo(dir);
+    const text = configOf(planInstall(dir, info, full(info, { guardrails: 'off' })));
+    const cfg = parseYaml(text);
+    assert.deepEqual(Object.keys(cfg.rails), RAIL_IDS);
+    assert.ok(Object.values(cfg.rails).every((v) => v === 'off'));
+    assert.deepEqual(cfg.protected_paths, []);
+    assert.match(text, new RegExp(`\\n${GUARDRAILS_OFF_NOTE.replace(/[.()]/g, '\\$&')}\\nrails:\\n`));
+    assert.match(text, /^protected_paths: \[\]$/m);
+    for (const sel of [full(info, { guardrails: 'on' }), (() => {
+      const s = full(info);
+      delete s.guardrails;
+      return s;
+    })()]) {
+      assert.doesNotThrow(() => checkSelection(info, sel));
+      assert.equal(configOf(planInstall(dir, info, sel)), TEMPLATE_CONFIG);
+    }
+  });
+
+  test('branchPattern: a custom one is written trimmed; the default, a missing one or the default with spaces leaves the template', () => {
+    const dir = repo();
+    const info = installInfo(dir);
+    const text = configOf(planInstall(dir, info, full(info, { branchPattern: ' {key}/{slug} ' })));
+    // Only that line changes (the emitter quotes a value only when Shipline's parser would read it differently).
+    assert.equal(text, TEMPLATE_CONFIG.replace(/^branch_pattern: .*$/m, 'branch_pattern: "{key}/{slug}"'));
+    assert.equal(parseYaml(text).branch_pattern, '{key}/{slug}');
+    const missing = full(info);
+    delete missing.branchPattern;
+    for (const sel of [full(info, { branchPattern: DEFAULT_BRANCH_PATTERN }), full(info, { branchPattern: ` ${DEFAULT_BRANCH_PATTERN}\t` }), missing]) {
+      assert.doesNotThrow(() => checkSelection(info, sel));
+      assert.equal(configOf(planInstall(dir, info, sel)), TEMPLATE_CONFIG);
+    }
+  });
+
+  test('checkSelection refuses a bad guardrails or branchPattern with branchPatternError\'s message', () => {
+    const info = installInfo(repo());
+    for (const [patch, msg] of [
+      [{ guardrails: 'maybe' }, /invalid selection: guardrails must be on or off$/],
+      [{ guardrails: null }, /guardrails must be on or off/],
+      [{ branchPattern: 1 }, /invalid selection: branchPattern must be text$/],
+      [{ branchPattern: '{type}/{key}' }, new RegExp(`invalid selection: branchPattern ${branchPatternError('{type}/{key}').replace(/[{}]/g, '\\$&')}$`)],
+      [{ branchPattern: '{slug}-{user}' }, /branchPattern \{user\} is not allowed here; use \{key\}, \{slug\} or \{type\}/],
+      [{ branchPattern: '   ' }, /branchPattern must contain \{slug\}/],
+    ]) {
+      assert.throws(() => checkSelection(info, full(info, patch)), msg, JSON.stringify(patch));
+      assert.throws(() => checkSelection(info, full(info, patch), { partial: true }), msg, `partial ${JSON.stringify(patch)}`);
+    }
+  });
+
+  test('guardrails off, a branch pattern and light together; applyInstall writes it and the hooks read it back', () => {
+    const dir = repo();
+    const info = installInfo(dir);
+    const plan = planInstall(dir, info, full(info, { guardrails: 'off', branchPattern: 'work/{slug}', confirmations: 'light' }));
+    applyInstall(dir, plan);
+    const cfg = loadConfig(dir);
+    assert.equal(cfg.branch_pattern, 'work/{slug}');
+    assert.equal(cfg.confirmations, 'light');
+    assert.deepEqual(cfg.rails, Object.fromEntries(HOOK_RAIL_IDS.map((id) => [id, 'off'])));
+    assert.deepEqual(cfg.protected_paths, []);
+  });
+});
+
+describe('branchPatternError', () => {
+  test('null for a good pattern; the first message otherwise', () => {
+    for (const ok of ['{type}/{key}-{slug}', '{slug}', 'feat/{slug}', '{key}_{slug}_{type}']) assert.equal(branchPatternError(ok), null, ok);
+    assert.equal(branchPatternError('{type}/{key}'), 'must contain {slug}');
+    assert.equal(branchPatternError(''), 'must contain {slug}');
+    assert.equal(branchPatternError('{slug}/{user}'), '{user} is not allowed here; use {key}, {slug} or {type}');
+    assert.equal(branchPatternError('{user}'), 'must contain {slug}', 'the first of several errors');
+    assert.equal(branchPatternError(5), 'must be text');
+    assert.equal(branchPatternError(null), null, 'nothing to check (checkSelection checks the type itself)');
+  });
+});
+
+describe('nextSteps', () => {
+  const COMMON = [
+    '  2. Open Claude Code in this folder (`claude`) and trust it when asked, so the hooks run.',
+    '  3. Try it: ask Claude for a small change, e.g. "fix the typo in README". It picks a workflow and shows the stages.',
+    '  4. Tailor the rules to this repo: run /shipline-setup in Claude Code (or `npx @forgeyard/shipline ui` → Setup).',
+  ];
+
+  test('without the CI check: four steps, no line about the workflow file', () => {
+    const want = ['Next steps', '  1. Commit the setup:  git add .shipline .claude CLAUDE.md && git commit -m "Add Shipline"', ...COMMON];
+    assert.deepEqual(nextSteps({ ci: false }), want);
+    assert.deepEqual(nextSteps({}), want);
+    assert.deepEqual(nextSteps(), want);
+    assert.deepEqual(nextSteps({ guardrails: 'off', branchPattern: 'x/{slug}' }), want, 'guardrails and the pattern change nothing');
+  });
+
+  test('with the CI check: the workflow file in step 1 and step 5', () => {
+    assert.deepEqual(nextSteps({ ci: true }), [
+      'Next steps',
+      '  1. Commit the setup:  git add .shipline .claude CLAUDE.md .github/workflows/shipline.yml && git commit -m "Add Shipline"',
+      ...COMMON,
+      '  5. Make the CI check count: on GitHub, protect your main branch and require the "Shipline check", and add',
+      '     CODEOWNERS for .shipline/ and .github/ (see the README, "The pull-request check").',
+    ]);
+  });
+});
+
+describe('init-prompts: commandAnswer (the commands questions)', () => {
+  test('trims; `none` in any case means empty; anything else is kept', async () => {
+    const { commandAnswer } = await import('../src/init-prompts.mjs');
+    for (const [answer, want] of [['none', ''], ['NONE', ''], [' None ', ''], ['', ''], ['  pnpm test ', 'pnpm test'], ['none-such', 'none-such'], ['echo none', 'echo none']]) {
+      assert.equal(commandAnswer(answer), want, JSON.stringify(answer));
+    }
   });
 });

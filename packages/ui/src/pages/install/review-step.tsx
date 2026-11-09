@@ -12,7 +12,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DiffView } from '@/components/diff-view';
-import type { InstallPreview, InstallPreviewFile } from '@/lib/types';
+import type { InstallPreview, InstallPreviewFile, InstallSelection } from '@/lib/types';
 
 const ACTION_LABEL: Record<InstallPreviewFile['action'], string> = {
   create: 'create',
@@ -28,7 +28,9 @@ export function ReviewStep({
   preview,
   loading,
   error,
+  selection,
 }: {
+  selection?: InstallSelection;
   preview: InstallPreview | undefined;
   loading: boolean;
   error: Error | null;
@@ -64,6 +66,20 @@ export function ReviewStep({
 
   return (
     <div className="flex flex-col gap-5">
+      {selection && (
+        <section className="flex flex-col gap-2">
+          <h3 className="text-sm font-medium">Settings</h3>
+          <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1 text-xs">
+            <dt className="text-muted-foreground">Confirmations</dt>
+            <dd>{selection.confirmations === 'light' ? 'Light' : 'Standard'}</dd>
+            <dt className="text-muted-foreground">Guardrails</dt>
+            <dd>{selection.guardrails === 'off' ? 'Off' : 'On'}</dd>
+            <dt className="text-muted-foreground">Branch pattern</dt>
+            <dd className="font-mono">{selection.branchPattern ?? '{type}/{key}-{slug}'}</dd>
+          </dl>
+        </section>
+      )}
+
       {preview.collisions.length > 0 && (
         <Alert variant="destructive">
           <AlertTitle>Install is blocked</AlertTitle>

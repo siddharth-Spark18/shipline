@@ -62,6 +62,13 @@ function checkPattern(model, key, out) {
   }
 }
 
+// The first error message for a branch pattern, or null when it is fine (text with {slug}; only {key}, {slug} and {type}).
+export function branchPatternError(value) {
+  const out = [];
+  checkPattern({ branch_pattern: value }, 'branch_pattern', out);
+  return out.length ? out[0].message : null;
+}
+
 // opts.skills: names of the folders in .claude/skills (omit to skip the missing-folder warning).
 // Returns [{ path, message }]. Warnings carry severity: 'warning'; everything else is an error.
 export function validateConfig(model, { skills = null } = {}) {

@@ -102,7 +102,7 @@ export const api = {
   installPreview: (selection: InstallSelection) =>
     request<InstallPreview>('POST', '/api/install/preview', { selection }),
   install: (selection: InstallSelection, base: InstallBase) =>
-    request<{ installed: true }>('POST', '/api/install', { selection, base }),
+    request<{ installed: true; nextSteps: string[] }>('POST', '/api/install', { selection, base }),
   ciPreview: (req: CiChange) => request<CiPreviewResponse>('POST', '/api/setup/ci?preview=1', req),
   ciApply: (req: CiChange) => request<unknown>('POST', '/api/setup/ci', req),
   tasks: () => request<TasksData>('GET', '/api/tasks'),

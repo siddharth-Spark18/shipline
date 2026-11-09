@@ -33,8 +33,8 @@ The target folder is the current directory, or the one given with --dir <path>.`
 const DIR = '  --dir <path>   Target folder (default: the current directory)';
 const COMMANDS = {
   init: {
-    flags: { '--yes': 'yes', '-y': 'yes', '--dry-run': 'dryRun' },
-    help: `Usage: ${NPX} init [--dir <path>] [--yes] [--dry-run]
+    flags: { '--yes': 'yes', '-y': 'yes', '--dry-run': 'dryRun', '--terminal': 'terminal' },
+    help: `Usage: ${NPX} init [--dir <path>] [--yes] [--dry-run] [--terminal]
 
 Vendors .shipline/, .claude/ files, hooks and a CLAUDE.md section into a repo.
 
@@ -42,9 +42,11 @@ Options:
 ${DIR}
   -y, --yes      Install the defaults without asking (keeps your own agent files on a name clash)
   --dry-run      Show what would be created; without a terminal it shows what --yes would install
+  --terminal     Ask the questions here instead of opening the setup wizard in the browser
   -h, --help     Show this help
 
-In a terminal init asks which workflows, agents and repo skills to use. It aborts with nothing written if any
+In a terminal init opens the setup wizard in your browser (Node 20+). With --terminal it asks the same questions
+here, shows a review of what it will write, and asks before writing. It aborts with nothing written if any
 other file name collides.`,
   },
   upgrade: {
@@ -129,7 +131,7 @@ if (wants('-h', '--help') && (known || cmd === undefined || cmd.startsWith('-') 
   await startServer(parseUiArgs(rest));
 } else if (known) {
   const o = parseArgs(cmd, rest);
-  if (cmd === 'init') process.exitCode = await runInit({ target: o.target, dryRun: Boolean(o.dryRun), yes: Boolean(o.yes) });
+  if (cmd === 'init') process.exitCode = await runInit({ target: o.target, dryRun: Boolean(o.dryRun), yes: Boolean(o.yes), terminal: Boolean(o.terminal) });
   else if (cmd === 'upgrade') {
     process.exitCode = await runUpgrade({ target: o.target, yes: Boolean(o.yes), dryRun: Boolean(o.dryRun), force: Boolean(o.force) });
   } else {

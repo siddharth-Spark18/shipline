@@ -55,6 +55,11 @@ describe('help and version', () => {
         assert.match(r.stdout, /--dir <path> {3}Target folder/);
       }
     }
+    // Setup polish plan, item 1: init's help lists --terminal.
+    const init = cli(['init', '--help'], dir);
+    assert.ok(init.stdout.startsWith('Usage: npx @forgeyard/shipline init [--dir <path>] [--yes] [--dry-run] [--terminal]\n'), init.stdout);
+    assert.match(init.stdout, /^ {2}--terminal {5}Ask the questions here instead of opening the setup wizard in the browser$/m);
+    assert.match(init.stdout, /In a terminal init opens the setup wizard in your browser/);
     // init --help used to run init: nothing was written.
     assert.deepEqual(readdirSync(dir), []);
   });
@@ -65,7 +70,7 @@ describe('help and version', () => {
       assert.equal(r.code, 0, args.join(' '));
       assert.equal(r.stdout, `${VERSION}\n`, args.join(' '));
     }
-    assert.equal(VERSION, '1.0.0');
+    assert.equal(VERSION, '1.1.0');
   });
 });
 
@@ -76,6 +81,7 @@ describe('usage errors exit 2 and write nothing', () => {
       [['--bogus'], 'shipline: unknown option --bogus (see shipline --help)\n'],
       [['init', '--bogus'], 'shipline: unknown option --bogus (see shipline init --help)\n'],
       [['init', '--yes', '--force'], 'shipline: unknown option --force (see shipline init --help)\n'],
+      [['upgrade', '--terminal'], 'shipline: unknown option --terminal (see shipline upgrade --help)\n'],
       [['upgrade', '--purge'], 'shipline: unknown option --purge (see shipline upgrade --help)\n'],
       [['uninstall', '-f'], 'shipline: unknown option -f (see shipline uninstall --help)\n'],
     ]) {
@@ -205,7 +211,7 @@ describe('init: the file count and the warnings', () => {
     assert.equal(r.code, 0, r.stderr);
     assert.ok(files(dir).includes('.shipline/config.yml'), 'not refused');
     const at = r.stdout.indexOf('\nWarnings\n');
-    assert.ok(at > r.stdout.indexOf('Next: tailor the rules'), 'after the summary');
+    assert.ok(at > r.stdout.indexOf('Next steps\n  1. Commit the setup'), 'after the summary');
     assert.ok(
       r.stdout.includes("\nWarnings\n  ! Not a git repository: scope checks, the PR summary's code match and pushes need git. Run `git init` first.\n"),
       r.stdout,

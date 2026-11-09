@@ -11,7 +11,7 @@ import {
 } from './hashes.mjs';
 import { detectCommands } from './detect-commands.mjs';
 import { detectUi } from './detect-ui.mjs';
-import { TRACKERS, configLayout } from './setup-schema.mjs';
+import { CONFIRMATIONS, RAIL_IDS, TRACKERS, branchPatternError, configLayout } from './setup-schema.mjs';
 import { storeDir } from './store.mjs';
 import { emitConfig } from './yaml-emit.mjs';
 
@@ -96,6 +96,8 @@ function hasShiplineHooks(settingsText) {
 const AGENT_PATH = (name) => `.claude/agents/${name}.md`;
 const ID_RE = /^[A-Za-z0-9_-]+$/;
 const COMMAND_KEYS = ['test', 'lint', 'build'];
+export const DEFAULT_BRANCH_PATTERN = '{type}/{key}-{slug}';
+export const GUARDRAILS_OFF_NOTE = '# Guardrails are off (chosen at setup). Turn them on here or in Setup → Guardrails.';
 const pickCommands = (detected) => Object.fromEntries(COMMAND_KEYS.map((k) => [k, (detected && detected[k]) || '']));
 
 // Names of the *.md files / folders directly under dir (empty when it doesn't exist).
@@ -207,13 +209,16 @@ export function defaultSelection(info) {
     skills: [],
     commands: pickCommands(info.detected),
     tracker: 'none',
+    confirmations: 'standard',
+    guardrails: 'on',
+    branchPattern: DEFAULT_BRANCH_PATTERN,
     ci: false,
   };
 }
 
 // Terminal init: fills what an answer left out (the API requires every field instead).
 export function fillSelection(info, sel) {
-  const out = { ui: info.uiDetected, clashes: {}, stageAgents: {}, skills: [], tracker: 'none', ci: false, ...sel };
+  const out = { ui: info.uiDetected, clashes: {}, stageAgents: {}, skills: [], tracker: 'none', confirmations: 'standard', guardrails: 'on', branchPattern: DEFAULT_BRANCH_PATTERN, ci: false, ...sel };
   out.commands = sel.commands === undefined ? pickCommands(info.detected) : { ...pickCommands(null), ...sel.commands };
   return out;
 }
@@ -252,6 +257,14 @@ export function checkSelection(info, sel, { partial = false } = {}) {
       fail('commands must be an object of test, lint and build text');
     }
     if (!partial && COMMAND_KEYS.some((k) => typeof c[k] !== 'string')) fail('commands must have test, lint and build text');
+  }
+  // These three are optional everywhere: a missing field means the default (older API callers keep working).
+  if (sel.confirmations !== undefined && !CONFIRMATIONS.includes(sel.confirmations)) fail(`confirmations must be ${CONFIRMATIONS.join(' or ')}`);
+  if (sel.guardrails !== undefined && !['on', 'off'].includes(sel.guardrails)) fail('guardrails must be on or off');
+  if (sel.branchPattern !== undefined) {
+    if (typeof sel.branchPattern !== 'string') fail('branchPattern must be text');
+    const bad = branchPatternError(sel.branchPattern.trim());
+    if (bad) fail(`branchPattern ${bad}`);
   }
   if (need('skills') && (!Array.isArray(sel.skills) || sel.skills.some((n) => typeof n !== 'string' || !ID_RE.test(n)))) fail('skills must be a list of names');
 }
@@ -365,12 +378,51 @@ function planWrites(info, selection) {
         model.confirmations = 'light';
         changed = true;
       }
+      const pattern = typeof selection.branchPattern === 'string' ? selection.branchPattern.trim() : '';
+      if (pattern && pattern !== model.branch_pattern) {
+        model.branch_pattern = pattern;
+        changed = true;
+      }
+      const guardrailsOff = selection.guardrails === 'off';
+      if (guardrailsOff) {
+        model.rails = Object.fromEntries(RAIL_IDS.map((id) => [id, 'off']));
+        model.protected_paths = [];
+        changed = true;
+      }
       if (!changed) writes.push({ to: f.to, data: Buffer.from(text) });
-      else writes.push({ to: f.to, data: Buffer.from(emitConfig(model, { layout: configLayout(), raw: text })) });
+      else {
+        let out = emitConfig(model, { layout: configLayout(), raw: text });
+        // The note goes directly above `rails:`, in the file's own line ending.
+        if (guardrailsOff) out = out.replace(/^rails:/m, (m) => `${GUARDRAILS_OFF_NOTE}${detectEol(out) === '\r\n' ? '\r\n' : '\n'}${m}`);
+        writes.push({ to: f.to, data: Buffer.from(out) });
+      }
     } else writes.push({ to: f.to, data: readFileSync(f.from) });
   }
   if (selection.ci) writes.push({ to: CI_WORKFLOW, data: readFileSync(CI_WORKFLOW_TEMPLATE) });
   return writes;
+}
+
+// The numbered "what now" checklist as lines of text (terminal and wizard show the same). Step 5 only with the CI check.
+export function nextSteps(selection = {}) {
+  const ci = Boolean(selection.ci);
+  const out = [
+    'Next steps',
+    ci
+      ? '  1. Commit the setup:  git add .shipline .claude CLAUDE.md .github/workflows/shipline.yml && git commit -m "Add Shipline"'
+      : '  1. Commit the setup:  git add .shipline .claude CLAUDE.md && git commit -m "Add Shipline"',
+  ];
+  out.push(
+    '  2. Open Claude Code in this folder (`claude`) and trust it when asked, so the hooks run.',
+    '  3. Try it: ask Claude for a small change, e.g. "fix the typo in README". It picks a workflow and shows the stages.',
+    '  4. Tailor the rules to this repo: run /shipline-setup in Claude Code (or `npx @forgeyard/shipline ui` → Setup).',
+  );
+  if (ci) {
+    out.push(
+      '  5. Make the CI check count: on GitHub, protect your main branch and require the "Shipline check", and add',
+      '     CODEOWNERS for .shipline/ and .github/ (see the README, "The pull-request check").',
+    );
+  }
+  return out;
 }
 
 // Shipline's agent files the team doesn't have from us: deselected, skipped, or "keep yours" clashes.

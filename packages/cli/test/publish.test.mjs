@@ -34,7 +34,7 @@ function packFiles() {
 describe('package.json', () => {
   test('name, version, bin and files', () => {
     assert.equal(pkg.name, '@forgeyard/shipline');
-    assert.equal(pkg.version, '1.0.0');
+    assert.equal(pkg.version, '1.1.0');
     assert.deepEqual(pkg.bin, { shipline: 'bin/shipline.mjs' });
     // npm adds LICENSE on its own but not CHANGELOG.md; both are listed (1.0 plan, item 1-2).
     for (const f of ['bin', 'src', 'templates', 'ui-dist', 'CHANGELOG.md', 'LICENSE']) assert.ok(pkg.files.includes(f), f);
@@ -127,6 +127,21 @@ describe('npm pack --dry-run', () => {
   });
 
   // The hub (and its own `npx shipline`) is gone, so the whole README is held to the same rule as the package.
+  // Setup polish plan, item 7: the npm page shows packages/cli/README.md, so every link in it must be absolute.
+  test('the npm README is in the package, explains the package, and has only absolute links', () => {
+    assert.ok(packFiles().includes('README.md'), 'npm always includes README.md');
+    const text = readFileSync(path.join(CLI_ROOT, 'README.md'), 'utf8');
+    assert.match(text, /npx @forgeyard\/shipline init/);
+    for (const want of ['--terminal', '--yes', '`init`', '`ui`', '`upgrade`', '`uninstall`']) assert.ok(text.includes(want), want);
+    assert.ok(!/\]\(\.{0,2}\//.test(text), 'no relative ](./ or ](../ or ](/ links');
+    const links = [...text.matchAll(/\]\(([^)\s]+)/g)].map((m) => m[1]);
+    assert.ok(links.length >= 4, links.join(', '));
+    for (const l of links) assert.match(l, /^(https:\/\/|#)/, l);
+    for (const f of ['#readme', 'CHANGELOG.md', 'LICENSE', '/issues']) {
+      assert.ok(links.some((l) => l.startsWith('https://github.com/siddharth-Spark18/shipline') && l.includes(f)), f);
+    }
+  });
+
   test('the README uses the scoped name everywhere', () => {
     const offenders = [];
     readFileSync(path.join(REPO, 'README.md'), 'utf8').split('\n').forEach((line, i) => {
@@ -199,24 +214,33 @@ describe('known-hashes.json', () => {
     }
   });
 
-  // 1.0 plan, item 3: the upgrade history starts over at 1.0.0.
-  test('holds only 1.0.0 hashes: one per path, the current template\'s', () => {
+  // 1.0 plan, item 3: the upgrade history starts over at 1.0.0. Setup polish plan, item 9: 1.1.0 adds its hashes
+  // (only the shipline-setup skill changed) and keeps every 1.0.0 one, so upgrade from 1.0.0 refreshes unedited files.
+  test('keeps one 1.0.0 hash per path and adds the 1.1.0 shipline-setup skill', () => {
     const current = templateHashes();
     assert.deepEqual(Object.keys(KNOWN).sort(), Object.keys(current).sort());
+    const SKILL = '.claude/skills/shipline-setup/SKILL.md';
     for (const [p, byHash] of Object.entries(KNOWN)) {
-      assert.deepEqual(byHash, { [current[p]]: '1.0.0' }, p);
+      assert.equal(Object.values(byHash).filter((v) => v === '1.0.0').length, 1, `${p}: its 1.0.0 entry`);
+      assert.ok(Object.values(byHash).every((v) => v === '1.0.0' || v === '1.1.0'), p);
+      if (p !== SKILL) assert.deepEqual(byHash, { [current[p]]: '1.0.0' }, p);
     }
+    assert.deepEqual(KNOWN[SKILL], {
+      dada383a26cf8d85288156129d53c3b684455bea529fa78c314c299667cc3c39: '1.0.0',
+      [current[SKILL]]: '1.1.0',
+    });
+    assert.equal(current[SKILL], sha256(readFileSync(path.join(CLI_ROOT, 'templates', 'claude', 'skills', 'shipline-setup', 'SKILL.md'))));
   });
 
-  test('every Shipline file a fresh 1.0 init writes (and its CLAUDE.md block and settings part) is known as 1.0.0', () => {
+  test('every Shipline file a fresh init writes (and its CLAUDE.md block and settings part) is known', () => {
     const dir = makeRepo();
     try {
       const v = JSON.parse(readFileSync(path.join(dir, '.shipline', 'bin', 'VERSION'), 'utf8'));
-      assert.equal(v.package, '1.0.0');
+      assert.equal(v.package, PACKAGE_VERSION);
       let checked = 0;
       for (const [p, h] of Object.entries(v.files)) {
         if (!KNOWN[p]) continue; // files known-hashes.json doesn't track (none expected beyond the team-owned ones)
-        assert.equal(KNOWN[p][h], '1.0.0', p);
+        assert.equal(KNOWN[p][h], p === '.claude/skills/shipline-setup/SKILL.md' ? '1.1.0' : '1.0.0', p);
         if (!p.includes('#')) assert.equal(sha256(readFileSync(path.join(dir, p))), h, p);
         checked++;
       }
@@ -314,6 +338,8 @@ describe('LICENSE and CHANGELOG.md', () => {
     const log = readFileSync(path.join(CLI_ROOT, 'CHANGELOG.md'), 'utf8');
     assert.match(log, /Keep a Changelog/);
     assert.ok(log.includes(`## [${PACKAGE_VERSION}] - `), `## [${PACKAGE_VERSION}]`);
+    assert.equal(PACKAGE_VERSION, '1.1.0');
+    assert.ok(log.indexOf('## [1.1.0] - ') < log.indexOf('## [1.0.0] - '), 'newest first, 1.0.0 kept');
     assert.deepEqual([...log.matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)].map((m) => m[1]).filter((v) => v.startsWith('0.')), []);
   });
 });

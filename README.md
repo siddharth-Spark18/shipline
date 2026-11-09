@@ -13,9 +13,13 @@ You need Node 18+, git and [Claude Code](https://docs.claude.com/en/docs/claude-
 **1. Install it in a repo.** From the repo's root:
 
 ```bash
-npx @forgeyard/shipline init          # asks a few questions (Node 20.17+); add --dry-run to preview only
-npx @forgeyard/shipline init --yes    # or install the defaults without questions
+npx @forgeyard/shipline init            # opens the setup wizard in your browser (Node 20+)
+npx @forgeyard/shipline init --terminal # or ask the same questions in the terminal (Node 20.17+)
+npx @forgeyard/shipline init --yes      # or install the defaults without questions
 ```
+
+Both ways ask the same things, show a review of what will be written, and end with a numbered checklist of what to do
+next. Add `--dry-run` to preview only.
 
 `init` writes `.shipline/`, some `.claude/` files, hook entries in `.claude/settings.json` and a block in `CLAUDE.md`.
 It detects your test, lint and build commands, prints what it did, and warns (without stopping) if the folder
@@ -90,8 +94,8 @@ install beyond Node.
 | For | You need |
 | --- | --- |
 | The hooks, `init --yes`, `upgrade`, `uninstall` | Node 18+ |
-| Interactive `init` (it asks questions) | Node 20.17+ |
-| `shipline ui` | Node 20+ |
+| `init --terminal` (it asks questions in the terminal) | Node 20.17+ |
+| `shipline ui`, and `init` opening the browser wizard | Node 20+ |
 | Everything | [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) signed in, and git |
 
 ## 3. Install
@@ -99,8 +103,9 @@ install beyond Node.
 Run it from the root of the repo you want to set up, or point at a folder with `--dir <path>`:
 
 ```bash
-npx @forgeyard/shipline init          # interactive: choose workflows, agents and skills
-npx @forgeyard/shipline init --yes    # install the defaults, no questions (-y works too)
+npx @forgeyard/shipline init            # opens the setup wizard in the browser (Node 20+)
+npx @forgeyard/shipline init --terminal # ask the same questions in the terminal instead
+npx @forgeyard/shipline init --yes      # install the defaults, no questions (-y works too)
 npx @forgeyard/shipline init --dry-run  # preview only; without a terminal it previews what --yes would install
 npx @forgeyard/shipline init --dir ../other-repo
 npx @forgeyard/shipline ui            # in a repo without Shipline: the setup wizard in the browser (Node 20+)
@@ -112,8 +117,10 @@ version, the folder is only given with `--dir`, and an unknown option, command o
 **Installing from the browser.** `shipline ui` in a folder without Shipline opens a short wizard (workflows and
 whether the repo has a UI, agents and skills, commands and tracker, the CI check, then a review of every file).
 Nothing is written to the repo or to `~/.shipline` until you press **Install**; closing the page writes
-nothing. After Install the same page opens the normal UI, without restarting the command. Interactive `init`
-(Node 20+) first asks whether to set up in the terminal or in the browser.
+nothing. After Install the page shows a "You're set up" screen with the next steps and an **Open Shipline** button
+for the normal UI, without restarting the command. In a terminal, `init` starts this wizard by default (Node 20+); on
+Node 18-19 it says so and asks the questions in the terminal. The wizard also asks about confirmations (Standard or
+Light), the branch pattern and guardrails (on or off, one switch).
 
 **Only the files your choices need.** The same answers give the same files from the wizard, interactive `init`
 and `init --yes`. With "no UI", stages marked `condition: ui_only` (Feature's wireframes) and their rules are
@@ -122,9 +129,15 @@ left out. Agents are installed only when a stage of a chosen workflow uses them;
 them. The CI check is written only when you pick it. Later, **Setup → Add shipped workflow** adds a workflow
 Shipline ships (with its missing rules and agents).
 
-In a terminal, `init` asks which workflows, which Shipline agents and which of your repo's own skills to use,
-and what to do when one of Shipline's agent names already exists in `.claude/agents/` (keep yours, use ours,
-or skip), and whether the repo has a UI. `--yes` installs every workflow, uses detection for "has a UI", installs
+With `init --terminal`, `init` asks in seven numbered steps: workflows and whether the repo has a UI; the test, lint
+and build commands (Enter keeps the detected one, type `none` to leave it empty); the tracker; confirmations and the
+branch pattern; guardrails on or off; which Shipline agents and which of your repo's own skills to use, and what to do
+when one of Shipline's agent names already exists in `.claude/agents/` (keep yours, use ours, or skip); and the CI
+check. It then prints a review (the settings and every file it will write) and asks `Install these files? (Y/n)`;
+answering no writes nothing and exits with code 1. Guardrails off writes every rail as `off` and no protected paths;
+a branch pattern must contain `{slug}`. When it finishes, `init` prints a numbered checklist: commit the setup, open
+Claude Code and trust the folder, try a small change, run `/shipline-setup`, and (with the CI check) protect main and
+require the check. `--yes` installs every workflow, uses detection for "has a UI", installs
 only the agents those workflows use (no standalone agents) and keeps your own agent files on a clash. Without a terminal and
 without `--yes` (or `--dry-run`) it refuses. If any other file name collides, it aborts with nothing written. Running it again
 reports "already initialized".

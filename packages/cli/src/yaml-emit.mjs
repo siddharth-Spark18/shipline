@@ -191,7 +191,7 @@ function needsQuote(s, inList) {
     s === 'null' ||
     s === '~' ||
     /^-?\d+(\.\d+)?$/.test(s) ||
-    /^["'\[\-#*&!]/.test(s) || // * & ! start an alias, anchor or tag in YAML (globs like **/*.tf)
+    /^["'\[{\-#*&!]/.test(s) || // * & ! start an alias, anchor or tag in YAML (globs like **/*.tf); { a flow map ({type}/{slug})
     s.includes(': ') ||
     s.includes(' #') ||
     s !== s.trim() ||

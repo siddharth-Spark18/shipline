@@ -34,7 +34,7 @@ function packFiles() {
 describe('package.json', () => {
   test('name, version, bin and files', () => {
     assert.equal(pkg.name, '@forgeyard/shipline');
-    assert.equal(pkg.version, '1.1.0');
+    assert.equal(pkg.version, '1.2.0');
     assert.deepEqual(pkg.bin, { shipline: 'bin/shipline.mjs' });
     // npm adds LICENSE on its own but not CHANGELOG.md; both are listed (1.0 plan, item 1-2).
     for (const f of ['bin', 'src', 'templates', 'ui-dist', 'CHANGELOG.md', 'LICENSE']) assert.ok(pkg.files.includes(f), f);
@@ -338,8 +338,8 @@ describe('LICENSE and CHANGELOG.md', () => {
     const log = readFileSync(path.join(CLI_ROOT, 'CHANGELOG.md'), 'utf8');
     assert.match(log, /Keep a Changelog/);
     assert.ok(log.includes(`## [${PACKAGE_VERSION}] - `), `## [${PACKAGE_VERSION}]`);
-    assert.equal(PACKAGE_VERSION, '1.1.0');
-    assert.ok(log.indexOf('## [1.1.0] - ') < log.indexOf('## [1.0.0] - '), 'newest first, 1.0.0 kept');
+    assert.equal(PACKAGE_VERSION, '1.2.0');
+    assert.ok(log.indexOf('## [1.2.0] - ') < log.indexOf('## [1.0.0] - '), 'newest first, 1.0.0 kept');
     assert.deepEqual([...log.matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)].map((m) => m[1]).filter((v) => v.startsWith('0.')), []);
   });
 });

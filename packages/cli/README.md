@@ -33,11 +33,18 @@ Commit all of it so teammates get the same flow.
 | Command | What it does |
 | --- | --- |
 | `init` | Sets Shipline up in a repo. Flags: `--terminal`, `--yes`, `--dry-run`, `--dir <path>` |
-| `ui` | Opens the local web UI (the setup wizard if Shipline isn't installed). Flags: `--port`, `--no-open`, `--dir <path>` |
+| `ui` | Opens the local web UI (the setup wizard if Shipline isn't installed). Flags: `--remote`, `--port`, `--no-open`, `--dir <path>` |
 | `upgrade` | Updates the installed files to this version. Flags: `--yes`, `--dry-run`, `--force`, `--dir <path>` |
 | `uninstall` | Removes what `init` installed. Flags: `--yes`, `--dry-run`, `--purge`, `--dir <path>` |
 
 Run `npx @forgeyard/shipline <command> --help` for details.
+
+## Use it from your phone
+
+`npx @forgeyard/shipline ui --remote` serves the UI to your own phone over [Tailscale](https://tailscale.com), so you
+can answer a waiting gate or permission prompt away from your desk. Pair the phone with the QR code in **Setup >
+Phone access**. Nothing is public and there is no relay.
+[How to set it up](https://github.com/siddharth-Spark18/shipline/blob/main/docs/phone-access.md).
 
 ## Requirements
 

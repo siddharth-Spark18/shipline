@@ -4,7 +4,7 @@ All notable changes to `@forgeyard/shipline` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [1.2.0] - 2026-11-10
+## [1.2.0] - 2026-11-12
 
 Use the Shipline UI from your phone over your own Tailscale network. The hook contract (INTERFACE) is unchanged.
 

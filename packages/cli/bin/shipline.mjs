@@ -5,8 +5,8 @@ import { runUninstall } from '../src/uninstall.mjs';
 import { runUpgrade } from '../src/upgrade.mjs';
 
 const major = Number(process.versions.node.split('.')[0]);
-if (major < 18) {
-  console.error(`shipline requires Node 18 or newer (found ${process.versions.node}).`);
+if (major < 22) {
+  console.error(`shipline requires Node 22 or newer (found ${process.versions.node}).`);
   process.exit(1);
 }
 
@@ -22,7 +22,7 @@ Commands:
   init        Vendor .shipline/, .claude/ files, hooks and a CLAUDE.md section into a repo
   upgrade     Update an installed repo's Shipline files to this version
   uninstall   Remove everything init installed from a repo
-  ui          Local web UI for setup and tasks (Node 20+)
+  ui          Local web UI for setup and tasks
 
 Options:
   -h, --help      Show help (also per command: ${NPX} <command> --help)
@@ -45,7 +45,7 @@ ${DIR}
   --terminal     Ask the questions here instead of opening the setup wizard in the browser
   -h, --help     Show this help
 
-In a terminal init opens the setup wizard in your browser (Node 20+). With --terminal it asks the same questions
+In a terminal init opens the setup wizard in your browser. With --terminal it asks the same questions
 here, shows a review of what it will write, and asks before writing. It aborts with nothing written if any
 other file name collides.`,
   },
@@ -81,7 +81,7 @@ ${DIR}
     flags: {},
     help: `Usage: ${NPX} ui [--dir <path>] [--port <n>] [--no-open] [--remote]
 
-Local web UI for setup and tasks (Node 20+).
+Local web UI for setup and tasks.
 
 Options:
 ${DIR}
@@ -123,11 +123,7 @@ if (wants('-h', '--help') && (known || cmd === undefined || cmd.startsWith('-') 
 } else if (wants('-v', '--version') && (known || cmd === undefined || cmd.startsWith('-'))) {
   console.log(VERSION);
 } else if (cmd === 'ui') {
-  if (major < 20) {
-    console.error(`shipline ui requires Node 20 or newer (found ${process.versions.node}).`);
-    process.exit(1);
-  }
-  // Loaded only here, so `init` on Node 18 never loads Node-20-only code.
+  // Loaded only here, so the other commands never load the UI server.
   const { parseUiArgs, startServer } = await import('../src/ui/server.mjs');
   await startServer(parseUiArgs(rest));
 } else if (known) {

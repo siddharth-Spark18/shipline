@@ -30,6 +30,11 @@ Use the Shipline UI from your phone over your own Tailscale network. The hook co
   pairing code" form, for a home-screen app that does not share Safari's pairing. The link and the code are one pairing
   (using either uses up both); 5 wrong codes in a row cancel the open pairings.
 
+### Changed
+
+- **Node 22 or newer.** `engines.node` is now `>=22` (was `>=18`), since Node 18 and 20 are end of life. CI tests
+  Node 22, 24 and 26. The hook scripts installed in a repo are unchanged and still run on Node 18.
+
 ## [1.1.0] - 2026-11-09
 
 Setup is the same everywhere and ends with a clear next step. The hook contract (INTERFACE) is unchanged.

@@ -192,17 +192,6 @@ describe('init write failures', () => {
   });
 });
 
-describe('ui on old Node', () => {
-  const major = Number(process.versions.node.split('.')[0]);
-  test('`shipline ui` exits 1 with a message on Node < 20, without loading the UI code', { skip: major >= 20 ? 'runs on Node 18 (the CI test:hooks job)' : false }, () => {
-    const dir = fresh();
-    assert.equal(runInit(dir).code, 0);
-    const r = run(process.execPath, [BIN, 'ui', '--dir', dir, '--no-open'], { cwd: dir });
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /shipline ui requires Node 20 or newer/);
-  });
-});
-
 describe('readRepoVersion', () => {
   test('reports legacy when VERSION is deleted', () => {
     const dir = fresh();

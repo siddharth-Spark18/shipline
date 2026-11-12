@@ -8,7 +8,7 @@ stop the steps that shouldn't happen yet (editing source before the plan is done
 
 ## Quickstart
 
-You need Node 20+, git and [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) signed in.
+You need Node 22+, git and [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) signed in.
 ([Full requirements](docs/install.md#requirements).)
 
 **1. Install it in a repo.** From the repo's root:

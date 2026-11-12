@@ -6,24 +6,23 @@ Everything `init`, `upgrade` and `uninstall` do, and what they write.
 
 ## Requirements
 
-| For | You need |
-| --- | --- |
-| The hooks, `init --yes`, `upgrade`, `uninstall` | Node 18+ |
-| `init --terminal` (it asks questions in the terminal) | Node 20.17+ |
-| `shipline ui`, and `init` opening the browser wizard | Node 20+ |
-| Everything | [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) signed in, and git |
+- Node 22 or newer (22, 24 and 26 are tested).
+- [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) signed in, and git.
+
+The hook scripts that `init` copies into a repo have no dependencies and still run on Node 18, so a teammate on an
+older Node isn't locked out of the guardrails. Only the `npx @forgeyard/shipline` commands need Node 22.
 
 ## Install
 
 Run it from the root of the repo you want to set up, or point at a folder with `--dir <path>`:
 
 ```bash
-npx @forgeyard/shipline init            # opens the setup wizard in the browser (Node 20+)
+npx @forgeyard/shipline init            # opens the setup wizard in the browser
 npx @forgeyard/shipline init --terminal # ask the same questions in the terminal instead
 npx @forgeyard/shipline init --yes      # install the defaults, no questions (-y works too)
 npx @forgeyard/shipline init --dry-run  # preview only; without a terminal it previews what --yes would install
 npx @forgeyard/shipline init --dir ../other-repo
-npx @forgeyard/shipline ui            # in a repo without Shipline: the setup wizard in the browser (Node 20+)
+npx @forgeyard/shipline ui            # in a repo without Shipline: the setup wizard in the browser
 ```
 
 The command line is strict: `--help` (or `-h`) works globally and per command, `--version` (or `-v`) prints the
@@ -33,8 +32,7 @@ version, the folder is only given with `--dir`, and an unknown option, command o
 whether the repo has a UI, agents and skills, commands and tracker, the CI check, then a review of every file).
 Nothing is written to the repo or to `~/.shipline` until you press **Install**; closing the page writes
 nothing. After Install the page shows a "You're set up" screen with the next steps and an **Open Shipline** button
-for the normal UI, without restarting the command. In a terminal, `init` starts this wizard by default (Node 20+); on
-Node 18-19 it says so and asks the questions in the terminal. The wizard also asks about confirmations (Standard or
+for the normal UI, without restarting the command. In a terminal, `init` starts this wizard by default. The wizard also asks about confirmations (Standard or
 Light), the branch pattern and guardrails (on or off, one switch).
 
 **Only the files your choices need.** The same answers give the same files from the wizard, interactive `init`

@@ -52,7 +52,7 @@ describe('package.json', () => {
     assert.equal(pkg.repository.directory, 'packages/cli');
     assert.equal(pkg.license, 'MIT');
     assert.match(pkg.description, /npx @forgeyard\/shipline init/);
-    assert.equal(pkg.engines.node, '>=18');
+    assert.equal(pkg.engines.node, '>=22');
     assert.equal(pkg.scripts.prepack, 'node scripts/build-ui.mjs', 'prepack builds ui-dist');
   });
 

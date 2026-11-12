@@ -10,7 +10,7 @@ credentials. Task data stays out of the repo, in `~/.shipline`.
 From the root of your repo:
 
 ```bash
-npx @forgeyard/shipline init             # opens the setup wizard in your browser (Node 20+)
+npx @forgeyard/shipline init             # opens the setup wizard in your browser
 npx @forgeyard/shipline init --terminal  # or answer the same questions in the terminal
 npx @forgeyard/shipline init --yes       # or install the defaults without questions
 ```
@@ -48,8 +48,7 @@ Phone access**. Nothing is public and there is no relay.
 
 ## Requirements
 
-- Node 18+ for the hooks, `init --yes`, `upgrade` and `uninstall`.
-- Node 20+ for the UI and the browser wizard (20.17+ for `init --terminal`).
+- Node 22 or newer (22, 24 and 26 are tested).
 - [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) signed in, and git.
 
 ## Learn more

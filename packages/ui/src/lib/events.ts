@@ -1,5 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query';
+import { reportAccessIssue } from '@/lib/api';
 import type {
+  AccessEndedEvent,
   BannerEvent,
   ChatEvent,
   PromptEvent,
@@ -17,6 +19,7 @@ export const queryKeys = {
   chats: ['chats'] as const,
   chat: (id: string) => ['chat', id] as const,
   diagnostics: ['diagnostics'] as const,
+  remote: ['remote'] as const,
   file: (path: string, mode: string) => ['file', path, mode] as const,
 };
 
@@ -135,6 +138,16 @@ export function connectEvents(queryClient: QueryClient): () => void {
       queryClient.setQueryData<PromptEvent[]>(queryKeys.prompts, (old = []) =>
         old.filter((p) => p.id !== data.id),
       );
+    });
+
+    // The server cut this device off (revoked, or phone access turned off) and closed the stream: do not
+    // reconnect; show the "not paired" screen with the reason.
+    es.addEventListener('access-ended', (e) => {
+      const data = parse<AccessEndedEvent>(e as MessageEvent);
+      stopped = true;
+      es.close();
+      source = null;
+      reportAccessIssue(data?.reason === 'remote-off' ? 'remote-off' : 'revoked');
     });
 
     es.onerror = () => {

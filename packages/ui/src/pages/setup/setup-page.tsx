@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlusIcon } from 'lucide-react';
+import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { THEMES } from '@/components/app-sidebar';
 import { DiffView } from '@/components/diff-view';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { AddWorkflowDialog } from '@/pages/setup/add-workflow-dialog';
 import { AgentsSkills } from '@/pages/setup/agents-skills';
 import { CiCheck } from '@/pages/setup/ci-check';
+import { PhoneAccess } from '@/pages/setup/phone-access';
 import { ConfigForm } from '@/pages/setup/config-form';
 import { GuardrailsSection } from '@/pages/setup/guardrails-section';
 import { NewWorkflowDialog } from '@/pages/setup/new-workflow-dialog';
@@ -26,9 +29,11 @@ import {
   type Drafts,
   type WorkflowDraft,
 } from '@/pages/setup/draft';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { chatStore } from '@/pages/chat/chat-store';
 import { ApiError, api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
+import { cn } from 'cn';
 import type { ConfigModel, ValidationIssue, VersionState } from '@/lib/types';
 
 /** Nav key of the Agents & skills section. The colon can't occur in a workflow id. */
@@ -37,6 +42,8 @@ const AGENTS_KEY = ':agents';
 const CI_KEY = ':ci';
 /** Nav key of the Guardrails section. */
 const GUARDRAILS_KEY = ':guardrails';
+/** Nav key of the Phone access section. */
+const PHONE_KEY = ':phone';
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -49,15 +56,73 @@ function useDebounced<T>(value: T, ms: number): T {
 
 const SETUP_MESSAGE = '/shipline-setup';
 
+/** Phone only: Theme and Status, which the desktop keeps in the sidebar footer. */
+function MobileSettingsRows({
+  warnings,
+  hasBlocker,
+  onOpenDiagnostics,
+}: {
+  warnings: number;
+  hasBlocker: boolean;
+  onOpenDiagnostics: (() => void) | undefined;
+}) {
+  const { theme = 'system', setTheme } = useTheme();
+  return (
+    <div className="flex flex-col divide-y rounded-xl border bg-card">
+      <div className="flex min-h-12 items-center gap-3 px-3 py-2">
+        <span className="text-sm">Theme</span>
+        <div className="ml-auto flex gap-1" role="group" aria-label="Theme">
+          {THEMES.map((t) => (
+            <Button
+              key={t.value}
+              variant={theme === t.value ? 'secondary' : 'ghost'}
+              className="h-11 px-3"
+              aria-pressed={theme === t.value}
+              onClick={() => setTheme(t.value)}
+            >
+              <t.icon />
+              {t.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+      <button
+        type="button"
+        className="flex min-h-12 items-center gap-3 px-3 py-2 text-left text-sm"
+        onClick={onOpenDiagnostics}
+      >
+        <span>Status</span>
+        <span className="ml-auto flex items-center gap-2 text-muted-foreground">
+          <span
+            className={cn(
+              'size-2.5 shrink-0 rounded-full',
+              warnings === 0 ? 'bg-stage-done' : hasBlocker ? 'bg-enf-block' : 'bg-enf-warn',
+            )}
+          />
+          {warnings === 0 ? 'All good' : `${warnings} warning${warnings === 1 ? '' : 's'}`}
+        </span>
+      </button>
+    </div>
+  );
+}
+
 export default function SetupPage({
   versionState,
   onChatStarted,
+  warnings = 0,
+  hasBlocker = false,
+  onOpenDiagnostics,
 }: {
   versionState: VersionState | undefined;
   /** Called with the id of the chat started by "Set up with Claude", so the app can show it. */
   onChatStarted: (id: string) => void;
+  /** Phone only (the sidebar footer has them on the desktop): the Status row. */
+  warnings?: number;
+  hasBlocker?: boolean;
+  onOpenDiagnostics?: () => void;
 }) {
   const queryClient = useQueryClient();
+  const mobile = useIsMobile();
   const readOnly = versionState === 'repo-newer' || versionState === 'pre-1.0';
 
   const { data, dataUpdatedAt, error, isPending, refetch } = useQuery({
@@ -122,6 +187,7 @@ export default function SetupPage({
     selected === AGENTS_KEY ||
     selected === CI_KEY ||
     selected === GUARDRAILS_KEY ||
+    selected === PHONE_KEY ||
     workflowIds.includes(selected)
       ? selected
       : 'config';
@@ -184,99 +250,166 @@ export default function SetupPage({
           </AlertDescription>
         </Alert>
       )}
-      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card/95 px-3 py-2 shadow-xs backdrop-blur">
-        <span className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span
-            className={`size-2 shrink-0 rounded-full ${entries.length === 0 ? 'bg-stage-done' : 'bg-enf-warn'}`}
-            aria-hidden
-          />
-          {entries.length === 0
-            ? 'No unsaved changes.'
-            : `${entries.length} changed ${entries.length === 1 ? 'file' : 'files'}: ${entries.map(fileLabel).join(', ')}`}
-        </span>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => void reload()}>
-            {entries.length === 0 ? 'Reload from disk' : 'Discard and reload'}
-          </Button>
-          <Button
-            size="sm"
-            disabled={entries.length === 0 || readOnly}
-            onClick={() => setDialogOpen(true)}
-          >
-            Review and save
-          </Button>
+      {mobile && (
+        <MobileSettingsRows
+          warnings={warnings}
+          hasBlocker={hasBlocker}
+          onOpenDiagnostics={onOpenDiagnostics}
+        />
+      )}
+      {!mobile && (
+        <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card/95 px-3 py-2 shadow-xs backdrop-blur">
+          <span className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span
+              className={`size-2 shrink-0 rounded-full ${entries.length === 0 ? 'bg-stage-done' : 'bg-enf-warn'}`}
+              aria-hidden
+            />
+            {entries.length === 0
+              ? 'No unsaved changes.'
+              : `${entries.length} changed ${entries.length === 1 ? 'file' : 'files'}: ${entries.map(fileLabel).join(', ')}`}
+          </span>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => void reload()}>
+              {entries.length === 0 ? 'Reload from disk' : 'Discard and reload'}
+            </Button>
+            <Button
+              size="sm"
+              disabled={entries.length === 0 || readOnly}
+              onClick={() => setDialogOpen(true)}
+            >
+              Review and save
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-[14rem_1fr]">
-        <nav
-          className="flex flex-row flex-wrap gap-1 md:flex-col md:self-start"
-          aria-label="Setup files"
-        >
-          <Button
-            variant={current === 'config' ? 'secondary' : 'ghost'}
-            className="justify-start"
-            onClick={() => setSelected('config')}
+        {mobile ? (
+          <nav
+            className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none]"
+            aria-label="Setup files"
           >
-            config.yml{isConfigDirty(data, drafts) ? ' *' : ''}
-          </Button>
-          <Button
-            variant={current === AGENTS_KEY ? 'secondary' : 'ghost'}
-            className="justify-start"
-            onClick={() => setSelected(AGENTS_KEY)}
-          >
-            Agents &amp; skills
-          </Button>
-          <Button
-            variant={current === CI_KEY ? 'secondary' : 'ghost'}
-            className="justify-start"
-            onClick={() => setSelected(CI_KEY)}
-          >
-            CI check
-          </Button>
-          <Button
-            variant={current === GUARDRAILS_KEY ? 'secondary' : 'ghost'}
-            className="justify-start"
-            onClick={() => setSelected(GUARDRAILS_KEY)}
-          >
-            Guardrails
-          </Button>
-          <p className="mt-2 hidden px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase md:block">
-            Workflows
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            className="justify-start"
-            disabled={readOnly}
-            onClick={() => setNewWorkflowOpen(true)}
-          >
-            <PlusIcon />
-            New workflow
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="justify-start"
-            disabled={readOnly || data.addableWorkflows.length === 0}
-            onClick={() => setAddWorkflowOpen(true)}
-          >
-            <PlusIcon />
-            Add shipped workflow
-          </Button>
-          {data.workflows.map((w) => (
+            {(
+              [
+                ['config', `config.yml${isConfigDirty(data, drafts) ? ' *' : ''}`],
+                [AGENTS_KEY, 'Agents & skills'],
+                [CI_KEY, 'CI check'],
+                [GUARDRAILS_KEY, 'Guardrails'],
+                [PHONE_KEY, 'Phone access'],
+                ...data.workflows.map(
+                  (w) =>
+                    [
+                      w.id!,
+                      `${w.id}${isWorkflowDirty(data, drafts, w.id!) ? ' *' : ''}${w.parseError !== undefined ? ' (error)' : ''}`,
+                    ] as const,
+                ),
+              ] as const
+            ).map(([key, label]) => (
+              <Button
+                key={key}
+                variant={current === key ? 'secondary' : 'outline'}
+                className="h-11 shrink-0 rounded-full px-4"
+                onClick={() => setSelected(key)}
+              >
+                {label}
+              </Button>
+            ))}
             <Button
-              key={w.id}
-              variant={current === w.id ? 'secondary' : 'ghost'}
-              className="justify-start"
-              onClick={() => setSelected(w.id!)}
+              variant="outline"
+              className="h-11 shrink-0 rounded-full px-4"
+              disabled={readOnly}
+              onClick={() => setNewWorkflowOpen(true)}
             >
-              {w.id}
-              {isWorkflowDirty(data, drafts, w.id!) ? ' *' : ''}
-              {w.parseError !== undefined ? ' (error)' : ''}
+              <PlusIcon />
+              New workflow
             </Button>
-          ))}
-        </nav>
+            <Button
+              variant="outline"
+              className="h-11 shrink-0 rounded-full px-4"
+              disabled={readOnly || data.addableWorkflows.length === 0}
+              onClick={() => setAddWorkflowOpen(true)}
+            >
+              <PlusIcon />
+              Add shipped workflow
+            </Button>
+          </nav>
+        ) : (
+          <nav
+            className="flex flex-row flex-wrap gap-1 md:flex-col md:self-start"
+            aria-label="Setup files"
+          >
+            <Button
+              variant={current === 'config' ? 'secondary' : 'ghost'}
+              className="justify-start"
+              onClick={() => setSelected('config')}
+            >
+              config.yml{isConfigDirty(data, drafts) ? ' *' : ''}
+            </Button>
+            <Button
+              variant={current === AGENTS_KEY ? 'secondary' : 'ghost'}
+              className="justify-start"
+              onClick={() => setSelected(AGENTS_KEY)}
+            >
+              Agents &amp; skills
+            </Button>
+            <Button
+              variant={current === CI_KEY ? 'secondary' : 'ghost'}
+              className="justify-start"
+              onClick={() => setSelected(CI_KEY)}
+            >
+              CI check
+            </Button>
+            <Button
+              variant={current === GUARDRAILS_KEY ? 'secondary' : 'ghost'}
+              className="justify-start"
+              onClick={() => setSelected(GUARDRAILS_KEY)}
+            >
+              Guardrails
+            </Button>
+            <Button
+              variant={current === PHONE_KEY ? 'secondary' : 'ghost'}
+              className="justify-start"
+              onClick={() => setSelected(PHONE_KEY)}
+            >
+              Phone access
+            </Button>
+            <p className="mt-2 hidden px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase md:block">
+              Workflows
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="justify-start"
+              disabled={readOnly}
+              onClick={() => setNewWorkflowOpen(true)}
+            >
+              <PlusIcon />
+              New workflow
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="justify-start"
+              disabled={readOnly || data.addableWorkflows.length === 0}
+              onClick={() => setAddWorkflowOpen(true)}
+            >
+              <PlusIcon />
+              Add shipped workflow
+            </Button>
+            {data.workflows.map((w) => (
+              <Button
+                key={w.id}
+                variant={current === w.id ? 'secondary' : 'ghost'}
+                className="justify-start"
+                onClick={() => setSelected(w.id!)}
+              >
+                {w.id}
+                {isWorkflowDirty(data, drafts, w.id!) ? ' *' : ''}
+                {w.parseError !== undefined ? ' (error)' : ''}
+              </Button>
+            ))}
+          </nav>
+        )}
 
         <div className="min-w-0">
           {current === 'config' && (
@@ -313,6 +446,7 @@ export default function SetupPage({
               onReload={() => void reload()}
             />
           )}
+          {current === PHONE_KEY && <PhoneAccess />}
           {workflowFile && (
             <WorkflowEditor
               key={workflowFile.id}
@@ -371,6 +505,21 @@ export default function SetupPage({
             ))}
           </CardContent>
         </Card>
+      )}
+
+      {mobile && entries.length > 0 && (
+        // Sticks to the bottom of the scrolling page, right above the tab bar.
+        <div className="sticky bottom-0 z-10 -mx-4 -mb-4 flex items-center gap-2 border-t bg-card px-4 py-2">
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            {entries.length} unsaved {entries.length === 1 ? 'file' : 'files'}
+          </span>
+          <Button variant="outline" className="h-11 px-3" onClick={() => void reload()}>
+            Discard and reload
+          </Button>
+          <Button className="h-11 px-3" disabled={readOnly} onClick={() => setDialogOpen(true)}>
+            Review and save
+          </Button>
+        </div>
       )}
 
       <NewWorkflowDialog

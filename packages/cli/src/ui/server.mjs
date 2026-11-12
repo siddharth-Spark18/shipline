@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { INTERFACE } from '../interface.mjs';
 import { createAuth } from './auth.mjs';
 import { createChats } from './chat.mjs';
+import { createDevices } from './devices.mjs';
 import { routes as chatRoutes } from './chat-routes.mjs';
 import { routes as diagnosticsRoutes } from './diagnostics.mjs';
 import { installedRoutes, notInstalled, routes as installRoutes } from './install-routes.mjs';
@@ -13,6 +14,8 @@ import { HttpError, parseJsonBody, readBody, sendError, sendJson } from './http.
 import { initLog, log } from './log.mjs';
 import { openBrowser } from './open-browser.mjs';
 import { createPrompts } from './prompts.mjs';
+import { createRemote } from './remote.mjs';
+import { routes as remoteRoutes } from './remote-routes.mjs';
 import { gitRootOf, installRootFor, resolveRepo } from './repo.mjs';
 import { stopEverything as stopAllShells } from './shell.mjs';
 import { routes as setupRoutes } from './setup.mjs';
@@ -35,6 +38,7 @@ const MIME = {
   '.png': 'image/png',
   '.woff2': 'font/woff2',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json',
 };
 
 function fail(message) {
@@ -42,7 +46,7 @@ function fail(message) {
   process.exit(1);
 }
 
-const UI_USAGE = `Usage: npx @forgeyard/shipline ui [--dir <path>] [--port <n>] [--no-open]
+const UI_USAGE = `Usage: npx @forgeyard/shipline ui [--dir <path>] [--port <n>] [--no-open] [--remote]
 
 Local web UI for setup and tasks (Node 20+).
 
@@ -50,6 +54,7 @@ Options:
   --dir <path>   Target folder (default: the current directory)
   --port <n>     Port to listen on (default: a free one)
   --no-open      Don't open the browser
+  --remote       Also serve the UI to your paired phone over Tailscale (installed repos only)
   -h, --help     Show this help`;
 
 function usageError(message) {
@@ -57,17 +62,19 @@ function usageError(message) {
   process.exit(2);
 }
 
-// ui [--dir <path>] [--port <n>] [--no-open] [--help]. A bare argument is an error: the folder is given with --dir.
+// ui [--dir <path>] [--port <n>] [--no-open] [--remote] [--help]. A bare argument is an error: the folder is given with --dir.
 export function parseUiArgs(argv) {
   let dir = null;
   let port = 0;
   let open = true;
+  let remote = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') {
       console.log(UI_USAGE);
       process.exit(0);
     } else if (a === '--no-open') open = false;
+    else if (a === '--remote') remote = true;
     else if (a === '--dir' || a.startsWith('--dir=')) {
       const value = a === '--dir' ? argv[++i] : a.slice('--dir='.length);
       if (!value) usageError('--dir needs a path (see shipline ui --help)');
@@ -81,7 +88,7 @@ export function parseUiArgs(argv) {
     } else if (a.startsWith('-')) usageError(`unknown option ${a} (see shipline ui --help)`);
     else usageError(`unexpected argument ${a} (use --dir)`);
   }
-  return { dir: dir === null ? process.cwd() : path.resolve(dir), port, open };
+  return { dir: dir === null ? process.cwd() : path.resolve(dir), port, open, remote };
 }
 
 // '/api/chats/:id/stop' against '/api/chats/<uuid>/stop' -> { id }, or null. A param never spans a '/'.
@@ -167,13 +174,21 @@ export async function startRepoMode(app, root, repo = null) {
     ...setupRoutes(app),
     ...taskRoutes(app),
     ...installedRoutes(),
-    { method: 'GET', path: '/api/events', handler: ({ req, res }) => app.hub.connect(req, res) },
+    ...remoteRoutes(app),
+    {
+      method: 'GET',
+      path: '/api/events',
+      handler: ({ req, res, who }) =>
+        app.hub.connect(req, res, {
+          deviceId: who && who.kind === 'device' ? who.deviceId : undefined,
+        }),
+    },
   ];
   app.mode = 'repo'; // last: until now the install routes answer
   return app.table;
 }
 
-export async function startServer({ dir, port = 0, open = true } = {}) {
+export async function startServer({ dir, port = 0, open = true, remote = false } = {}) {
   let repo = null;
   try {
     repo = await resolveRepo(dir);
@@ -181,7 +196,14 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
     // No Shipline setup here: serve the install wizard, which writes nothing until Install.
     if (e.code !== 'NO_REPO') fail(`Could not load the repo's .shipline/bin/lib.mjs: ${e.message}`);
   }
-  const hub = createHub();
+  // Phone access state: the hub asks it on every heartbeat whether a device's stream may stay open.
+  const devices = createDevices();
+  const hub = createHub({
+    deviceState: (id) => {
+      if (!app.remote || !app.remote.enabled) return 'remote-off';
+      return devices.has(id) ? null : 'revoked';
+    },
+  });
   const banners = new Map();
   let switching = null;
   const app = {
@@ -192,6 +214,7 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
     uiVersion: UI_VERSION,
     port: null,
     auth: null,
+    remote: null,
     watch: null,
     prompts: null,
     chats: null,
@@ -223,13 +246,25 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
       const isApi = pathname.startsWith('/api/');
       const isStatic = !isApi && (req.method === 'GET' || req.method === 'HEAD');
 
-      // The Host check comes first, then the token exchange, then cookie and Origin.
-      if (req.headers.host !== `127.0.0.1:${app.port}`)
-        throw new HttpError(403, 'bad-host', 'Host not allowed');
+      // The Host classification comes first (a foreign Host is refused), then the token exchange (laptop host
+      // only), then cookie and Origin.
+      const kind = app.auth.classify(req);
       if (req.method === 'GET' && pathname === '/' && url.searchParams.has('t')) {
         return app.auth.exchange(req, res, url.searchParams.get('t'));
       }
-      app.auth.check(req, { method: req.method, pathname, isStatic });
+      const who = app.auth.check(req, { method: req.method, pathname, isStatic });
+      // Audit: what a paired device changed (method, path and status only; never a body).
+      if (kind === 'remote' && isApi && who.deviceId && req.method !== 'GET') {
+        res.once('finish', () =>
+          log('remote', {
+            device: who.deviceId,
+            name: who.name,
+            method: req.method,
+            path: pathname,
+            status: res.statusCode,
+          }),
+        );
+      }
 
       if (isStatic) return sendStatic(req, res, pathname);
       // Installed meanwhile (a terminal `init`, or another tab's Install): serve the repo from now on, so the
@@ -257,7 +292,7 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
         req.method === 'POST'
           ? parseJsonBody(await readBody(req, { max: route.maxBody }))
           : undefined;
-      const result = await route.handler({ req, res, url, body, params: route.params });
+      const result = await route.handler({ req, res, url, body, params: route.params, who });
       if (!res.headersSent) sendJson(res, 200, result === undefined ? {} : result);
     } catch (e) {
       if (!(e instanceof HttpError)) log('error', { method: req.method, message: e && e.message });
@@ -279,7 +314,8 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
     });
   });
   app.port = server.address().port;
-  app.auth = createAuth(app.port);
+  app.remote = createRemote({ app, devices });
+  app.auth = createAuth(app.port, app);
 
   // Started modules, closed in reverse order. watch, chats and shell exist only once a repo is served.
   const closers = [{ name: 'hub', close: () => hub.close() }];
@@ -303,6 +339,8 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
   // After http, so shutdown stops the claude process group and releases the lock before the server closes.
   closers.push({ name: 'chats', close: () => app.chats && app.chats.close() });
   closers.push({ name: 'shell', close: () => stopAllShells() });
+  // Last pushed, first closed: take the phone mapping down before anything else stops.
+  closers.push({ name: 'remote', close: () => app.remote.stop() });
 
   let shuttingDown = false;
   async function shutdown(code, reason) {
@@ -346,6 +384,19 @@ export async function startServer({ dir, port = 0, open = true } = {}) {
     console.log('Nothing is written until you press Install in the browser.');
   } else console.log(`Shipline UI for ${repo.root}`);
   console.log(url);
+  if (remote) {
+    if (!repo) {
+      console.log(
+        'Phone access needs an installed repo, so it is off. Install Shipline here first.',
+      );
+    } else {
+      const status = await app.remote.start();
+      if (status.enabled) {
+        console.log(`Phone access: ${status.url}`);
+        console.log('Open Setup > Phone access in the UI to pair a phone.');
+      } else console.log(`Phone access is off: ${status.tailscale.message}`);
+    }
+  }
   console.log('Press Ctrl+C to stop.');
   if (open) openBrowser(url);
 

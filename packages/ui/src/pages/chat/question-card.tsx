@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useIsMobile } from '@/hooks/use-mobile';
 import type { PromptEvent } from '@/lib/types';
 import { Countdown, useAnswerPrompt } from '@/pages/chat/permission-card';
 
@@ -64,15 +65,22 @@ const tabLabel = (q: QuestionItem, i: number) => q.header?.trim() || `Q${i + 1}`
  * question has no tab bar. Keys: left/right switch tabs, 1-9 pick an option, Enter goes to the
  * next tab or submits. A filled-in "Other" replaces the chosen labels. The answer is
  * `{ [question text]: label }`, multi-select labels joined by ", ".
+ *
+ * `bare` drops the card shell (frame, title, countdown) so the phone's bottom sheet can hold the same
+ * question body and buttons; on a phone the options and buttons get larger touch targets.
  */
 export function QuestionCard({
   prompt,
   questions,
+  bare = false,
 }: {
   prompt: PromptEvent;
   questions: QuestionItem[];
+  bare?: boolean;
 }) {
   const { answer, pending } = useAnswerPrompt(prompt);
+  const mobile = useIsMobile();
+  const btn = mobile ? 'h-11 px-4 text-sm' : '';
   const [sel, setSel] = useState<Record<string, Selection>>({});
   const n = questions.length;
   const multi = n > 1;
@@ -185,7 +193,10 @@ export function QuestionCard({
         <legend className="mb-1 text-sm font-medium">{q.question}</legend>
         {q.multiSelect ? (
           q.options.map((o, oi) => (
-            <div key={o.label} className="flex items-start gap-2">
+            <div
+              key={o.label}
+              className={cn('flex items-start gap-2', mobile && 'min-h-11 items-center')}
+            >
               <Checkbox
                 id={`${name}-${oi}`}
                 checked={s.labels.includes(o.label)}
@@ -196,7 +207,10 @@ export function QuestionCard({
                   })
                 }
               />
-              <Label htmlFor={`${name}-${oi}`} className="flex flex-col items-start gap-0">
+              <Label
+                htmlFor={`${name}-${oi}`}
+                className={cn('flex flex-col items-start gap-0', mobile && 'flex-1 py-2')}
+              >
                 {optionLabel(o, oi)}
               </Label>
             </div>
@@ -207,14 +221,20 @@ export function QuestionCard({
             onValueChange={(v) => set(q, { labels: [v], other: '' })}
           >
             {q.options.map((o, oi) => (
-              <div key={o.label} className="flex items-start gap-2">
+              <div
+                key={o.label}
+                className={cn('flex items-start gap-2', mobile && 'min-h-11 items-center')}
+              >
                 {/* Moving on happens on click, not on selection, so arrow keys inside the group don't skip ahead. */}
                 <RadioGroupItem
                   value={o.label}
                   id={`${name}-${oi}`}
                   onClick={() => multi && next()}
                 />
-                <Label htmlFor={`${name}-${oi}`} className="flex flex-col items-start gap-0">
+                <Label
+                  htmlFor={`${name}-${oi}`}
+                  className={cn('flex flex-col items-start gap-0', mobile && 'flex-1 py-2')}
+                >
                   {optionLabel(o, oi)}
                 </Label>
               </div>
@@ -227,11 +247,12 @@ export function QuestionCard({
             set(q, { other: e.target.value, labels: e.target.value.trim() ? [] : s.labels })
           }
           placeholder="Other (type your own answer)"
+          className={cn(mobile && 'h-11')}
           aria-label={`Other answer for: ${q.question}`}
         />
         {multi && q.multiSelect && (
           <div>
-            <Button size="sm" variant="outline" onClick={next}>
+            <Button size="sm" variant="outline" className={btn} onClick={next}>
               Next
             </Button>
           </div>
@@ -241,9 +262,92 @@ export function QuestionCard({
   };
 
   const sendButton = (
-    <Button size="sm" disabled={pending || !complete} onClick={submit}>
+    <Button size="sm" className={btn} disabled={pending || !complete} onClick={submit}>
       Send answer
     </Button>
+  );
+
+  const body = multi ? (
+    <Tabs value={String(tab)} onValueChange={(v) => goto(Number(v))}>
+      <TabsList variant="line" className="h-auto w-full flex-wrap justify-start border-b">
+        {questions.map((q, i) => {
+          const done = valueOf(q) !== '';
+          return (
+            <TabsTrigger
+              key={i}
+              value={String(i)}
+              className={cn('flex-none px-3', mobile && 'min-h-11')}
+            >
+              {done ? (
+                <CheckIcon className="text-stage-done" aria-hidden />
+              ) : (
+                <span className="size-1.5 rounded-full bg-enf-warn" aria-hidden />
+              )}
+              {tabLabel(q, i)}
+              <span className="sr-only">{done ? ' (answered)' : ' (not answered)'}</span>
+            </TabsTrigger>
+          );
+        })}
+        <TabsTrigger value={String(n)} className={cn('flex-none px-3', mobile && 'min-h-11')}>
+          Submit
+        </TabsTrigger>
+      </TabsList>
+      {questions.map((q, i) => (
+        <TabsContent key={i} value={String(i)} className="pt-2">
+          {questionBody(q, i)}
+        </TabsContent>
+      ))}
+      <TabsContent value={String(n)} className="pt-2">
+        <div className="flex flex-col gap-2">
+          <p className="text-sm font-medium">Review your answers</p>
+          <dl className="flex flex-col gap-2 text-sm">
+            {questions.map((q, i) => {
+              const v = valueOf(q);
+              return (
+                <div key={i} className="flex flex-col">
+                  <dt className="text-xs text-muted-foreground">
+                    {tabLabel(q, i)}: {q.question}
+                  </dt>
+                  <dd>
+                    <button
+                      type="button"
+                      className={cn(
+                        'text-left underline-offset-2 hover:underline',
+                        mobile && 'min-h-11',
+                        v === '' && 'text-enf-warn',
+                      )}
+                      onClick={() => goto(i)}
+                    >
+                      {v === '' ? 'Not answered' : v}
+                    </button>
+                  </dd>
+                </div>
+              );
+            })}
+          </dl>
+          {!complete && (
+            <p className="text-xs text-muted-foreground">Answer every question before sending.</p>
+          )}
+        </div>
+      </TabsContent>
+    </Tabs>
+  ) : (
+    questionBody(questions[0], 0)
+  );
+
+  const buttons = (
+    <>
+      {(!multi || onSubmitTab) && sendButton}
+      <Button
+        size="sm"
+        variant="outline"
+        className={btn}
+        disabled={pending}
+        onClick={() => void answer({ decision: 'deny' })}
+      >
+        Skip
+      </Button>
+    </>
   );
 
   return (
@@ -254,94 +358,33 @@ export function QuestionCard({
       onKeyDown={onKeyDown}
       className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
     >
-      <Card className="ring-2 ring-primary/40">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-sm">
-            <MessageCircleQuestionIcon className="size-4" />
-            Claude has {multi ? 'some questions' : 'a question'}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          {multi ? (
-            <Tabs value={String(tab)} onValueChange={(v) => goto(Number(v))}>
-              <TabsList variant="line" className="h-auto w-full flex-wrap justify-start border-b">
-                {questions.map((q, i) => {
-                  const done = valueOf(q) !== '';
-                  return (
-                    <TabsTrigger key={i} value={String(i)} className="flex-none px-3">
-                      {done ? (
-                        <CheckIcon className="text-stage-done" aria-hidden />
-                      ) : (
-                        <span className="size-1.5 rounded-full bg-enf-warn" aria-hidden />
-                      )}
-                      {tabLabel(q, i)}
-                      <span className="sr-only">{done ? ' (answered)' : ' (not answered)'}</span>
-                    </TabsTrigger>
-                  );
-                })}
-                <TabsTrigger value={String(n)} className="flex-none px-3">
-                  Submit
-                </TabsTrigger>
-              </TabsList>
-              {questions.map((q, i) => (
-                <TabsContent key={i} value={String(i)} className="pt-2">
-                  {questionBody(q, i)}
-                </TabsContent>
-              ))}
-              <TabsContent value={String(n)} className="pt-2">
-                <div className="flex flex-col gap-2">
-                  <p className="text-sm font-medium">Review your answers</p>
-                  <dl className="flex flex-col gap-2 text-sm">
-                    {questions.map((q, i) => {
-                      const v = valueOf(q);
-                      return (
-                        <div key={i} className="flex flex-col">
-                          <dt className="text-xs text-muted-foreground">
-                            {tabLabel(q, i)}: {q.question}
-                          </dt>
-                          <dd>
-                            <button
-                              type="button"
-                              className={cn(
-                                'text-left underline-offset-2 hover:underline',
-                                v === '' && 'text-enf-warn',
-                              )}
-                              onClick={() => goto(i)}
-                            >
-                              {v === '' ? 'Not answered' : v}
-                            </button>
-                          </dd>
-                        </div>
-                      );
-                    })}
-                  </dl>
-                  {!complete && (
-                    <p className="text-xs text-muted-foreground">
-                      Answer every question before sending.
-                    </p>
-                  )}
-                </div>
-              </TabsContent>
-            </Tabs>
-          ) : (
-            questionBody(questions[0], 0)
-          )}
-        </CardContent>
-        <CardFooter className="flex items-center gap-2">
-          {(!multi || onSubmitTab) && sendButton}
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={pending}
-            onClick={() => void answer({ decision: 'deny' })}
-          >
-            Skip
-          </Button>
-          <span className="ml-auto">
-            <Countdown expiresAt={prompt.expiresAt} />
-          </span>
-        </CardFooter>
-      </Card>
+      {bare ? (
+        <div className="flex flex-col gap-4">
+          {body}
+          <div className="flex items-center gap-2">
+            {buttons}
+            <span className="ml-auto">
+              <Countdown expiresAt={prompt.expiresAt} />
+            </span>
+          </div>
+        </div>
+      ) : (
+        <Card className="ring-2 ring-primary/40">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <MessageCircleQuestionIcon className="size-4" />
+              Claude has {multi ? 'some questions' : 'a question'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">{body}</CardContent>
+          <CardFooter className="flex items-center gap-2">
+            {buttons}
+            <span className="ml-auto">
+              <Countdown expiresAt={prompt.expiresAt} />
+            </span>
+          </CardFooter>
+        </Card>
+      )}
     </div>
   );
 }

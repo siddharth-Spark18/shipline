@@ -1,4 +1,5 @@
 import type {
+  AccessIssue,
   AddWorkflowRequest,
   AgentsChange,
   AgentsPreviewResponse,
@@ -6,6 +7,7 @@ import type {
   ChatCommand,
   ChatControls,
   CiChange,
+  ClaimBody,
   CiPreviewResponse,
   ChatDetail,
   ChatsResponse,
@@ -17,9 +19,11 @@ import type {
   InstallInfo,
   InstallPreview,
   InstallSelection,
+  PairResponse,
   PreviewResponse,
   PickedControls,
   PromptAnswer,
+  RemoteInfo,
   SaveRequest,
   SaveResponse,
   SetControlsResponse,
@@ -43,6 +47,30 @@ export class ApiError extends Error {
     this.details = details;
   }
 }
+
+const ACCESS_CODES: Record<string, AccessIssue> = {
+  'not-paired': 'not-paired',
+  'remote-off': 'remote-off',
+  'wrong-tailscale-user': 'wrong-tailscale-user',
+};
+let accessIssue: AccessIssue | null = null;
+const accessListeners = new Set<() => void>();
+
+/** Called by the API client and the event stream when this device may not use the server any more. */
+export function reportAccessIssue(issue: AccessIssue) {
+  if (accessIssue === issue) return;
+  accessIssue = issue;
+  accessListeners.forEach((fn) => fn());
+}
+
+/** For useSyncExternalStore: the reason this device is locked out, or null. */
+export const accessIssueStore = {
+  subscribe(fn: () => void) {
+    accessListeners.add(fn);
+    return () => accessListeners.delete(fn);
+  },
+  get: () => accessIssue,
+};
 
 async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
   let res: Response;
@@ -68,6 +96,7 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
       envelope = null;
     }
     const e = envelope?.error;
+    if (e?.code && e.code in ACCESS_CODES) reportAccessIssue(ACCESS_CODES[e.code]);
     throw new ApiError(
       res.status,
       e?.code ?? 'http-error',
@@ -79,6 +108,13 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
 }
 
 export const api = {
+  remote: () => request<RemoteInfo>('GET', '/api/remote'),
+  setRemote: (enabled: boolean) => request<RemoteInfo>('POST', '/api/remote', { enabled }),
+  createPairing: () => request<PairResponse>('POST', '/api/remote/pair'),
+  claimPairing: (body: ClaimBody) =>
+    request<{ id: string; name: string }>('POST', '/api/remote/claim', body),
+  revokeDevice: (id: string) =>
+    request<{ ok: true }>('POST', `/api/remote/devices/${encodeURIComponent(id)}/revoke`),
   status: () => request<Status>('GET', '/api/status'),
   setup: () => request<SetupData>('GET', '/api/setup'),
   previewSetup: (req: SaveRequest) => request<PreviewResponse>('POST', '/api/setup/preview', req),

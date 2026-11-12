@@ -1,12 +1,18 @@
+import { useState } from 'react';
 import { cn } from 'cn';
+import { useIsMobile } from '@/hooks/use-mobile';
 import type { DiffHunk } from '@/lib/types';
 
 /**
  * Renders parsed unified-diff hunks. Removed comment lines get a stronger highlight. Long lines
  * scroll sideways inside the box (the rows are as wide as their longest line, so the tint
  * covers the whole row), and the line-number gutter stays on the left while scrolling.
+ * On a phone a small Wrap toggle wraps the long lines instead.
  */
 export function DiffView({ hunks, className }: { hunks: DiffHunk[]; className?: string }) {
+  const mobile = useIsMobile();
+  const [wrapped, setWrapped] = useState(false);
+  const wrap = mobile && wrapped;
   if (hunks.length === 0) {
     return <p className="text-sm text-muted-foreground">No changes.</p>;
   }
@@ -17,7 +23,24 @@ export function DiffView({ hunks, className }: { hunks: DiffHunk[]; className?: 
         className,
       )}
     >
-      <div className="w-max min-w-full">
+      {mobile && (
+        <div className="sticky left-0 flex w-full justify-end border-b bg-card px-2 py-1">
+          <button
+            type="button"
+            aria-pressed={wrapped}
+            onClick={() => setWrapped((w) => !w)}
+            className={cn(
+              'flex h-7 items-center rounded-md border px-2 font-sans text-[11px] font-medium',
+              wrapped
+                ? 'border-primary/40 bg-accent text-accent-foreground'
+                : 'text-muted-foreground',
+            )}
+          >
+            Wrap
+          </button>
+        </div>
+      )}
+      <div className={wrap ? 'w-full' : 'w-max min-w-full'}>
         {hunks.map((hunk, i) => (
           <div key={i}>
             <div className="sticky left-0 w-full bg-muted px-3 py-1 text-muted-foreground">
@@ -44,7 +67,14 @@ export function DiffView({ hunks, className }: { hunks: DiffHunk[]; className?: 
                       </span>
                     </span>
                   </span>
-                  <span className="pr-3 whitespace-pre">{line.text}</span>
+                  <span
+                    className={cn(
+                      'pr-3',
+                      wrap ? 'min-w-0 break-words whitespace-pre-wrap' : 'whitespace-pre',
+                    )}
+                  >
+                    {line.text}
+                  </span>
                   {line.type === 'del' && line.comment && (
                     <span className="ml-auto shrink-0 pl-3 pr-2 font-sans whitespace-nowrap text-enf-warn select-none">
                       comment removed

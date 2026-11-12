@@ -79,7 +79,7 @@ ${DIR}
   },
   ui: {
     flags: {},
-    help: `Usage: ${NPX} ui [--dir <path>] [--port <n>] [--no-open]
+    help: `Usage: ${NPX} ui [--dir <path>] [--port <n>] [--no-open] [--remote]
 
 Local web UI for setup and tasks (Node 20+).
 
@@ -87,6 +87,7 @@ Options:
 ${DIR}
   --port <n>     Port to listen on (default: a free one)
   --no-open      Don't open the browser
+  --remote       Also serve the UI to your paired phone over Tailscale (installed repos only)
   -h, --help     Show this help`,
   },
 };

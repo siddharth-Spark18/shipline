@@ -645,3 +645,45 @@ export interface InstallPreview {
   collisions: string[];
   base: InstallBase;
 }
+
+export type TailscaleState =
+  'ok' | 'missing' | 'logged-out' | 'no-https' | 'no-free-port' | 'error';
+
+export interface RemoteDevice {
+  id: string;
+  name: string;
+  pairedAt: string;
+  lastSeenAt: string;
+  /** True for the device that made this request. */
+  current: boolean;
+}
+
+/** GET /api/remote. */
+export interface RemoteInfo {
+  enabled: boolean;
+  /** The address of the UI over Tailscale, while phone access is on. */
+  url: string | null;
+  httpsPort: number | null;
+  tailscale: { state: TailscaleState; message: string };
+  devices: RemoteDevice[];
+  /** `cancelled`: too many wrong short codes cancelled the open pairings; cleared by the next "Pair a phone". */
+  pairing: { cancelled: boolean };
+}
+
+/** POST /api/remote/pair: one pairing, a single-use link and a short code (XXXX-XXXX), both valid for 5 minutes. */
+export interface PairResponse {
+  url: string;
+  shortCode: string;
+  expiresAt: string;
+}
+
+/** POST /api/remote/claim: the QR link's code, or the short code a person typed; plus the device's name. */
+export type ClaimBody = { code: string; name: string } | { shortCode: string; name: string };
+
+/** The last SSE event on a device's stream: its access was cut. */
+export interface AccessEndedEvent {
+  reason: 'revoked' | 'remote-off';
+}
+
+/** Why a phone cannot use the UI right now. */
+export type AccessIssue = 'not-paired' | 'remote-off' | 'wrong-tailscale-user' | 'revoked';

@@ -1,0 +1,1 @@
+document.addEventListener('DOMContentLoaded',()=>{const t=document.createElement('div');t.className='toolbar';t.innerHTML='<button>Light / Dark</button>';t.firstChild.onclick=()=>{document.documentElement.classList.toggle('dark');document.body.classList.toggle('dark')};document.body.appendChild(t)});

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { PanelRightCloseIcon, PanelRightOpenIcon, SquareIcon } from 'lucide-react';
+import { ArrowLeftIcon, PanelRightCloseIcon, PanelRightOpenIcon, SquareIcon } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -14,7 +15,9 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { StageTrail } from '@/components/stage-dots';
 import { ChatTasksPanel } from '@/components/task-panel';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { ApiError, api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
 import { useMediaQuery, usePrompts, useTasks } from '@/lib/queries';
@@ -30,6 +33,7 @@ import type {
 import { chatStore, useChatLive } from '@/pages/chat/chat-store';
 import { ChatControls } from '@/pages/chat/chat-controls';
 import { Composer } from '@/pages/chat/composer';
+import { DecisionDock } from '@/pages/chat/decision-dock';
 import { MessageList } from '@/pages/chat/message-list';
 import {
   ClaudeMissingNotice,
@@ -111,6 +115,45 @@ function UnfinishedTasks({ tasks, onResume }: { tasks: Task[]; onResume: (task: 
   );
 }
 
+/** The phone's chat header: back to the Chats tab, a title with an optional second line, and the actions. */
+function MobileHeader({
+  onBack,
+  title,
+  subtitle,
+  trail,
+  children,
+}: {
+  onBack?: () => void;
+  title: string;
+  subtitle?: string;
+  trail?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="-mx-3 flex shrink-0 items-center gap-1 border-b px-1 py-1">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-11 shrink-0"
+        aria-label="Back to chats"
+        onClick={onBack}
+      >
+        <ArrowLeftIcon />
+      </Button>
+      <div className="min-w-0 flex-1 leading-tight">
+        <h2 className="truncate text-sm font-semibold">{title}</h2>
+        {subtitle && (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="truncate">{subtitle}</span>
+            {trail}
+          </div>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 /** Said once: terminal and extension sessions are not locked out. */
 function TerminalNote() {
   const [hidden, setHidden] = useState(() => localStorage.getItem(NOTE_KEY) === '1');
@@ -140,6 +183,7 @@ export default function ChatPage({
   chats,
   selectedId,
   onSelect,
+  onBack,
 }: {
   versionState?: VersionState;
   /** The pre-1.0 guidance from /api/status, shown instead of the generic text. */
@@ -147,8 +191,11 @@ export default function ChatPage({
   chats: UseQueryResult<ChatsResponse>;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  /** Phone only: the chat header's back arrow, which goes to the Chats tab. */
+  onBack?: () => void;
 }) {
   const queryClient = useQueryClient();
+  const mobile = useIsMobile();
   const prompts = usePrompts();
   const tasks = useTasks();
   const [blocker, setBlocker] = useState<Blocker | null>(null);
@@ -230,8 +277,14 @@ export default function ChatPage({
   };
 
   const stream = (
-    <section className="mx-auto flex h-full min-h-0 w-full max-w-[760px] min-w-0 flex-col gap-3 p-4">
-      <TerminalNote />
+    <section
+      className={
+        mobile
+          ? 'flex h-full min-h-0 w-full min-w-0 flex-col gap-2 px-3 pb-2'
+          : 'mx-auto flex h-full min-h-0 w-full max-w-[760px] min-w-0 flex-col gap-3 p-4'
+      }
+    >
+      {!mobile && <TerminalNote />}
       {chats.error && (
         <Alert variant="destructive">
           <AlertTitle>Could not load chats</AlertTitle>
@@ -258,6 +311,8 @@ export default function ChatPage({
         </Alert>
       )}
 
+      {mobile && !selectedId && <MobileHeader onBack={onBack} title="New chat" />}
+
       {selectedId ? (
         <ChatView
           key={selectedId}
@@ -269,14 +324,27 @@ export default function ChatPage({
           panelOpen={wide ? panelOpen : sheetOpen}
           onTogglePanel={togglePanel}
           onNewChat={() => select(null)}
+          onBack={onBack}
           onError={handleError}
           onOk={() => setBlocker(null)}
         />
       ) : blocker?.code.startsWith('claude-') ? (
         <ClaudeMissingNotice code={blocker.code} message={blocker.message} />
       ) : (
-        <div className="flex flex-1 flex-col justify-end gap-3">
-          <div className="flex flex-1 flex-col gap-4 overflow-y-auto">
+        <div
+          className={
+            mobile
+              ? 'flex min-h-0 flex-1 flex-col justify-end gap-3'
+              : 'flex flex-1 flex-col justify-end gap-3'
+          }
+        >
+          <div
+            className={
+              mobile
+                ? 'flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto'
+                : 'flex flex-1 flex-col gap-4 overflow-y-auto'
+            }
+          >
             <div>
               <h2 className="text-base font-medium">New chat</h2>
               <p className="text-sm text-muted-foreground">
@@ -292,7 +360,7 @@ export default function ChatPage({
           <Composer
             disabled={readOnly}
             chatId={null}
-            placeholder="Describe the work to start a chat"
+            placeholder={mobile ? 'Describe the work' : 'Describe the work to start a chat'}
             onSend={startChat}
           />
         </div>
@@ -357,6 +425,7 @@ function ChatView({
   panelOpen,
   onTogglePanel,
   onNewChat,
+  onBack,
   onError,
   onOk,
 }: {
@@ -368,10 +437,12 @@ function ChatView({
   panelOpen: boolean;
   onTogglePanel: () => void;
   onNewChat: () => void;
+  onBack?: () => void;
   onError: (e: unknown) => void;
   onOk: () => void;
 }) {
   const queryClient = useQueryClient();
+  const mobile = useIsMobile();
   const live = useChatLive(id);
   const detail = useChatDetail(id);
 
@@ -462,28 +533,61 @@ function ChatView({
     );
   }
 
+  const stageIndex = currentStage && chatTask ? chatTask.stages.indexOf(currentStage) : -1;
+  const stageLine =
+    chatTask && currentStage && stageIndex >= 0
+      ? `Stage ${stageIndex + 1} of ${chatTask.stages.length} · ${currentStage.name}`
+      : undefined;
+  const panelButton = (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      className={mobile ? 'size-11 shrink-0' : undefined}
+      aria-label={panelOpen ? 'Close task panel' : 'Open task panel'}
+      aria-pressed={panelOpen}
+      title={panelOpen ? 'Close task panel' : 'Open task panel'}
+      onClick={onTogglePanel}
+    >
+      {panelOpen ? <PanelRightCloseIcon /> : <PanelRightOpenIcon />}
+    </Button>
+  );
+
   return (
     <>
-      <div className="flex items-center gap-2">
-        <h2 className="min-w-0 flex-1 truncate text-base font-medium">{chat?.title || 'Chat'}</h2>
-        <Badge variant={ended ? 'secondary' : 'default'}>{ended ? 'Ended' : 'Active'}</Badge>
-        {!ended && (
-          <Button variant="outline" size="xs" onClick={() => void stop()}>
-            <SquareIcon />
-            Stop
-          </Button>
-        )}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={panelOpen ? 'Close task panel' : 'Open task panel'}
-          aria-pressed={panelOpen}
-          title={panelOpen ? 'Close task panel' : 'Open task panel'}
-          onClick={onTogglePanel}
+      {mobile ? (
+        <MobileHeader
+          onBack={onBack}
+          title={chat?.title || 'Chat'}
+          subtitle={stageLine}
+          trail={chatTask && stageLine ? <StageTrail stages={chatTask.stages} /> : undefined}
         >
-          {panelOpen ? <PanelRightCloseIcon /> : <PanelRightOpenIcon />}
-        </Button>
-      </div>
+          <Badge variant={ended ? 'secondary' : 'default'}>{ended ? 'Ended' : 'Active'}</Badge>
+          {!ended && (
+            <Button
+              variant="outline"
+              size="icon"
+              className="size-11 shrink-0"
+              aria-label="Stop"
+              onClick={() => void stop()}
+            >
+              <SquareIcon />
+            </Button>
+          )}
+          {panelButton}
+        </MobileHeader>
+      ) : (
+        <div className="flex items-center gap-2">
+          <h2 className="min-w-0 flex-1 truncate text-base font-medium">{chat?.title || 'Chat'}</h2>
+          <Badge variant={ended ? 'secondary' : 'default'}>{ended ? 'Ended' : 'Active'}</Badge>
+          {!ended && (
+            <Button variant="outline" size="xs" onClick={() => void stop()}>
+              <SquareIcon />
+              Stop
+            </Button>
+          )}
+          {panelButton}
+        </div>
+      )}
 
       {detail.data?.unavailable && (
         <p className="text-xs text-muted-foreground">
@@ -506,6 +610,8 @@ function ChatView({
       {ticketProblem && !ended && ticketProblem.status !== 'connected' && (
         <TicketNotice tracker={ticketProblem.tracker} status={ticketProblem.status} />
       )}
+
+      {mobile && <DecisionDock prompts={prompts} />}
 
       {missing ? (
         <ClaudeMissingNotice code={missing.code} message={missing.message} />

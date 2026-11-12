@@ -208,7 +208,7 @@ Outside a Claude Code session (no session id), `status` lists the unfinished tas
 ## 5. The browser UI
 
 ```bash
-npx @forgeyard/shipline ui [--dir <path>] [--port <n>] [--no-open]
+npx @forgeyard/shipline ui [--dir <path>] [--port <n>] [--no-open] [--remote]
 ```
 
 It starts a server on `127.0.0.1` (a random port unless `--port`) for the repo you run it in and opens
@@ -229,6 +229,40 @@ with or without it. It runs your own installed `claude` and never sees your Clau
 
   ![Setup: Agents & skills](docs/images/agents-skills.png)
 
+
+### Use it from your phone
+
+A chat that stops at a gate or a permission prompt waits for you. With phone access you open the same UI on your own
+phone, over your own [Tailscale](https://tailscale.com) network, and answer it from there. A paired phone can do
+everything the laptop page can. It works only while your computer is awake and `shipline ui` is running, and only
+for an installed repo (not in the install wizard).
+
+1. Install Tailscale on the computer and the phone, and sign in to the same account on both.
+2. In the Tailscale admin console, turn on **HTTPS certificates** (DNS page).
+3. Start the UI with `--remote`, or open **Setup > Phone access** and switch it on. Shipline runs
+   `tailscale serve` for you and removes it when you stop the UI or switch it off.
+4. In **Setup > Phone access** press **Pair a phone** and scan the QR code with the phone. The link works once and
+   expires after 5 minutes. Name the device on the phone's screen.
+5. Optional: **Add to home screen** (Safari: Share > Add to Home Screen) to open Shipline full screen like an app. A
+   home-screen app may not share Safari's pairing, so if it opens as "not paired", press **Enter pairing code** there and
+   type the 8-character code (`XXXX-XXXX`, any case, dash optional) that **Pair a phone** shows under the QR code. The
+   code and the QR link are one pairing: using either uses up both, and after 5 wrong codes in a row the pairing is
+   cancelled and you make a new one.
+
+On a phone the UI switches to a phone layout (narrower than 768 px): a tab bar with Chats, New and Setup, and a chat
+that waits for you shows its question or tool approval in a bar above the message box, answered with one large tap.
+
+Paired devices are kept in `~/.shipline/devices.json` (or `$SHIPLINE_HOME`), for every repo, and stay paired until you
+**Revoke** them in the same panel (which cuts them off at once). Turning phone access off keeps the pairings.
+
+Security notes:
+
+- Traffic goes only through your tailnet, over HTTPS. Nothing is public and there is no relay.
+- A request must come from the same Tailscale user that is signed in on the computer, and from a paired device
+  (a secret cookie; only its hash is stored). Another person on your tailnet cannot use it, even on a shared machine.
+- The phone can do what you can do in the UI, so treat a paired phone like a logged-in terminal. Revoke a lost phone.
+- Device actions are written to the repo's `ui.log` (who, method, path, status; never message text).
+- If port 443 is taken on your tailnet name, Shipline uses 8443 or 10000 and never changes a mapping it didn't make.
 
 A repo set up by a newer Shipline is read-only in the UI and shows the `npx @forgeyard/shipline@<version> ui` command to run.
 

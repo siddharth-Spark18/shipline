@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mobile baseline: current Shipline UI at 390 x 844</title><link rel="stylesheet" href="tokens.css"><script src="theme.js"></script></head>
+<body>
+<!-- baseline: code-only capture, no browser screenshot -->
+<h1 class="sheet">Mobile baseline: current Shipline UI at 390 x 844</h1><p class="sheet">Reconstructed from source (code-only): packages/ui components, real tokens from index.css. Toggle light/dark top right. Desktop is unchanged by every proposal.</p>
+<div class="row">
+<div><p class="cap">1. Chat, running turn</p><div class="phone"><div class="status"><span>9:41</span><span>5G &nbsp;100%</span></div><!-- app.tsx: <header> + SidebarTrigger -->
+<div class="hdr"><span class="ib">&#9776;</span><span class="sep"></span><h1>Chat</h1></div><div class="stream"><!-- TerminalNote -->
+<p class="xs mut" style="margin:0;border:1px solid var(--border);border-radius:8px;padding:6px 10px">Chats here run your own <code>claude</code> in this checkout. You can also continue in a terminal.</p><!-- ChatView header row -->
+<div class="title-row"><h2>Add due dates to todos</h2><span class="badge">Active</span><span class="btn o xs">&#9632; Stop</span><span class="ib">&#9707;</span></div><div class="scroll"><div class="user">Add a due date to each todo and show overdue ones first.</div><!-- Markdown -->
+<div class="md"><p>I'll start with the data model, then the list ordering. First, where todos are defined:</p></div><!-- ToolCall -->
+<div class="tool"><div class="t"><span class="mut">&#8250;</span><span class="mut">&#9874;</span><b>Read</b><span class="s">src/todos.js</span></div></div><div class="md"><pre>export function sortTodos(list) {
+  return [...list].sort((a, b) =&gt;
+    (a.due ?? Infinity) - (b.due ?? Infinity));
+}</pre></div><!-- ToolCall (expanded): Edit -->
+<div class="tool"><div class="t"><span class="mut">&#8250;</span><span class="mut">&#9874;</span><b>Edit</b><span class="s">src/todos.js</span></div>
+<div class="body"><p class="xs mut" style="margin:0 0 4px">Input</p><div class="diff"><span class="d">- return list;</span>
+<span class="a">+ return [...list].sort(byDue);</span>
+<span class="a">+ // overdue first, then soonest</span></div></div></div><!-- ShellBlock -->
+<div class="tool"><div class="t"><span class="mut">&#9002;_</span><b class="mono">npm test</b><span class="s"></span><span class="badge o">exit 1</span></div>
+<div class="body"><div class="diff" style="max-height:90px"><span class="d">FAIL test/sort.test.js</span>
+  expected [2,1,3] received [1,2,3]
+  at sortTodos (src/todos.js:12:9)</div>
+<div style="display:flex;gap:6px;margin-top:8px"><span class="btn o xs">Send to Claude</span></div></div></div></div><!-- Composer (pages/chat/composer.tsx): AttachButton + Textarea rows=2 + Send -->
+<div class="composer"><div class="crow"><span class="btn o" style="height:36px;width:36px;padding:0">&#128206;</span><div class="ta">Message Claude, / for commands, ! to run a command</div><span class="btn" style="height:36px">&#10148; Send</span></div><!-- ChatControls -->
+<div class="ctl"><span class="btn o xs">Model: Sonnet</span><span class="btn o xs">Effort: Medium</span><span class="btn o xs">Mode: Ask</span><span class="btn o xs">Compact</span></div><p class="xs mut" style="margin:0">Claude is working. You can send the next message when this turn finishes.</p></div></div><div class="home"></div></div><p class="note">Header (48px) + terminal note + title row + composer with controls leave roughly half the screen for messages. Tool calls truncate to one line; code and diffs scroll sideways.</p></div>
+<div><p class="cap">2. Gate pending (QuestionCard)</p><div class="phone"><div class="status"><span>9:41</span><span>5G &nbsp;100%</span></div><!-- app.tsx: <header> + SidebarTrigger -->
+<div class="hdr"><span class="ib">&#9776;</span><span class="sep"></span><h1>Chat</h1></div><div class="stream"><!-- TerminalNote -->
+<p class="xs mut" style="margin:0;border:1px solid var(--border);border-radius:8px;padding:6px 10px">Chats here run your own <code>claude</code> in this checkout. You can also continue in a terminal.</p><!-- ChatView header row -->
+<div class="title-row"><h2>Add due dates to todos</h2><span class="badge">Active</span><span class="btn o xs">&#9632; Stop</span><span class="ib">&#9707;</span></div><div class="scroll" style="justify-content:flex-end"><!-- ToolCall -->
+<div class="tool"><div class="t"><span class="mut">&#8250;</span><span class="mut">&#9874;</span><b>Write</b><span class="s">docs/plan.md</span></div></div><div class="md"><p>The plan is written. Here is the summary before we move on:</p></div><!-- QuestionCard (pages/chat/question-card.tsx) -->
+<div class="card hot "><h3>&#9432; Gate: Ready to move from Plan to Implement?</h3>
+<div class="tabs"><span class="on">Plan</span><span>Scope</span><span>Submit</span></div>
+<div class="opt"><span class="radio on"></span><span><span class="mono mut">1</span> Advance<br><span class="xs mut" style="font-weight:400">The plan is approved, start implementing.</span></span></div>
+<div class="opt"><span class="radio"></span><span><span class="mono mut">2</span> Not yet<br><span class="xs mut" style="font-weight:400">Keep refining the plan.</span></span></div>
+<div style="display:flex;gap:8px"><span class="btn o" style="height:28px">Skip</span><span class="btn" style="height:28px">Next</span><span class="mut xs" style="margin-left:auto;align-self:center">Denied in 4:12</span></div></div></div><!-- Composer (pages/chat/composer.tsx): AttachButton + Textarea rows=2 + Send -->
+<div class="composer"><div class="crow"><span class="btn o" style="height:36px;width:36px;padding:0">&#128206;</span><div class="ta">Message Claude, / for commands, ! to run a command</div><span class="btn" style="height:36px">&#10148; Send</span></div><!-- ChatControls -->
+<div class="ctl"><span class="btn o xs">Model: Sonnet</span><span class="btn o xs">Effort: Medium</span><span class="btn o xs">Mode: Ask</span><span class="btn o xs">Compact</span></div></div></div><div class="home"></div></div><p class="note">The card is the last item in the scroll box. Advance / Not yet are 16px radios; you must pick, press Next, then Submit. Skip and Next are 28px buttons.</p></div>
+<div><p class="cap">3. Tool permission (PermissionCard)</p><div class="phone"><div class="status"><span>9:41</span><span>5G &nbsp;100%</span></div><!-- app.tsx: <header> + SidebarTrigger -->
+<div class="hdr"><span class="ib">&#9776;</span><span class="sep"></span><h1>Chat</h1></div><div class="stream"><!-- TerminalNote -->
+<p class="xs mut" style="margin:0;border:1px solid var(--border);border-radius:8px;padding:6px 10px">Chats here run your own <code>claude</code> in this checkout. You can also continue in a terminal.</p><!-- ChatView header row -->
+<div class="title-row"><h2>Add due dates to todos</h2><span class="badge">Active</span><span class="btn o xs">&#9632; Stop</span><span class="ib">&#9707;</span></div><div class="scroll" style="justify-content:flex-end"><!-- ToolCall -->
+<div class="tool"><div class="t"><span class="mut">&#8250;</span><span class="mut">&#9874;</span><b>Edit</b><span class="s">src/todos.js</span></div></div><!-- PermissionCard (pages/chat/permission-card.tsx) -->
+<div class="card hot "><h3>&#9432; Claude wants to use <span class="mono">Bash</span></h3>
+<div class="diff" style="white-space:pre-wrap">$ rm -rf dist &amp;&amp; npm run build</div>
+<div style="display:flex;gap:8px;align-items:center"><span class="btn">Allow</span><span class="btn o">Deny</span><span class="mut xs" style="margin-left:auto">Denied in 4:48</span></div></div></div><!-- Composer (pages/chat/composer.tsx): AttachButton + Textarea rows=2 + Send -->
+<div class="composer"><div class="crow"><span class="btn o" style="height:36px;width:36px;padding:0">&#128206;</span><div class="ta">Message Claude, / for commands, ! to run a command</div><span class="btn" style="height:36px">&#10148; Send</span></div><!-- ChatControls -->
+<div class="ctl"><span class="btn o xs">Model: Sonnet</span><span class="btn o xs">Effort: Medium</span><span class="btn o xs">Mode: Ask</span><span class="btn o xs">Compact</span></div></div></div><div class="home"></div></div><p class="note">Allow / Deny are size-sm (32px) buttons in the card footer, below a diff capped at 224px. If the user scrolled up, the card is off screen and nothing signals it.</p></div>
+<div><p class="cap">4. Typing a reply</p><div class="phone"><div class="status"><span>9:41</span><span>5G &nbsp;100%</span></div><!-- app.tsx: <header> + SidebarTrigger -->
+<div class="hdr"><span class="ib">&#9776;</span><span class="sep"></span><h1>Chat</h1></div><div class="stream" style="padding-bottom:0"><!-- TerminalNote -->
+<p class="xs mut" style="margin:0;border:1px solid var(--border);border-radius:8px;padding:6px 10px">Chats here run your own <code>claude</code> in this checkout. You can also continue in a terminal.</p><!-- ChatView header row -->
+<div class="title-row"><h2>Add due dates to todos</h2><span class="badge">Active</span><span class="btn o xs">&#9632; Stop</span><span class="ib">&#9707;</span></div><div class="scroll" style="justify-content:flex-end;max-height:100px;overflow:hidden"><!-- PermissionCard (pages/chat/permission-card.tsx) -->
+<div class="card hot "><h3>&#9432; Claude wants to use <span class="mono">Bash</span></h3>
+<div class="diff" style="white-space:pre-wrap">$ rm -rf dist &amp;&amp; npm run build</div>
+<div style="display:flex;gap:8px;align-items:center"><span class="btn">Allow</span><span class="btn o">Deny</span><span class="mut xs" style="margin-left:auto">Denied in 4:48</span></div></div></div><!-- Composer (pages/chat/composer.tsx): AttachButton + Textarea rows=2 + Send -->
+<div class="composer"><div class="crow"><span class="btn o" style="height:36px;width:36px;padding:0">&#128206;</span><div class="ta">Not sure about that rm. Use npm run clean instead</div><span class="btn" style="height:36px">&#10148; Send</span></div><!-- ChatControls -->
+<div class="ctl"><span class="btn o xs">Model: Sonnet</span><span class="btn o xs">Effort: Medium</span><span class="btn o xs">Mode: Ask</span><span class="btn o xs">Compact</span></div></div></div><div class="kb">on-screen keyboard (~300px) covers the messages; the stream keeps only a sliver</div><div class="home"></div></div><p class="note">The composer is a 2-row textarea + 36px Send with a text label, then a controls row and a hint line. With the keyboard up the stream is nearly gone.</p></div>
+<div><p class="cap">5. Sidebar drawer</p><div class="phone"><div class="status"><span>9:41</span><span>5G &nbsp;100%</span></div><!-- app.tsx: <header> + SidebarTrigger -->
+<div class="hdr"><span class="ib">&#9776;</span><span class="sep"></span><h1>Chat</h1></div><div class="stream"><!-- TerminalNote -->
+<p class="xs mut" style="margin:0;border:1px solid var(--border);border-radius:8px;padding:6px 10px">Chats here run your own <code>claude</code> in this checkout. You can also continue in a terminal.</p><!-- ChatView header row -->
+<div class="title-row"><h2>Add due dates to todos</h2><span class="badge">Active</span><span class="btn o xs">&#9632; Stop</span><span class="ib">&#9707;</span></div><div class="scroll"><div class="user">Add a due date to each todo and show overdue ones first.</div><!-- Markdown -->
+<div class="md"><p>I'll start with the data model, then the list ordering. First, where todos are defined:</p></div></div><!-- Composer (pages/chat/composer.tsx): AttachButton + Textarea rows=2 + Send -->
+<div class="composer"><div class="crow"><span class="btn o" style="height:36px;width:36px;padding:0">&#128206;</span><div class="ta">Message Claude, / for commands, ! to run a command</div><span class="btn" style="height:36px">&#10148; Send</span></div><!-- ChatControls -->
+<div class="ctl"><span class="btn o xs">Model: Sonnet</span><span class="btn o xs">Effort: Medium</span><span class="btn o xs">Mode: Ask</span><span class="btn o xs">Compact</span></div></div></div><div class="dim"></div><!-- AppSidebar (mobile Sheet drawer, 18rem) -->
+<div class="drawer">
+<div style="display:flex;gap:8px;align-items:center;padding:4px 8px"><span class="logo">S</span><div style="line-height:1.2"><b>todo-node</b><div class="xs mut">/Users/me/todo-node</div></div></div>
+<div class="mi pri">+ New chat</div><div class="mi act">&#9993; Chat</div><div class="mi">&#9881; Setup</div>
+<div style="border-top:1px solid var(--border);margin:4px 0"></div>
+<div class="mi act" style="flex-direction:column;align-items:stretch;gap:2px"><div style="display:flex;gap:8px;align-items:center"><span class="dot"></span><span style="flex:1">Add due dates to todos</span><span class="badge sm">Needs answer</span></div><div class="xs mut" style="padding-left:16px">add-due-dates &nbsp;&#9679;&#9679;&#9675;&#9675;</div></div>
+<div class="mi" style="flex-direction:column;align-items:stretch;gap:2px"><div style="display:flex;gap:8px;align-items:center"><span class="dot d"></span><span>Fix flaky sort test</span></div><div class="xs mut" style="padding-left:16px">fix-sort-test &nbsp;&#9679;&#9679;&#9679;&#9679;</div></div>
+<div class="mi"><span class="dot d"></span>Rename list endpoint</div>
+<div style="flex:1"></div>
+<div class="mi" style="border:1px solid var(--border)"><span class="dot d" style="box-shadow:none"></span>Status: all good</div><div class="mi">&#9728; Theme: System</div></div><div class="home"></div></div><p class="note">Hamburger (28px target) opens an 18rem sheet. Chat list, Chat, Setup, New chat, Status, Theme all live here. The only waiting-answer signal is a tiny badge inside the drawer.</p></div>
+<div><p class="cap">6. Setup, Phone access</p><div class="phone"><div class="status"><span>9:41</span><span>5G &nbsp;100%</span></div><!-- app.tsx: <header> + SidebarTrigger -->
+<div class="hdr"><span class="ib">&#9776;</span><span class="sep"></span><h1>Setup</h1></div><div class="stream" style="overflow:hidden;gap:16px;padding:16px">
+<!-- SetupPage tabs -->
+<div class="tabs" style="max-width:100%;overflow:hidden"><span>Workflow</span><span>Guardrails</span><span>Agents</span><span class="on">Phone access</span></div>
+<b style="font-weight:500">Phone access</b>
+<div><b style="font-weight:500">Use this UI from your phone</b><p class="xs mut" style="margin:2px 0 0">Opens this same UI on your own phone through your Tailscale network (HTTPS, only for your Tailscale account). A paired phone can do everything this page can, including answering a chat that waits for you.</p></div>
+<div style="display:flex;align-items:center;gap:12px"><span class="sw"></span><span>Phone access</span><span class="xs mut" style="margin-left:auto">On</span></div>
+<p class="xs mut" style="margin:0">Address: <span class="mono">https://my-mac.tail1234.ts.net:7443</span></p>
+<b style="font-weight:500">Pair a phone</b>
+<div><span class="btn o">Pair a phone</span></div>
+<b style="font-weight:500">Paired devices</b>
+<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;gap:12px;align-items:center"><div style="flex:1;min-width:0"><b style="font-weight:500">iPhone 15</b> <span class="xs mut">(this device)</span><div class="xs mut">Paired Nov 12. Last seen just now.</div></div><span class="btn o">Revoke</span></div>
+</div><div class="home"></div></div><p class="note">Setup tabs overflow horizontally; reaching Phone access = open drawer, Setup, scroll tabs.</p></div>
+</div></body></html>

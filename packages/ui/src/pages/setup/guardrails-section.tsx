@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import type { ConfigModel } from '@/lib/types';
 
-const README_URL = 'https://github.com/siddharth-Spark18/shipline#7-guardrails';
+const README_URL = 'https://github.com/siddharth-Spark18/shipline/blob/main/docs/guardrails.md';
 
 type Level = 'deny' | 'ask' | 'off';
 const LEVELS: { value: Level; label: string }[] = [
@@ -153,7 +153,7 @@ export function GuardrailsSection({
             target="_blank"
             rel="noreferrer"
           >
-            Read more in the README
+            Read more in the docs
           </a>
           .
         </AlertDescription>

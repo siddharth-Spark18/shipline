@@ -47,6 +47,9 @@ const FALLBACK_MODELS: ModelOption[] = ['default', 'opus', 'sonnet', 'haiku'].ma
 }));
 
 const TRIGGER = 'h-6 gap-1 px-2 text-xs font-normal text-muted-foreground';
+// In the phone's bottom sheet: one control per row, each a 44px target.
+const STACKED_TRIGGER =
+  'h-11 w-full justify-between gap-1 border px-3 text-sm font-normal text-foreground';
 const MENU = 'w-auto min-w-48';
 const fmt = (n: number) => n.toLocaleString('en-US');
 
@@ -71,10 +74,12 @@ function ContextRing({
   context,
   canCompact,
   onCompact,
+  stacked = false,
 }: {
   context: ContextUsage;
   canCompact: boolean;
   onCompact?: () => void;
+  stacked?: boolean;
 }) {
   const auto = context.isAutoCompactEnabled && context.autoCompactThreshold > 0;
   const raw = auto
@@ -95,7 +100,7 @@ function ContextRing({
             <Button
               variant="ghost"
               size="xs"
-              className={cn(TRIGGER, 'ml-auto tabular-nums')}
+              className={cn(stacked ? STACKED_TRIGGER : `${TRIGGER} ml-auto`, 'tabular-nums')}
               aria-label={`Context: ${tip}`}
             >
               <svg viewBox="0 0 18 18" className="size-4 -rotate-90" aria-hidden>
@@ -163,6 +168,7 @@ function ContextRing({
  * The composer footer: model, effort and mode pickers, and the context ring. `chatId` is null on the
  * new-chat screen, where picks are the defaults for the next chat. `ended` chats keep the pick for when
  * they continue. A pick during a turn is sent by the server after that turn's reply.
+ * `stacked` lays the controls out one per row, for the phone's bottom sheet.
  */
 export function ChatControls({
   chatId,
@@ -170,6 +176,7 @@ export function ChatControls({
   busy = false,
   disabled = false,
   onCompact,
+  stacked = false,
 }: {
   chatId: string | null;
   ended?: boolean;
@@ -177,6 +184,7 @@ export function ChatControls({
   disabled?: boolean;
   /** Sends `/compact` as a normal message. Left out where there is no composer. */
   onCompact?: () => void;
+  stacked?: boolean;
 }) {
   const queryClient = useQueryClient();
   const live = useChatLive(chatId);
@@ -270,10 +278,18 @@ export function ChatControls({
     v ? (MODES.find((m) => m.value === v)?.label ?? v) : 'Mode';
 
   return (
-    <div className="flex flex-wrap items-center gap-1" data-testid="chat-controls">
+    <div
+      className={stacked ? 'flex flex-col gap-2' : 'flex flex-wrap items-center gap-1'}
+      data-testid="chat-controls"
+    >
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="xs" className={TRIGGER} disabled={disabled}>
+          <Button
+            variant={stacked ? 'outline' : 'ghost'}
+            size="xs"
+            className={stacked ? STACKED_TRIGGER : TRIGGER}
+            disabled={disabled}
+          >
             {model?.displayName ?? current.model ?? 'Model'}
             <ChevronDownIcon />
           </Button>
@@ -301,7 +317,12 @@ export function ChatControls({
       {showEffort && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="xs" className={TRIGGER} disabled={disabled}>
+            <Button
+              variant={stacked ? 'outline' : 'ghost'}
+              size="xs"
+              className={stacked ? STACKED_TRIGGER : TRIGGER}
+              disabled={disabled}
+            >
               Effort{current.effort ? `: ${current.effort}` : ''}
               <ChevronDownIcon />
             </Button>
@@ -324,7 +345,12 @@ export function ChatControls({
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="xs" className={TRIGGER} disabled={disabled}>
+          <Button
+            variant={stacked ? 'outline' : 'ghost'}
+            size="xs"
+            className={stacked ? STACKED_TRIGGER : TRIGGER}
+            disabled={disabled}
+          >
             {modeLabel(current.permissionMode)}
             <ChevronDownIcon />
           </Button>
@@ -351,6 +377,7 @@ export function ChatControls({
           context={context}
           canCompact={running && !busy && !disabled}
           onCompact={onCompact}
+          stacked={stacked}
         />
       )}
     </div>

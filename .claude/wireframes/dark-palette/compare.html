@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dark palette options</title>
+<style>
+  body { margin: 0; padding: 24px; background: #808080; font-family: 'Inter', system-ui, -apple-system, sans-serif; color: #111; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.lead { margin: 0 0 20px; font-size: 14px; max-width: 900px; }
+  .row { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+  .col { width: 360px; }
+  .col h2 { font-size: 15px; margin: 0 0 2px; }
+  .col .why { font-size: 12.5px; margin: 0 0 10px; min-height: 48px; }
+  .sw { display: flex; gap: 4px; margin-bottom: 10px; }
+  .sw span { flex: 1; height: 22px; border-radius: 4px; font-size: 9px; display: flex; align-items: flex-end; padding: 2px; box-sizing: border-box; color: #fff; text-shadow: 0 0 2px #000; }
+
+  /* Phone */
+  .phone { width: 360px; height: 720px; border-radius: 28px; overflow: hidden; background: var(--background); color: var(--foreground);
+           display: flex; flex-direction: column; font-size: 14px; box-shadow: 0 8px 30px rgba(0,0,0,.35); }
+  .hdr { display: flex; align-items: center; gap: 10px; padding: 14px 14px 10px; border-bottom: 1px solid var(--border); background: var(--background); }
+  .hdr .t { flex: 1; min-width: 0; }
+  .hdr b { font-weight: 600; font-size: 14px; display: block; }
+  .xs { font-size: 11.5px; color: var(--muted-foreground); }
+  .dots i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 3px; vertical-align: middle; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--accent); color: var(--accent-foreground); }
+  .stream { flex: 1; overflow: hidden; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .user { align-self: flex-end; max-width: 80%; background: var(--secondary); color: var(--secondary-foreground); padding: 8px 12px; border-radius: 14px; }
+  .tool { border: 1px solid var(--border); background: var(--card); border-radius: 10px; padding: 8px 10px; }
+  .tool .l1 { display: flex; gap: 6px; align-items: center; }
+  .tool b { font-weight: 600; }
+  .mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; }
+  pre { margin: 0; padding: 10px; border-radius: 8px; background: var(--muted); font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11.5px; line-height: 1.5; overflow: hidden; }
+  .add { color: var(--change-added); } .del { color: var(--change-deleted); }
+  .notice { border: 1px solid var(--border); border-left: 4px solid var(--notice-reminder); background: var(--card); border-radius: 10px; padding: 8px 10px; }
+  .notice b { color: var(--notice-reminder); font-weight: 600; }
+  .link { color: var(--primary); }
+  .dock { border-top: 1px solid var(--border); background: var(--card); padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .dock .q { display: flex; gap: 8px; align-items: center; }
+  .btns { display: flex; gap: 8px; }
+  .btn { flex: 1; height: 48px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 600; }
+  .btn.p { background: var(--primary); color: var(--primary-foreground); }
+  .btn.o { border: 1px solid var(--input); color: var(--foreground); background: transparent; }
+  .composer { padding: 8px 12px; display: flex; gap: 8px; align-items: center; background: var(--background); }
+  .circ { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none; }
+  .circ.o { border: 1px solid var(--border); background: var(--card); color: var(--muted-foreground); }
+  .circ.p { background: var(--primary); color: var(--primary-foreground); }
+  .pill { flex: 1; height: 38px; border-radius: 999px; border: 1px solid var(--input); background: var(--card); display: flex; align-items: center; padding: 0 14px; color: var(--muted-foreground); }
+  .tabs { display: flex; border-top: 1px solid var(--border); background: var(--sidebar); padding: 6px 0 14px; }
+  .tabs div { flex: 1; text-align: center; font-size: 11px; color: var(--muted-foreground); position: relative; }
+  .tabs div.on { color: var(--primary); font-weight: 600; }
+  .tabs i { display: block; font-style: normal; font-size: 17px; }
+  .pip { position: absolute; top: -2px; left: 56%; font-size: 9.5px; min-width: 15px; height: 15px; border-radius: 8px; background: var(--destructive); color: var(--background); font-weight: 700; display: flex; align-items: center; justify-content: center; }
+
+  /* ---- Palettes ---- */
+  .p-current {
+    --background:#0f1318; --foreground:#eceff3; --card:#1c242d; --primary:#a9a1ff; --primary-foreground:#14102e;
+    --secondary:#232c36; --secondary-foreground:#eceff3; --muted:#232c36; --muted-foreground:#8d96a3;
+    --accent:#272446; --accent-foreground:#d9d5ff; --destructive:#ff8f85; --border:#2a333e; --input:#36414e;
+    --sidebar:#151b22; --stage-done:#5ccb7a; --stage-progress:#4fc7e0; --stage-pending:#8d96a3;
+    --change-added:#5ccb7a; --change-deleted:#ff8f85; --notice-reminder:#f0b452;
+  }
+  /* A: warm ink — the dark twin of the light "paper and ink" theme */
+  .p-warm {
+    --background:#161513; --foreground:#ece8e1; --card:#201e1b; --primary:#9d95ff; --primary-foreground:#15112f;
+    --secondary:#2a2723; --secondary-foreground:#ece8e1; --muted:#25221f; --muted-foreground:#9a9389;
+    --accent:#28243f; --accent-foreground:#d8d3ff; --destructive:#f2877c; --border:#302c27; --input:#3d3832;
+    --sidebar:#1b1917; --stage-done:#6cc486; --stage-progress:#5fb8cc; --stage-pending:#9a9389;
+    --change-added:#6cc486; --change-deleted:#f2877c; --notice-reminder:#e5ad55;
+  }
+  /* B: neutral graphite — no tint at all, Linear/Vercel-like */
+  .p-graphite {
+    --background:#111113; --foreground:#ededef; --card:#1b1b1e; --primary:#8f87ff; --primary-foreground:#ffffff;
+    --secondary:#26262a; --secondary-foreground:#ededef; --muted:#202023; --muted-foreground:#8f8f96;
+    --accent:#24223d; --accent-foreground:#d6d2ff; --destructive:#f2847a; --border:#2b2b30; --input:#38383e;
+    --sidebar:#151517; --stage-done:#5ec27c; --stage-progress:#58b4d6; --stage-pending:#8f8f96;
+    --change-added:#5ec27c; --change-deleted:#f2847a; --notice-reminder:#e8b04f;
+  }
+  /* C: true black — OLED, highest contrast, battery-friendly on phones */
+  .p-black {
+    --background:#000000; --foreground:#f2f2f2; --card:#121212; --primary:#9a92ff; --primary-foreground:#0e0b26;
+    --secondary:#1e1e1e; --secondary-foreground:#f2f2f2; --muted:#171717; --muted-foreground:#8e8e8e;
+    --accent:#1e1b36; --accent-foreground:#d9d5ff; --destructive:#ff867b; --border:#262626; --input:#333333;
+    --sidebar:#0a0a0a; --stage-done:#5ccb7a; --stage-progress:#4fc7e0; --stage-pending:#8e8e8e;
+    --change-added:#5ccb7a; --change-deleted:#ff867b; --notice-reminder:#f0b452;
+  }
+</style>
+</head>
+<body>
+<h1>Dark palette options</h1>
+<p class="lead">The same phone chat screen (mobile layout: header, notice, tool call, diff, docked gate, composer, tab bar) in four dark palettes.
+Light mode is warm paper + indigo; the current dark is cool blue slate + lavender, which is likely why it feels off.
+All new options keep an indigo accent so dark matches light.</p>
+
+<div class="row" id="row"></div>
+
+<template id="screen">
+  <div class="phone">
+    <div class="hdr"><span class="xs" style="font-size:18px">&#8249;</span>
+      <div class="t"><b>Add due dates to todos</b>
+        <div class="xs dots"><i style="background:var(--stage-done)"></i><i style="background:var(--stage-progress)"></i><i style="background:var(--stage-pending)"></i><i style="background:var(--stage-pending)"></i> Stage 2 of 4 &middot; Plan</div></div>
+      <span class="badge">Active</span></div>
+    <div class="stream">
+      <div class="user">Add a due date to each todo and show overdue ones first.</div>
+      <div class="notice"><b>Shipline notice</b><div class="xs">Shipline is using its default rules here. Run <span class="link">/shipline-setup</span> to tailor them.</div></div>
+      <div>I'll start with the data model, then the list ordering.</div>
+      <div class="tool"><div class="l1"><span class="xs">&#9874;</span><b>Edit</b><span class="mono xs">src/todos.js</span></div>
+        <div class="xs">Sort todos by due date</div></div>
+      <pre><span class="del">- return list;</span>
+<span class="add">+ return [...list].sort(byDue);</span>
+<span class="add">+ // overdue first, then soonest</span></pre>
+    </div>
+    <div class="dock">
+      <div class="q"><b style="font-weight:600">Gate: Plan &rarr; Implement?</b><span class="xs" style="margin-left:auto">Denied in 4:12</span></div>
+      <div class="btns"><span class="btn o">Not yet</span><span class="btn p">Advance</span></div>
+    </div>
+    <div class="composer"><span class="circ o">&#65291;</span><span class="pill">Message Claude</span><span class="circ p">&#10148;</span></div>
+    <div class="tabs"><div class="on"><i>&#9993;</i>Chats<span class="pip">1</span></div><div><i>&#65291;</i>New</div><div><i>&#9881;</i>Setup</div></div>
+  </div>
+</template>
+
+<script>
+  const options = [
+    ['p-current', 'Current: cool slate + lavender', 'Blue-tinted surfaces and a light lavender accent. Cooler than the warm light theme.',
+      ['#0f1318','#1c242d','#2a333e','#a9a1ff']],
+    ['p-warm', 'A. Warm ink', 'The dark twin of light mode’s paper and ink: warm near-black surfaces, softer indigo. Most consistent with light mode.',
+      ['#161513','#201e1b','#302c27','#9d95ff']],
+    ['p-graphite', 'B. Neutral graphite', 'No tint at all, crisp and modern (Linear/Vercel-like). Indigo accent with white text on buttons.',
+      ['#111113','#1b1b1e','#2b2b30','#8f87ff']],
+    ['p-black', 'C. True black', 'Pure #000 background, highest contrast. Saves battery on OLED phones; can feel stark on a laptop.',
+      ['#000000','#121212','#262626','#9a92ff']],
+  ];
+  const row = document.getElementById('row');
+  const tpl = document.getElementById('screen');
+  for (const [cls, name, why, sw] of options) {
+    const col = document.createElement('div');
+    col.className = 'col';
+    col.innerHTML = `<h2>${name}</h2><p class="why">${why}</p><div class="sw">${sw.map((c, i) =>
+      `<span style="background:${c}">${['bg','card','border','accent'][i]} ${c}</span>`).join('')}</div>`;
+    const screen = tpl.content.firstElementChild.cloneNode(true);
+    screen.classList.add(cls);
+    col.appendChild(screen);
+    row.appendChild(col);
+  }
+</script>
+</body>
+</html>

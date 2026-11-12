@@ -4,6 +4,37 @@ All notable changes to `@forgeyard/shipline` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-11-10
+
+Use the Shipline UI from your phone over your own Tailscale network. The hook contract (INTERFACE) is unchanged.
+
+### Added
+
+- **Phone access.** `shipline ui --remote`, or the new **Setup > Phone access** switch, serves the running UI at
+  your machine's `*.ts.net` address through `tailscale serve` (installed repos only). Shipline adds the mapping and
+  removes it on exit; a mapping left by a crash is cleaned at the next start.
+- **Pairing by QR code.** The link is single use and expires after 5 minutes. The phone names itself, and a paired
+  phone can use every page and action the laptop can. Paired devices are global (`~/.shipline/devices.json`), never
+  expire and are listed in the panel with Revoke, which cuts a device off at once.
+- **Same-Tailscale-user check, and an audit log.** Remote requests must carry the Tailscale identity of the user
+  signed in on the computer. Device actions are written to `ui.log` without request bodies.
+- The permission relay stays laptop-only.
+- **Phone layout.** Below 768 px the UI becomes a phone layout: a bottom tab bar (Chats, New, Setup) with a count of
+  chats waiting for an answer, a full-screen chat list with waiting chats first, a compact chat header with the stage,
+  and a one-line message box with the model, effort and mode controls behind a + button. A gate question or tool
+  approval waits in a bar above the message box, answered with one tap (long questions and full commands or diffs open
+  in a bottom sheet). Code blocks and diffs scroll sideways with a Wrap toggle, the message box follows the on-screen
+  keyboard, and Setup gets a scrolling section strip and a sticky save bar. The desktop layout is unchanged.
+- **Add to home screen.** A web app manifest and an "S" app icon let the phone install the UI as a full-screen app.
+- **Short pairing code.** "Pair a phone" also shows an 8-character code (`XXXX-XXXX`) for the phone's new "Enter
+  pairing code" form, for a home-screen app that does not share Safari's pairing. The link and the code are one pairing
+  (using either uses up both); 5 wrong codes in a row cancel the open pairings.
+
+### Changed
+
+- **Node 22 or newer.** `engines.node` is now `>=22` (was `>=18`), since Node 18 and 20 are end of life. CI tests
+  Node 22, 24 and 26. The hook scripts installed in a repo are unchanged and still run on Node 18.
+
 ## [1.1.0] - 2026-11-09
 
 Setup is the same everywhere and ends with a clear next step. The hook contract (INTERFACE) is unchanged.

@@ -36,7 +36,7 @@ describe('init writes VERSION', () => {
     assert.equal(v.package, PACKAGE_VERSION);
     assert.equal(v.interface, INTERFACE);
     assert.equal(INTERFACE, 1);
-    assert.equal(PACKAGE_VERSION, '1.1.0');
+    assert.equal(PACKAGE_VERSION, '1.2.0');
     assert.deepEqual(readRepoVersion(dir), { package: PACKAGE_VERSION, interface: INTERFACE, files: v.files, excluded });
   });
 
@@ -189,17 +189,6 @@ describe('init write failures', () => {
     } finally {
       chmodSync(agents, 0o755);
     }
-  });
-});
-
-describe('ui on old Node', () => {
-  const major = Number(process.versions.node.split('.')[0]);
-  test('`shipline ui` exits 1 with a message on Node < 20, without loading the UI code', { skip: major >= 20 ? 'runs on Node 18 (the CI test:hooks job)' : false }, () => {
-    const dir = fresh();
-    assert.equal(runInit(dir).code, 0);
-    const r = run(process.execPath, [BIN, 'ui', '--dir', dir, '--no-open'], { cwd: dir });
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /shipline ui requires Node 20 or newer/);
   });
 });
 

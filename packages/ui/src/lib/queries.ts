@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { accessIssueStore, api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
-import type { PromptEvent, Task } from '@/lib/types';
+import type { AccessIssue, ClaimBody, PromptEvent, Task } from '@/lib/types';
 
 /** Kept fresh by SSE `tasks` events; the first load comes from GET /api/tasks. */
 export function useTasks() {
@@ -42,4 +42,40 @@ export function useMediaQuery(query: string): boolean {
     return () => mql.removeEventListener('change', onChange);
   }, [query]);
   return matches;
+}
+
+/** Why this device is locked out (not paired, phone access off, wrong Tailscale user, revoked), or null. */
+export function useAccessIssue(): AccessIssue | null {
+  return useSyncExternalStore(accessIssueStore.subscribe, accessIssueStore.get);
+}
+
+/** GET /api/remote: phone access state and the paired devices. */
+export function useRemote(enabled = true, fast = false) {
+  return useQuery({
+    queryKey: queryKeys.remote,
+    queryFn: api.remote,
+    enabled,
+    // `fast` while a pairing is open, so "pairing cancelled" shows up quickly.
+    refetchInterval: fast ? 3_000 : 15_000,
+  });
+}
+
+/** The Phone access panel's actions: switch, pair, claim and revoke. Each refreshes GET /api/remote. */
+export function useRemoteMutations() {
+  const queryClient = useQueryClient();
+  const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.remote });
+  return {
+    setEnabled: useMutation({
+      mutationFn: (enabled: boolean) => api.setRemote(enabled),
+      onSettled: refresh,
+    }),
+    pair: useMutation({ mutationFn: () => api.createPairing(), onSettled: refresh }),
+    claim: useMutation({
+      mutationFn: (v: ClaimBody) => api.claimPairing(v),
+    }),
+    revoke: useMutation({
+      mutationFn: (id: string) => api.revokeDevice(id),
+      onSettled: refresh,
+    }),
+  };
 }

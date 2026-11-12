@@ -9,7 +9,6 @@ import {
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { cn } from 'cn';
-import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -29,7 +28,7 @@ import {
   SidebarRail,
   useSidebar,
 } from '@/components/ui/sidebar';
-import { StageDot, StageTrail } from '@/components/stage-dots';
+import { ChatRow, sortChats } from '@/components/chat-row';
 import { findTask, usePrompts, useTasks } from '@/lib/queries';
 import type { ChatSummary, Status } from '@/lib/types';
 
@@ -40,26 +39,11 @@ const NAV: { view: View; label: string; icon: typeof MessageSquareIcon }[] = [
   { view: 'setup', label: 'Setup', icon: SettingsIcon },
 ];
 
-const THEMES = [
+export const THEMES = [
   { value: 'system', label: 'System', icon: MonitorIcon },
   { value: 'light', label: 'Light', icon: SunIcon },
   { value: 'dark', label: 'Dark', icon: MoonIcon },
 ] as const;
-
-/** Active chats first, then the most recently active; the server already sends newest first. */
-function sortChats(chats: ChatSummary[]): ChatSummary[] {
-  const stamp = (c: ChatSummary) => new Date(c.last_active).getTime() || 0;
-  return [...chats].sort(
-    (a, b) => Number(b.status === 'active') - Number(a.status === 'active') || stamp(b) - stamp(a),
-  );
-}
-
-/** The folder name of a task, used as its title when the task is finished and so not in the unfinished list. */
-const taskName = (dir: string) =>
-  dir
-    .replace(/[\\/]+$/, '')
-    .split(/[\\/]/)
-    .pop() ?? dir;
 
 function ThemeMenu() {
   const { theme = 'system', setTheme } = useTheme();
@@ -189,7 +173,6 @@ export function AppSidebar({
           <SidebarGroup className="py-1 group-data-[collapsible=icon]:hidden">
             <SidebarMenu>
               {sorted.map((c) => {
-                const active = c.status === 'active';
                 const task = findTask(tasks.data?.tasks, c.task_dir);
                 return (
                   <SidebarMenuItem key={c.id}>
@@ -201,28 +184,7 @@ export function AppSidebar({
                         done();
                       }}
                     >
-                      <div className="flex min-w-0 flex-1 flex-col gap-1">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <StageDot
-                            status={active ? 'in_progress' : 'done'}
-                            className="size-2 ring-2"
-                          />
-                          <span className="min-w-0 flex-1 truncate">
-                            {c.title || 'Untitled chat'}
-                          </span>
-                          {waiting.has(c.id) && (
-                            <Badge className="h-4 px-1.5 text-[10px]">Needs answer</Badge>
-                          )}
-                        </div>
-                        {c.task_dir && (
-                          <div className="flex min-w-0 items-center gap-2 pl-4 text-xs text-muted-foreground">
-                            <span className="min-w-0 flex-1 truncate">
-                              {task ? task.title || task.slug : taskName(c.task_dir)}
-                            </span>
-                            {task && <StageTrail stages={task.stages} />}
-                          </div>
-                        )}
-                      </div>
+                      <ChatRow chat={c} task={task} waiting={waiting.has(c.id)} />
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );

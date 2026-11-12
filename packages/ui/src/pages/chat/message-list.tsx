@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react';
+import { cn } from 'cn';
+import { useIsMobile } from '@/hooks/use-mobile';
 import type { PromptEvent } from '@/lib/types';
 import { Markdown } from '@/components/markdown';
 import { ImageThumbs } from '@/components/image-viewer';
@@ -19,7 +21,10 @@ function PromptCard({ prompt }: { prompt: PromptEvent }) {
   );
 }
 
-/** History and live items, then any pending permission cards. Sticks to the bottom while new items arrive. */
+/**
+ * History and live items, then any pending permission cards. Sticks to the bottom while new items arrive.
+ * On a phone the pending cards are not here: the decision dock above the composer shows them.
+ */
 export function MessageList({
   items,
   prompts,
@@ -35,30 +40,46 @@ export function MessageList({
   ended: boolean;
   onSendToClaude: (text: string) => Promise<boolean>;
 }) {
+  const mobile = useIsMobile();
+  const shown = mobile ? [] : prompts;
   const box = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
   const last = items[items.length - 1];
   const grow =
     last?.kind === 'text' ? last.text.length : last?.kind === 'shell' ? last.output.length : '';
-  const tick = `${items.length}:${grow}:${prompts.length}`;
+  const tick = `${items.length}:${grow}:${shown.length}`;
   useEffect(() => {
     const el = box.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [tick]);
+
+  // On a phone the box shrinks when the keyboard opens or the dock appears: keep the latest messages in view.
+  useEffect(() => {
+    const el = box.current;
+    if (!mobile || !el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (stick.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [mobile]);
 
   return (
     <div
       ref={box}
       // Block layout, not flex-col: as flex items, cards with overflow-hidden shrank to their
       // title inside this scroll box and hid the questions.
-      className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1"
+      className={cn(
+        'min-h-0 flex-1 space-y-3 overflow-y-auto pr-1',
+        mobile && 'overscroll-contain',
+      )}
       onScroll={(e) => {
         const el = e.currentTarget;
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
       }}
     >
-      {items.length === 0 && prompts.length === 0 && (
+      {items.length === 0 && shown.length === 0 && (
         <p className="text-sm text-muted-foreground">No messages yet.</p>
       )}
       {items.map((item) => {
@@ -101,7 +122,7 @@ export function MessageList({
             return null;
         }
       })}
-      {prompts.map((p) => (
+      {shown.map((p) => (
         <PromptCard key={p.id} prompt={p} />
       ))}
     </div>

@@ -72,9 +72,14 @@ export async function readImages(
 export function AttachButton({
   disabled,
   onFiles,
+  className,
+  label,
 }: {
   disabled: boolean;
   onFiles: (files: File[]) => void;
+  className?: string;
+  /** Shows this text next to the icon (the phone's chat options sheet). Icon only when omitted. */
+  label?: string;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const change = (e: ChangeEvent<HTMLInputElement>) => {
@@ -97,13 +102,15 @@ export function AttachButton({
       <Button
         type="button"
         variant="outline"
-        size="icon"
+        size={label ? 'default' : 'icon'}
+        className={className}
         disabled={disabled}
         onClick={() => input.current?.click()}
-        aria-label="Attach"
+        aria-label={label ? undefined : 'Attach'}
         title="Attach images"
       >
         <PaperclipIcon />
+        {label}
       </Button>
     </>
   );

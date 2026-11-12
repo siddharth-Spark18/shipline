@@ -1,5 +1,6 @@
 import { ChevronRightIcon, WrenchIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { inputSummary, type Item } from '@/pages/chat/timeline';
 
@@ -23,34 +24,78 @@ const MAX = 4000;
 const clip = (s: string) =>
   s.length > MAX ? `${s.slice(0, MAX)}\n... (${s.length - MAX} more characters)` : s;
 
+/** The second line of a phone row: the call's own description (Bash has one), else the first line of its result. */
+function detailOf(item: ToolItem): string {
+  const input = item.input;
+  if (typeof input === 'object' && input !== null) {
+    const d = (input as Record<string, unknown>).description;
+    if (typeof d === 'string' && d.trim()) return d.trim();
+  }
+  const first = item.result?.text.split('\n').find((l) => l.trim() !== '') ?? '';
+  return first.trim();
+}
+
 /** A collapsible tool call: name and one-line summary, then the input and the result. */
 export function ToolCall({ item }: { item: ToolItem }) {
+  const mobile = useIsMobile();
   const summary = inputSummary(item.name, item.input);
+  const badges = (
+    <>
+      {item.outcome === 'blocked' && (
+        <Badge variant="outline" className={TONE.blocked}>
+          Blocked
+        </Badge>
+      )}
+      {item.outcome === 'denied' && (
+        <Badge variant="outline" className={TONE.denied}>
+          Denied
+        </Badge>
+      )}
+      {!item.outcome && item.result?.isError && (
+        <Badge variant="outline" className={TONE.blocked}>
+          Error
+        </Badge>
+      )}
+      {!item.result && <Badge variant="outline">Running</Badge>}
+    </>
+  );
+  const detail = mobile ? detailOf(item) : '';
   return (
     <Collapsible className="group rounded-lg border bg-card">
-      <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm">
+      <CollapsibleTrigger
+        className={
+          mobile
+            ? 'flex min-h-11 w-full items-center gap-2 px-3 py-1.5 text-left text-sm'
+            : 'flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm'
+        }
+      >
         <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
-        <WrenchIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="font-medium">{item.name}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-          {summary}
-        </span>
-        {item.outcome === 'blocked' && (
-          <Badge variant="outline" className={TONE.blocked}>
-            Blocked
-          </Badge>
+        {mobile ? (
+          <>
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <WrenchIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="font-medium">{item.name}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
+                  {summary}
+                </span>
+              </span>
+              {detail && (
+                <span className="truncate pl-5 text-xs text-muted-foreground">{detail}</span>
+              )}
+            </span>
+            {badges}
+          </>
+        ) : (
+          <>
+            <WrenchIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="font-medium">{item.name}</span>
+            <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
+              {summary}
+            </span>
+            {badges}
+          </>
         )}
-        {item.outcome === 'denied' && (
-          <Badge variant="outline" className={TONE.denied}>
-            Denied
-          </Badge>
-        )}
-        {!item.outcome && item.result?.isError && (
-          <Badge variant="outline" className={TONE.blocked}>
-            Error
-          </Badge>
-        )}
-        {!item.result && <Badge variant="outline">Running</Badge>}
       </CollapsibleTrigger>
       <CollapsibleContent className="flex flex-col gap-2 border-t px-3 py-2">
         <div>

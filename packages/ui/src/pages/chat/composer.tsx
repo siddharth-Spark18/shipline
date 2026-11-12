@@ -1,8 +1,24 @@
-import { useMemo, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type DragEvent,
+  type KeyboardEvent,
+} from 'react';
 import { cn } from 'cn';
-import { SendIcon } from 'lucide-react';
+import { PlusIcon, SendIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { Textarea } from '@/components/ui/textarea';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { api } from '@/lib/api';
 import type { ChatCommand, ImageData } from '@/lib/types';
 import {
@@ -32,6 +48,9 @@ const INTERACTIVE_ONLY = [
 
 const IS_WINDOWS = typeof navigator !== 'undefined' && /windows/i.test(navigator.userAgent);
 
+/** About 6 lines of the phone's message box; past this it scrolls. */
+const MAX_FIELD_PX = 160;
+
 const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
 
 /**
@@ -41,6 +60,9 @@ const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer.types).includes('Fi
  * `onSend` resolves true when the message was accepted (the box is cleared) and false when it
  * failed (the text stays so nothing is lost). `disabled` turns the whole box off; `busy` (Claude is
  * mid-turn) only holds back messages to Claude, since `!` commands run independently of a turn.
+ *
+ * On a phone the box is one line that grows with the text (about 6 lines, then it scrolls), the send button is
+ * an icon, and the model / effort / mode / context controls sit in a bottom sheet behind a + button.
  */
 export function Composer({
   disabled,
@@ -71,6 +93,17 @@ export function Composer({
   const [dismissed, setDismissed] = useState(false);
   const [index, setIndex] = useState(0);
   const off = disabled || sending;
+  const mobile = useIsMobile();
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const field = useRef<HTMLTextAreaElement>(null);
+
+  // Autogrow on a phone (the desktop box is a fixed two rows).
+  useEffect(() => {
+    const el = field.current;
+    if (!mobile || !el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, MAX_FIELD_PX)}px`;
+  }, [mobile, text]);
 
   const shellMode = text.startsWith('!');
   const shellCommand = shellMode ? text.slice(1).trim() : '';
@@ -207,7 +240,8 @@ export function Composer({
     : IS_WINDOWS
       ? 'Runs in cmd.exe in the repo folder. Nothing is sent to Claude.'
       : 'Runs in the repo folder, like your terminal. Nothing is sent to Claude.';
-  const line = note ?? (shellMode ? shellHint : hint);
+  // The phone shows only errors under the box: the hints cost a line of messages.
+  const line = mobile ? note : (note ?? (shellMode ? shellHint : hint));
 
   return (
     <div
@@ -239,13 +273,27 @@ export function Composer({
             onHover={setIndex}
           />
         )}
-        {allowImages && (
+        {mobile && (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-11 shrink-0 rounded-full"
+            aria-label="Chat settings"
+            onClick={() => setControlsOpen(true)}
+          >
+            <PlusIcon />
+          </Button>
+        )}
+        {/* On a phone, Attach lives in the + sheet so the message box keeps the row's width. */}
+        {allowImages && !mobile && (
           <AttachButton
             disabled={off || images.length >= MAX_IMAGES}
             onFiles={(f) => void addFiles(f)}
           />
         )}
         <Textarea
+          ref={field}
           value={text}
           onChange={(e) => change(e.target.value)}
           onKeyDown={onKeyDown}
@@ -254,11 +302,14 @@ export function Composer({
           placeholder={
             shellMode
               ? 'Shell command'
-              : (placeholder ?? 'Message Claude, / for commands, ! to run a command')
+              : mobile
+                ? (placeholder ?? 'Message Claude')
+                : (placeholder ?? 'Message Claude, / for commands, ! to run a command')
           }
-          rows={2}
+          rows={mobile ? 1 : 2}
           className={cn(
             'min-h-0 flex-1 resize-none',
+            mobile && 'field-sizing-fixed min-h-11 py-2.5',
             shellMode && 'font-mono',
             dragging && 'border-ring ring-3 ring-ring/50',
           )}
@@ -268,17 +319,60 @@ export function Composer({
           onClick={() => void send()}
           disabled={off || !canSend}
           aria-label={shellMode ? 'Run command' : 'Send'}
+          size={mobile ? 'icon' : 'default'}
+          className={mobile ? 'size-11 shrink-0 rounded-full' : undefined}
         >
           <SendIcon />
-          {shellMode ? 'Run' : 'Send'}
+          {!mobile && (shellMode ? 'Run' : 'Send')}
         </Button>
       </div>
-      <ChatControls
-        chatId={chatId}
-        busy={busy}
-        disabled={disabled}
-        onCompact={() => void compact()}
-      />
+      {mobile ? (
+        <Sheet open={controlsOpen} onOpenChange={setControlsOpen}>
+          <SheetContent
+            side="bottom"
+            className="max-h-[88svh] gap-0 overflow-y-auto p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+          >
+            <SheetHeader className="p-0 pb-3 pr-10">
+              <SheetTitle>Chat settings</SheetTitle>
+              <SheetDescription className="sr-only">
+                Attach images, and the model, effort, permission mode and context for this chat.
+              </SheetDescription>
+            </SheetHeader>
+            {allowImages && (
+              <AttachButton
+                label={
+                  images.length >= MAX_IMAGES
+                    ? `Attach images (limit of ${MAX_IMAGES} reached)`
+                    : 'Attach images'
+                }
+                className="mb-3 h-11 w-full justify-start"
+                disabled={off || images.length >= MAX_IMAGES}
+                onFiles={(f) => {
+                  setControlsOpen(false);
+                  void addFiles(f);
+                }}
+              />
+            )}
+            <ChatControls
+              stacked
+              chatId={chatId}
+              busy={busy}
+              disabled={disabled}
+              onCompact={() => {
+                setControlsOpen(false);
+                void compact();
+              }}
+            />
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <ChatControls
+          chatId={chatId}
+          busy={busy}
+          disabled={disabled}
+          onCompact={() => void compact()}
+        />
+      )}
       {line && (
         <p
           className={cn('text-xs', note ? 'text-destructive' : 'text-muted-foreground')}

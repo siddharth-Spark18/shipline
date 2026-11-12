@@ -386,9 +386,10 @@ describe('command line', () => {
   // 1.0 plan, item 4: the folder is given only with --dir; anything else is a usage error (exit 2). The errors exit the
   // process, so they run through the bin.
   test('parseUiArgs: --dir <path> or --dir=<path>; flags in any order', () => {
-    assert.deepEqual(parseUiArgs(['--port', '4000', '--dir', 'repo', '--no-open']), { dir: path.resolve('repo'), port: 4000, open: false });
-    assert.deepEqual(parseUiArgs(['--dir=repo', '--port=0']), { dir: path.resolve('repo'), port: 0, open: true });
-    assert.deepEqual(parseUiArgs([]), { dir: process.cwd(), port: 0, open: true });
+    assert.deepEqual(parseUiArgs(['--port', '4000', '--dir', 'repo', '--no-open']), { dir: path.resolve('repo'), port: 4000, open: false, remote: false });
+    assert.deepEqual(parseUiArgs(['--dir=repo', '--port=0']), { dir: path.resolve('repo'), port: 0, open: true, remote: false });
+    assert.deepEqual(parseUiArgs([]), { dir: process.cwd(), port: 0, open: true, remote: false });
+    assert.deepEqual(parseUiArgs(['--remote']), { dir: process.cwd(), port: 0, open: true, remote: true });
   });
 
   test('ui: a bare folder, an unknown option or --dir without a path exits 2; --help and -h print the usage', () => {

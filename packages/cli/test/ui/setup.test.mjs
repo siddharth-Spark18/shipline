@@ -182,7 +182,7 @@ describe('saving', () => {
     assert.equal(s3.config.model.commands.typecheck, 'pnpm tsc');
     // The template ends with the comment documenting `setup` (Teams Phase 1, E); unknown keys follow it. The guardrail
     // keys (Teams Phase 3) sit between ci and that comment, and the protected_paths block list is written back as is.
-    assert.match(read('.shipline/config.yml'), /\n {2}typecheck: pnpm tsc\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\n# stale_checks:[^\n]*\n# The check runs the checker[^\n]*\n# \(the PR that first adds Shipline[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n {2}stale_checks: warn\n\n# Guardrails:[^]*\nprotected_paths:\n {2}- migrations\/\*\*\n[^]*\n {2}- go\.sum\n\n# At Verify[^]*\nscope_check:\n {2}enabled: true\n {2}sensitive_extra: \[\]\n\n# Set to `done`[^\n]*\n# Until then[^\n]*\n\nteam_owner: platform\n$/);
+    assert.match(read('.shipline/config.yml'), /\n {2}typecheck: pnpm tsc\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\n# stale_checks:[^\n]*\n# The check runs the checker[^\n]*\n# \(the PR that first adds Shipline[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n {2}stale_checks: warn\n\n# Guardrails:[^]*\nprotected_paths:\n {2}- migrations\/\*\*\n[^]*\n {2}- composer\.lock\n\n# At Verify[^]*\nscope_check:\n {2}enabled: true\n {2}sensitive_extra: \[\]\n\n# Set to `done`[^\n]*\n# Until then[^\n]*\n\nteam_owner: platform\n$/);
   });
 
   test('a file changed on disk gives 409, and in a two-file save nothing is written', async () => {

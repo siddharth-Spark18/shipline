@@ -116,6 +116,17 @@ export function hookMessage(ev: Rec): string | null {
   return null;
 }
 
+/** What Claude Code writes as a user message when a turn is interrupted (verified on claude 2.1.323). */
+const INTERRUPTED_TEXT = '[Request interrupted by user]';
+const INTERRUPTED_NOTICE = 'Interrupted';
+
+const interruptedNotice = (): Item => ({
+  kind: 'notice',
+  id: nextId('n'),
+  level: 'info',
+  text: INTERRUPTED_NOTICE,
+});
+
 const LOCAL_COMMAND_OUTPUT = /^\s*<local-command-stdout>/;
 
 function firstText(content: unknown): string {
@@ -216,6 +227,10 @@ function userEvent(out: Item[], ev: Rec, ctx: StreamCtx) {
   if (!isRec(msg) || ev.isMeta === true) return;
   // Claude replays the output of a local command (for example `/model`) as a user event: not a message.
   if (ev.isReplay === true && LOCAL_COMMAND_OUTPUT.test(firstText(msg.content))) return;
+  if (firstText(msg.content).trim() === INTERRUPTED_TEXT) {
+    out.push(interruptedNotice());
+    return;
+  }
   if (typeof msg.content === 'string') {
     // Live: the composer already added the message. History: this is the real thing.
     if (ctx.history && msg.content.trim())
@@ -287,12 +302,19 @@ function resultEvent(out: Item[], ev: Rec) {
     if (!USAGE_LIMIT.test(text) && !repeated)
       out.push({ kind: 'notice', id: nextId('n'), level: 'info', text });
   } else if (isError) {
-    out.push({
-      kind: 'notice',
-      id: nextId('n'),
-      level: 'info',
-      text: `Turn ended: ${asStr(ev.subtype) ?? 'error'}`,
-    });
+    // The result that follows an interrupt has no text and nothing to report beyond the notice before it.
+    const prev = out[out.length - 1];
+    const afterInterrupt =
+      ev.subtype === 'error_during_execution' &&
+      prev?.kind === 'notice' &&
+      prev.text === INTERRUPTED_NOTICE;
+    if (!afterInterrupt)
+      out.push({
+        kind: 'notice',
+        id: nextId('n'),
+        level: 'info',
+        text: `Turn ended: ${asStr(ev.subtype) ?? 'error'}`,
+      });
   }
   // Any partial that never got its final message stops being "streaming".
   for (let i = 0; i < out.length; i++) {
@@ -417,6 +439,10 @@ export function normalizeHistory(history: unknown[] | null | undefined): Item[] 
       // Server history shape (transcript.mjs): { kind, text }.
       const text = asStr(entry.text) ?? '';
       if (!text.trim()) continue;
+      if (entry.kind === 'user' && text.trim() === INTERRUPTED_TEXT) {
+        items.push(interruptedNotice());
+        continue;
+      }
       items.push(
         entry.kind === 'user'
           ? { kind: 'user', id: nextId('u'), text }

@@ -4,6 +4,56 @@ All notable changes to `@forgeyard/shipline` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-11-13
+
+Better coverage of stacks beyond Node, and a full setup stepper in the browser. The hook contract (INTERFACE) is
+unchanged.
+
+### Added
+
+- **Two ways to set up from the browser.** `shipline ui` in a repo without Shipline now starts with a choice:
+  **Set up with Claude** installs the defaults and opens a chat with `/shipline-setup` already sent (it needs Claude
+  Code installed and signed in); **Set up here** is a seven-step stepper: workflows, stages and rules (the Setup
+  page's stage editor: add, remove and reorder stages, enforcement, confirmation, agent and rules text), agents and
+  skills, project settings, every guardrail, and the CI check. Nothing is written until Install, and a problem the
+  server finds is listed on Review under the step that fixes it, with a **Go to step** button. `init --terminal` and
+  `init --yes` are unchanged.
+- **Mark setup as done.** The Setup page's default-rules banner now has this button next to **Run setup with
+  Claude**, for a team that tailored everything by hand. It writes `setup: done` into `config.yml`, keeping its
+  comments.
+- **A working indicator in chats.** While Claude works, the last row of the messages shows an animated mark, what it
+  is doing (running a command, editing a file, writing), and how long the turn has run. It survives a reload and
+  shows on a second device.
+- **Esc interrupts the current turn.** On desktop, Esc stops the turn without ending the chat, and any waiting
+  prompts are denied; you can type the next message straight away. **Stop** still ends the chat.
+- **Questions and approvals dock above the message box on desktop**, as they already did on a phone, instead of
+  sitting in the scrolled history. An answered question stays in the history as one line.
+
+### Changed
+
+- **Deploy, migrate and release rails know more tools.** Commands run through `uv run`, `poetry run`, `pipenv run`,
+  `hatch run`, `pdm run`, `rye run`, `npm exec`, `yarn exec` and `bun x` are now matched on the tool behind them
+  (`uv run alembic upgrade head` asks first, as `alembic upgrade head` already did). New migrate tools: Laravel
+  `artisan migrate`, Ecto, EF Core `dotnet ef database update`, sqlx, diesel, `supabase db push`, Liquibase, Atlas
+  and dbmate. New deploy tools: wrangler, firebase, Elastic Beanstalk, SAM, Kamal, Railway, Capistrano and `az`.
+  New release tools: `uv`, `poetry`, `hatch`, `pdm`, `flit` and `bun publish`, `gem push`, `mvn deploy`, Gradle
+  `publish` tasks and `dotnet nuget push`.
+- **More lockfiles are protected by default:** `bun.lock`, `bun.lockb`, `uv.lock`, `Pipfile.lock`, `Gemfile.lock`
+  and `composer.lock` join the shipped `protected_paths`. `config.yml` is yours, so an existing repo keeps its list:
+  add them in **Setup > Guardrails** or by hand.
+- **The Verify scope check knows more test and lint files:** RSpec, Minitest, ExUnit, JUnit/Kotlin, xUnit, PHPUnit
+  and XCTest tests, and pylint, mypy, pyright, rustfmt, clippy, SwiftLint, PHP_CodeSniffer, PHPStan, Checkstyle,
+  detekt, Credo and clang-format/clang-tidy configs.
+- **"Does this repo have a UI?" is detected better.** Rails, Laravel, Phoenix, ASP.NET, Twig, Jinja and Astro
+  templates, iOS storyboards and Flutter apps count. HTML in generated folders (`target`, `coverage`, `htmlcov`,
+  `.venv`, `.next`, `out`, `_build` and the like) no longer does, so a Rust or Python repo that built its docs or a
+  coverage report isn't given the Wireframes stage.
+
+### Fixed
+
+- **The "default rules" banner no longer stays after an in-app setup.** Finishing the stepper writes `setup: done`
+  (so the Setup page banner and the Claude Code session-start reminder stop), as `/shipline-setup` does.
+
 ## [1.2.0] - 2026-11-12
 
 Use the Shipline UI from your phone over your own Tailscale network. The hook contract (INTERFACE) is unchanged.

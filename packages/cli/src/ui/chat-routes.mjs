@@ -1,4 +1,4 @@
-// Chat API handlers: GET/POST /api/chats, GET /api/chats/<id>, <id>/message, /stop, /kill, /continue, plus
+// Chat API handlers: GET/POST /api/chats, GET /api/chats/<id>, <id>/message, /stop, /interrupt, /kill, /continue, plus
 // /api/chat/commands, /api/chat/controls and /api/trust.
 // Node 20+, no dependencies.
 import { MIN_CLAUDE_VERSION, claudeHealth } from './claude.mjs';
@@ -45,10 +45,11 @@ function parseImages(images) {
 // A lock left by a server that exited without releasing it is ignored, or the chat would show as
 // active forever while every message to it fails with chat-ended.
 function withStatus(app, chat) {
-  if (chat.status !== 'active') return chat;
+  if (chat.status !== 'active') return { ...chat, busy: false, busySince: null };
   const lock = liveLock(app.repo.root, app.port);
   const live = app.chats.activeId() === chat.id || (lock && lock.session_id === chat.id);
-  return live ? chat : { ...chat, status: 'ended' };
+  if (!live) return { ...chat, status: 'ended', busy: false, busySince: null };
+  return { ...chat, ...app.chats.busyInfo(chat.id) };
 }
 
 function requireChat(app, id) {
@@ -228,6 +229,15 @@ export function routes(app) {
       handler: async ({ params }) => {
         requireChat(app, params.id);
         await app.chats.stop(params.id);
+        return { ok: true };
+      },
+    },
+    {
+      method: 'POST',
+      path: '/api/chats/:id/interrupt',
+      handler: async ({ params }) => {
+        requireChat(app, params.id);
+        await app.chats.interrupt(params.id);
         return { ok: true };
       },
     },

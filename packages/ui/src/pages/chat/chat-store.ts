@@ -30,6 +30,8 @@ export interface ChatLive {
   items: Item[];
   /** Unknown until this page sees a turn start or end; then the server's `chat.busy` applies. */
   busy?: boolean;
+  /** ISO time the running turn started, from a local send or the `busy` event; never from the fetched chat. */
+  busySince?: string | null;
   /** Unknown until an `ended`/`fatal` event or a continue; then the server's status applies. */
   ended?: boolean;
   fatal?: FatalInfo;
@@ -64,6 +66,7 @@ function ingest(e: ChatEvent) {
     if (e.kind === 'fatal') {
       return {
         busy: false,
+        busySince: null,
         ended: true,
         fatal: {
           reason: e.reason,
@@ -73,7 +76,9 @@ function ingest(e: ChatEvent) {
         },
       };
     }
-    if (e.kind === 'ended') return { busy: false, ended: true };
+    if (e.kind === 'ended') return { busy: false, busySince: null, ended: true };
+    if (e.kind === 'busy')
+      return { busy: e.busy === true, busySince: e.busy === true ? (e.busySince ?? null) : null };
     if (e.kind === 'orphans') return { orphans: true };
     if (e.kind === 'orphans-cleared') return { orphans: false };
     if (e.kind === 'controls')
@@ -87,7 +92,7 @@ function ingest(e: ChatEvent) {
     if (e.kind !== 'event') return {};
     const items = applyEvent(s.items, e.event, s.ctx);
     const result = resultSummary(e.event);
-    return result ? { items, result, busy: false } : { items };
+    return result ? { items, result, busy: false, busySince: null } : { items };
   });
 }
 
@@ -143,13 +148,16 @@ export const chatStore = {
     update(id, (s) => ({
       items: prepend ? [item, ...s.items] : [...s.items, item],
       busy: true,
+      busySince: new Date().toISOString(),
     }));
     return item.id;
   },
   /** Takes back an echoed message whose POST failed. */
   dropItem: (id: string, itemId: string) =>
     update(id, (s) => ({ items: s.items.filter((i) => i.id !== itemId) })),
-  setBusy: (id: string, busy: boolean) => update(id, () => ({ busy })),
+  /** After a failed send: `busy` true means a turn this page didn't know about, so its start time comes from the server. */
+  setBusy: (id: string, busy: boolean) =>
+    update(id, () => ({ busy, busySince: busy ? undefined : null })),
   resumed: (id: string) => update(id, () => ({ ended: false, fatal: undefined, orphans: false })),
   clearOrphans: (id: string) => update(id, () => ({ orphans: false })),
   recordDenied: (id: string, tool: string) =>

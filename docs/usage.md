@@ -60,10 +60,13 @@ It starts a server on `127.0.0.1` (a random port unless `--port`) for the repo y
 requests with a foreign `Host` or `Origin` are refused. The UI is optional: the hooks enforce the workflow
 with or without it. It runs your own installed `claude` and never sees your Claude credentials.
 
-- **Chat:** talk to Claude in the repo. Permission and question prompts appear in the page. A chat can always
-  be continued in a terminal with `claude --resume <id>`. One chat can work through several tasks: its side
-  panel lists every task it touched (the current one with its stages and files), plus a collapsible list of the
-  working-tree changes. Unfinished tasks no chat is working on appear on the new-chat screen with **Resume**.
+- **Chat:** talk to Claude in the repo. While Claude works, a row at the end of the messages shows what it is
+  doing and for how long. On desktop, **Esc** stops the current turn and the chat stays active; **Stop** in the
+  header ends the whole chat. Permission and question prompts dock above the message box, on desktop and phone,
+  and an answered question stays in the history as one line. A chat can always be continued in a terminal with
+  `claude --resume <id>`. One chat can work through several tasks: its side panel lists every task it touched
+  (the current one with its stages and files), plus a collapsible list of the working-tree changes. Unfinished
+  tasks no chat is working on appear on the new-chat screen with **Resume**.
 - **Setup:** forms for `config.yml`, each workflow and each rules file. Saving shows a diff first, keeps the
   fields it doesn't know, and lists open tasks that still use an old stage list. Commit the files after saving.
 

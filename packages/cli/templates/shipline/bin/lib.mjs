@@ -178,7 +178,8 @@ export const RAIL_DEFAULTS = {
 export const DEFAULT_PROTECTED_PATHS = [
   'migrations/**', 'db/migrate/**', 'prisma/migrations/**', 'alembic/versions/**', 'infra/**', 'terraform/**', '**/*.tf', 'k8s/**',
   'helm/**', '**/Dockerfile*', '**/docker-compose*', '.github/workflows/**', '.gitlab-ci.yml', '.circleci/**', 'Jenkinsfile',
-  'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'poetry.lock', 'Cargo.lock', 'go.sum',
+  'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb', 'poetry.lock', 'uv.lock', 'Pipfile.lock',
+  'Cargo.lock', 'go.sum', 'Gemfile.lock', 'composer.lock',
 ];
 // The named actions a stage block can hold back (`blocks: [{ actions: [...] }]`).
 export const ACTIONS = ['commit', 'push', 'pr', 'merge', 'release', 'deploy', 'migrate'];
@@ -1101,7 +1102,12 @@ export function makeMatchCtx(root, cwd, cfg) {
   return ctx;
 }
 
-// ---- tools behind other tools: npx prisma ..., pnpm exec, bundle exec rails ..., python -m alembic ... ----
+// ---- tools behind other tools: npx prisma ..., pnpm exec, bundle exec rails ..., python -m alembic,
+// uv run / poetry run / pipenv run / hatch run / pdm run / rye run ... ----
+
+const PY_RUNNERS = new Set(['uv', 'poetry', 'pipenv', 'hatch', 'pdm', 'rye']);
+// Options of `<runner> run` that take a value (so the value isn't read as the tool).
+const PY_RUN_VALUE_OPTS = new Set(['--with', '--with-requirements', '--with-editable', '--python', '-p', '--env-file', '--project', '--directory', '--extra', '--group', '--package', '--index', '--index-url', '-C', '--config', '-e', '--env']);
 
 function effective(p) {
   let tool = p.tool;
@@ -1123,6 +1129,20 @@ function effective(p) {
     } else if (/^python[\d.]*$/.test(tool) && args[0] === '-m' && args[1]) {
       tool = baseName(args[1]);
       args = args.slice(2);
+    } else if (PY_RUNNERS.has(tool) && args[0] === 'run') {
+      let i = 1;
+      while (i < args.length && args[i].startsWith('-') && args[i] !== '--') i += PY_RUN_VALUE_OPTS.has(args[i]) ? 2 : 1;
+      if (args[i] === '--') i++;
+      if (i >= args.length) break;
+      tool = baseName(args[i]);
+      args = args.slice(i + 1);
+    } else if ((tool === 'npm' && args[0] === 'exec') || (tool === 'yarn' && args[0] === 'exec') || (tool === 'bun' && args[0] === 'x')) {
+      let i = 1;
+      while (i < args.length && args[i].startsWith('-') && args[i] !== '--') i += args[i] === '-p' || args[i] === '--package' ? 2 : 1;
+      if (args[i] === '--') i++;
+      if (i >= args.length) break;
+      tool = baseName(args[i]);
+      args = args.slice(i + 1);
     } else break;
   }
   return { tool, args };
@@ -1158,6 +1178,20 @@ function deployPattern(e) {
       return pos.includes('deploy');
     case 'aws':
       return pos.slice(0, 3).includes('deploy');
+    case 'wrangler':
+      return pos[0] === 'deploy' || pos[0] === 'publish' || (['pages', 'versions'].includes(pos[0]) && pos[1] === 'deploy');
+    case 'firebase':
+    case 'eb':
+    case 'sam':
+      return pos[0] === 'deploy';
+    case 'kamal':
+      return ['deploy', 'redeploy', 'rollback', 'setup'].includes(pos[0]);
+    case 'railway':
+      return ['up', 'redeploy'].includes(pos[0]);
+    case 'cap':
+      return pos.slice(0, 2).includes('deploy');
+    case 'az':
+      return pos.includes('deploy') || (pos[0] === 'deployment' && pos.includes('create'));
     default:
       return false;
   }
@@ -1167,7 +1201,26 @@ function migratePattern(e) {
   const { tool, args } = e;
   const pos = positionals(args, VALUE_OPTS);
   if (/^python[\d.]*$/.test(tool)) return args[0] !== undefined && baseName(args[0]) === 'manage.py' && args[1] === 'migrate';
+  if (tool === 'php') return args[0] !== undefined && baseName(args[0]) === 'artisan' && /^migrate(:|$)/.test(args[1] || '');
   switch (tool) {
+    case 'artisan':
+      return /^migrate(:|$)/.test(pos[0] || '');
+    case 'mix':
+      return /^ecto\.(migrate|rollback|reset|drop)$/.test(pos[0] || '');
+    case 'dotnet':
+      return pos[0] === 'ef' && pos[1] === 'database' && ['update', 'drop'].includes(pos[2]);
+    case 'sqlx':
+      return (pos[0] === 'migrate' && ['run', 'revert'].includes(pos[1])) || (pos[0] === 'database' && ['reset', 'drop'].includes(pos[1]));
+    case 'diesel':
+      return (pos[0] === 'migration' && ['run', 'revert', 'redo'].includes(pos[1])) || (pos[0] === 'database' && pos[1] === 'reset');
+    case 'supabase':
+      return pos[0] === 'db' && (pos[1] === 'push' || (pos[1] === 'reset' && args.includes('--linked')));
+    case 'liquibase':
+      return /^(update|rollback|drop-?all)/i.test(pos[0] || '');
+    case 'atlas':
+      return (pos[0] === 'migrate' && ['apply', 'down'].includes(pos[1])) || (pos[0] === 'schema' && pos[1] === 'apply');
+    case 'dbmate':
+      return ['up', 'down', 'rollback', 'migrate', 'drop'].includes(pos[0]);
     case 'prisma':
       return (pos[0] === 'migrate' && ['deploy', 'reset'].includes(pos[1])) || (pos[0] === 'db' && pos[1] === 'push');
     case 'rails':
@@ -1252,6 +1305,11 @@ function directAction(p, action, ctx) {
       if (p.tool === 'yarn') return pos[0] === 'npm' && pos[1] === 'publish';
       if (p.tool === 'cargo') return pos[0] === 'publish';
       if (p.tool === 'twine') return pos[0] === 'upload';
+      if (['uv', 'poetry', 'hatch', 'pdm', 'flit', 'bun'].includes(p.tool)) return pos[0] === 'publish';
+      if (p.tool === 'gem') return pos[0] === 'push';
+      if (p.tool === 'mvn' || p.tool === 'mvnw') return pos.includes('deploy');
+      if (p.tool === 'gradle' || p.tool === 'gradlew') return pos.some((t) => /(^|:)publish/.test(t));
+      if (p.tool === 'dotnet') return pos[0] === 'nuget' && pos[1] === 'push';
       if (git && p.sub === 'tag') {
         if (p.args.some((a) => a === '-d' || a === '--delete' || a === '-l' || a === '--list')) return false;
         if (p.args.some((a) => /^-[a-zA-Z]*[asu][a-zA-Z]*$/.test(a))) return true;
@@ -1455,13 +1513,20 @@ export function bashWriteTargets(parts, ctx) {
 
 // ---------- scope check (Verify) ----------
 
-const TEST_GLOBS = ['**/test/**', '**/tests/**', '**/__tests__/**', '**/*.test.*', '**/*.spec.*', '**/*_test.go', '**/test_*.py', '**/*_test.py'];
+const TEST_GLOBS = [
+  '**/test/**', '**/tests/**', '**/Tests/**', '**/__tests__/**', '**/spec/**', '**/*.test.*', '**/*.spec.*', '**/*_test.go', '**/test_*.py',
+  '**/*_test.py', '**/*_spec.rb', '**/*_test.rb', '**/*_test.exs', '**/*Test.java', '**/*Test.kt', '**/*Tests.cs', '**/*Test.cs',
+  '**/*.Tests/**', '**/*Test.php', '**/*Tests.swift',
+];
 const LINT_GLOBS = [
   '**/.eslintrc*', '**/eslint.config.*', '**/.prettierrc*', '**/prettier.config.*', '**/.stylelintrc*', '**/ruff.toml', '**/.ruff.toml',
-  '**/.flake8', '**/setup.cfg', '**/.golangci*', '**/.rubocop*', '**/biome.json*', '**/.editorconfig',
+  '**/.flake8', '**/setup.cfg', '**/.golangci*', '**/.rubocop*', '**/biome.json*', '**/.editorconfig', '**/.pylintrc', '**/pylintrc',
+  '**/mypy.ini', '**/.mypy.ini', '**/pyrightconfig.json', '**/rustfmt.toml', '**/.rustfmt.toml', '**/clippy.toml', '**/.clippy.toml',
+  '**/.swiftlint.yml', '**/.swiftformat', '**/phpcs.xml*', '**/.php-cs-fixer*', '**/phpstan.neon*', '**/checkstyle*.xml', '**/detekt*.yml',
+  '**/.credo.exs', '**/.formatter.exs', '**/.clang-format', '**/.clang-tidy',
 ];
 const CI_GLOBS = ['.github/workflows/**', '.gitlab-ci.yml', '.circleci/**', 'Jenkinsfile'];
-const LOCKFILES = new Set(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'poetry.lock', 'Cargo.lock', 'go.sum', 'Gemfile.lock', 'composer.lock', 'bun.lockb', 'uv.lock']);
+const LOCKFILES = new Set(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'poetry.lock', 'Cargo.lock', 'go.sum', 'Gemfile.lock', 'composer.lock', 'bun.lock', 'bun.lockb', 'uv.lock', 'Pipfile.lock']);
 
 // 'test' | 'lint' | 'CI' | 'other' (a scope_check.sensitive_extra glob) | null when the file isn't sensitive.
 export function sensitiveKind(file, cfg) {

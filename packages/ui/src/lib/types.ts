@@ -416,8 +416,19 @@ export interface BannerEvent {
 export interface ChatEvent {
   chatId: string;
   kind:
-    'event' | 'fatal' | 'ended' | 'task' | 'orphans' | 'orphans-cleared' | 'controls' | 'context';
+    | 'event'
+    | 'fatal'
+    | 'ended'
+    | 'task'
+    | 'orphans'
+    | 'orphans-cleared'
+    | 'controls'
+    | 'context'
+    | 'busy';
   event?: unknown;
+  /** kind 'busy': a turn started or ended, and when the running one started. */
+  busy?: boolean;
+  busySince?: string | null;
   /** kind 'controls': the chat's current values, the model list, changes waiting for the turn to end, and an error to toast. */
   controls?: PickedControls;
   models?: ModelOption[];
@@ -519,8 +530,10 @@ export interface ChatSummary {
   /** Every task folder the chat has worked on, oldest first. */
   task_dirs?: string[];
   status: 'active' | 'ended';
-  /** Assumed optional extra: true while a turn is running (lets a reload keep the composer disabled). */
+  /** True while a turn is running (lets a reload keep the composer disabled). */
   busy?: boolean;
+  /** ISO time the running turn started; null when no turn runs. */
+  busySince?: string | null;
 }
 
 export interface ChatsResponse {
@@ -605,6 +618,26 @@ export interface InstallSelection {
   /** Optional: missing means the default pattern. */
   branchPattern?: string;
   ci: boolean;
+  /** The stepper's full workflow models, one per chosen workflow. Absent: the shipped workflows are written. */
+  workflowModels?: Record<string, WorkflowModel>;
+  /** Rules text by stage id. */
+  rules?: Record<string, string>;
+  /** The guardrail part of config.yml. Takes precedence over `guardrails`. */
+  guardrailConfig?: Pick<
+    ConfigModel,
+    'rails' | 'rails_commands' | 'protected_paths' | 'scope_check'
+  >;
+  /** Writes `setup: done`. */
+  setupDone?: boolean;
+}
+
+/** One problem the server found in an install selection (the `details` of a 400 `invalid`). */
+export interface InstallIssue {
+  /** Repo-relative path, e.g. `.shipline/workflows/feature.yml` or `.shipline/config.yml`. */
+  file: string;
+  /** Dotted path from the validator; empty for the whole file. */
+  path: string;
+  message: string;
 }
 
 export interface InstallInfo {
@@ -619,6 +652,12 @@ export interface InstallInfo {
   detected: { test: string; lint: string; build: string; sources: Record<string, string> };
   trackerDefault: TrackerId;
   uiDetected: boolean;
+  /** The shipped workflows, rules and config, which the stepper starts from. */
+  templates: {
+    workflows: Record<string, WorkflowModel>;
+    rules: Record<string, string>;
+    config: ConfigModel;
+  };
   /** The branch pattern used when none is chosen. */
   branchPatternDefault: string;
   /** What `init --yes` would choose. */

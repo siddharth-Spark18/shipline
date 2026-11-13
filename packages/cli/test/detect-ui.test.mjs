@@ -98,3 +98,23 @@ describe('UI files', () => {
     assert.deepEqual(r, { ui: true, source: 'vue in package.json' });
   });
 });
+
+// Stack gaps (1.3.0): server-side templates and iOS views count; generated HTML (docs, coverage) does not.
+describe('other stacks', () => {
+  test('Rails, Laravel, Phoenix, ASP.NET, Twig, Jinja, Astro and iOS view files count', () => {
+    for (const f of ['app/views/home/index.html.erb', 'app/views/a.html.haml', 'resources/views/welcome.blade.php', 'lib/app_web/page.html.heex', 'Pages/Index.cshtml', 'Components/App.razor', 'templates/base.twig', 'templates/base.jinja', 'src/pages/index.astro', 'App/Main.storyboard', 'App/View.xib']) {
+      assert.equal(detectUi(repo({ [f]: '' })).ui, true, f);
+    }
+  });
+
+  test('Flutter: pubspec.yaml with the flutter SDK; a plain Dart package is not a UI', () => {
+    assert.deepEqual(detectUi(repo({ 'pubspec.yaml': 'name: app\ndependencies:\n  flutter:\n    sdk: flutter\n' })), { ui: true, source: 'flutter in pubspec.yaml' });
+    assert.equal(detectUi(repo({ 'pubspec.yaml': 'name: lib\ndependencies:\n  http: ^1.0.0\n' })).ui, false);
+  });
+
+  test('HTML from cargo doc, coverage reports, virtualenvs and build output is skipped', () => {
+    for (const f of ['target/doc/crate/index.html', 'htmlcov/index.html', 'coverage/lcov-report/index.html', '.venv/lib/x.html', 'venv/x.html', '.next/server/a.html', 'out/index.html', '_build/html/index.html', 'storybook-static/index.html', 'playwright-report/index.html', 'bin/Debug/x.html', 'obj/x.html']) {
+      assert.equal(detectUi(repo({ [f]: '' })).ui, false, f);
+    }
+  });
+});

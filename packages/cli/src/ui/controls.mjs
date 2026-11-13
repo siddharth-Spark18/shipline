@@ -124,6 +124,11 @@ export const requests = {
   // set_effort is "Unsupported control request subtype"; the in-memory flag layer takes effortLevel instead.
   setEffort: (effort) => ({ subtype: 'apply_flag_settings', settings: { effortLevel: effort } }),
   setPermissionMode: (mode) => ({ subtype: 'set_permission_mode', mode: modeToControl(mode) }),
+  // Ends the current turn only; the process stays alive. Verified 2026-11-13 (claude 2.1.323) with the chat flags:
+  // an immediate control_response { subtype: 'success', response: { still_queued: [] } }, then a `user` event whose
+  // text is "[Request interrupted by user]", then a `result` with subtype 'error_during_execution', is_error true
+  // and an empty result. The next user message gets a normal answer.
+  interrupt: () => ({ subtype: 'interrupt' }),
 };
 
 // { requestId, ok, response, error } for a control_response event, otherwise null.

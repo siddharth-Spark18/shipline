@@ -372,7 +372,8 @@ describe('guardrails (Teams Phase 3)', () => {
     assert.deepEqual(c.protected_paths, [
       'migrations/**', 'db/migrate/**', 'prisma/migrations/**', 'alembic/versions/**', 'infra/**', 'terraform/**', '**/*.tf', 'k8s/**', 'helm/**',
       '**/Dockerfile*', '**/docker-compose*', '.github/workflows/**', '.gitlab-ci.yml', '.circleci/**', 'Jenkinsfile', 'package-lock.json',
-      'pnpm-lock.yaml', 'yarn.lock', 'poetry.lock', 'Cargo.lock', 'go.sum',
+      'pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb', 'poetry.lock', 'uv.lock', 'Pipfile.lock', 'Cargo.lock', 'go.sum',
+      'Gemfile.lock', 'composer.lock',
     ]);
   });
 
@@ -428,7 +429,7 @@ describe('guardrails (Teams Phase 3)', () => {
     assert.deepEqual(back.protected_paths, model.protected_paths);
     assert.deepEqual(back.scope_check, model.scope_check);
     assert.match(out, /^ {2}- '\*\*\/\*\.tf'$/m, 'unchanged items keep their quoting');
-    assert.match(out, /^ {2}- go\.sum\n {2}- secrets\/\*\*\n\n# At Verify/m);
+    assert.match(out, /^ {2}- composer\.lock\n {2}- secrets\/\*\*\n\n# At Verify/m);
     assert.match(out, /^ {2}# Edits to \.claude[^\n]*\n {2}agent_config: off$/m, 'the comment above each rail is kept');
     assert.deepEqual(validateConfig(back), []);
   });

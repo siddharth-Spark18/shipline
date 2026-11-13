@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronUpIcon, MessageCircleQuestionIcon } from 'lucide-react';
+import { ChevronDownIcon, ChevronUpIcon, MessageCircleQuestionIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Sheet,
@@ -8,6 +8,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
+import { useIsMobile } from '@/hooks/use-mobile';
 import type { PromptEvent } from '@/lib/types';
 import {
   Countdown,
@@ -21,23 +22,39 @@ import { QuestionCard, parseQuestions, type QuestionItem } from '@/pages/chat/qu
 const isSimple = (qs: QuestionItem[]) =>
   qs.length === 1 && !qs[0].multiSelect && qs[0].options.length >= 2 && qs[0].options.length <= 4;
 
+// The phone's big touch targets; the desktop dock uses normal buttons.
 const BIG = 'h-auto min-h-14 flex-1 py-2 text-base';
+const NORMAL = 'h-auto min-h-8 flex-1 py-1.5';
 
 function AllowDeny({
   pending,
+  mobile,
   onAllow,
   onDeny,
 }: {
   pending: boolean;
+  mobile: boolean;
   onAllow: () => void;
   onDeny: () => void;
 }) {
+  const className = mobile ? BIG : NORMAL;
   return (
     <div className="flex gap-2">
-      <Button variant="outline" size="lg" className={BIG} disabled={pending} onClick={onDeny}>
+      <Button
+        variant="outline"
+        size={mobile ? 'lg' : 'default'}
+        className={className}
+        disabled={pending}
+        onClick={onDeny}
+      >
         Deny
       </Button>
-      <Button size="lg" className={BIG} disabled={pending} onClick={onAllow}>
+      <Button
+        size={mobile ? 'lg' : 'default'}
+        className={className}
+        disabled={pending}
+        onClick={onAllow}
+      >
         Allow
       </Button>
     </div>
@@ -54,9 +71,13 @@ function QuestionDock({
   counter: string | null;
 }) {
   const { answer, pending } = useAnswerPrompt(prompt);
+  const mobile = useIsMobile();
+  // Phone: the details open in a bottom sheet. Desktop: they expand inside the dock.
   const [open, setOpen] = useState(false);
   const first = questions[0];
   const simple = isSimple(questions);
+  const optionClass = mobile ? BIG : NORMAL;
+  const expanded = !mobile && open;
 
   return (
     <>
@@ -69,16 +90,31 @@ function QuestionDock({
         {counter && <span className="text-xs font-normal text-muted-foreground">{counter}</span>}
         <Countdown expiresAt={prompt.expiresAt} />
       </div>
-      <p className="line-clamp-3 text-sm">{first.question}</p>
-      {simple ? (
+      {expanded ? (
+        <>
+          <QuestionCard prompt={prompt} questions={questions} bare />
+          <Button
+            variant="ghost"
+            size="sm"
+            className="self-center text-xs text-muted-foreground"
+            onClick={() => setOpen(false)}
+          >
+            Hide details
+            <ChevronDownIcon />
+          </Button>
+        </>
+      ) : (
+        <p className="line-clamp-3 text-sm">{first.question}</p>
+      )}
+      {expanded ? null : simple ? (
         <>
           <div className={first.options.length === 2 ? 'flex gap-2' : 'flex flex-col gap-2'}>
             {first.options.map((o) => (
               <Button
                 key={o.label}
                 variant="outline"
-                size="lg"
-                className={`${BIG} flex-col gap-0.5 whitespace-normal`}
+                size={mobile ? 'lg' : 'default'}
+                className={`${optionClass} flex-col gap-0.5 whitespace-normal`}
                 disabled={pending}
                 onClick={() =>
                   void answer({ decision: 'allow', answers: { [first.question]: o.label } })
@@ -93,7 +129,7 @@ function QuestionDock({
           </div>
           <Button
             variant="ghost"
-            className="h-11 self-center text-xs text-muted-foreground"
+            className={`${mobile ? 'h-11' : 'h-8'} self-center text-xs text-muted-foreground`}
             onClick={() => setOpen(true)}
           >
             Details, other answer or skip
@@ -101,11 +137,15 @@ function QuestionDock({
           </Button>
         </>
       ) : (
-        <Button size="lg" className="h-14 w-full text-base" onClick={() => setOpen(true)}>
+        <Button
+          size={mobile ? 'lg' : 'default'}
+          className={mobile ? 'h-14 w-full text-base' : 'w-full'}
+          onClick={() => setOpen(true)}
+        >
           Answer
         </Button>
       )}
-      <Sheet open={open} onOpenChange={setOpen}>
+      <Sheet open={mobile && open} onOpenChange={setOpen}>
         <SheetContent
           side="bottom"
           className="max-h-[88svh] gap-0 overflow-y-auto p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
@@ -125,6 +165,7 @@ function QuestionDock({
 
 function ApprovalDock({ prompt, counter }: { prompt: PromptEvent; counter: string | null }) {
   const { answer, pending } = useAnswerPrompt(prompt);
+  const mobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const allow = () => void answer({ decision: 'allow' });
   const deny = () => void answer({ decision: 'deny' });
@@ -140,13 +181,23 @@ function ApprovalDock({ prompt, counter }: { prompt: PromptEvent; counter: strin
         type="button"
         className="flex min-h-11 w-full items-center gap-2 rounded-md text-left"
         aria-label={`Show the full ${prompt.tool} request`}
-        onClick={() => setOpen(true)}
+        aria-expanded={mobile ? undefined : open}
+        onClick={() => setOpen(!open || mobile)}
       >
         <PermissionSummary prompt={prompt} />
-        <ChevronUpIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        {!mobile && open ? (
+          <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        ) : (
+          <ChevronUpIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        )}
       </button>
-      <AllowDeny pending={pending} onAllow={allow} onDeny={deny} />
-      <Sheet open={open} onOpenChange={setOpen}>
+      {!mobile && open && (
+        <div className="min-w-0">
+          <InputPreview tool={prompt.tool} input={prompt.input} tall />
+        </div>
+      )}
+      <AllowDeny pending={pending} mobile={mobile} onAllow={allow} onDeny={deny} />
+      <Sheet open={mobile && open} onOpenChange={setOpen}>
         <SheetContent
           side="bottom"
           className="max-h-[88svh] gap-0 overflow-y-auto p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
@@ -160,7 +211,7 @@ function ApprovalDock({ prompt, counter }: { prompt: PromptEvent; counter: strin
           <div className="mb-4 min-w-0">
             <InputPreview tool={prompt.tool} input={prompt.input} tall />
           </div>
-          <AllowDeny pending={pending} onAllow={allow} onDeny={deny} />
+          <AllowDeny pending={pending} mobile onAllow={allow} onDeny={deny} />
         </SheetContent>
       </Sheet>
     </>
@@ -168,9 +219,9 @@ function ApprovalDock({ prompt, counter }: { prompt: PromptEvent; counter: strin
 }
 
 /**
- * The phone's place for a chat's waiting prompts: above the composer, so one is never out of sight.
+ * The place for a chat's waiting prompts, on desktop and phone: above the composer, so one is never out of sight.
  * Shows the oldest one (the cache keeps arrival order) with "1 of N" when more wait. Keyed by prompt, so the
- * sheet it opened goes away with the prompt (answered elsewhere, timed out) and the next one takes over.
+ * sheet it opened (phone) goes away with the prompt (answered elsewhere, timed out) and the next one takes over.
  */
 export function DecisionDock({ prompts }: { prompts: PromptEvent[] }) {
   const current = prompts[0];

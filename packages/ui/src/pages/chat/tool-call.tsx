@@ -2,6 +2,7 @@ import { ChevronRightIcon, WrenchIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { parseQuestions } from '@/pages/chat/question-card';
 import { inputSummary, type Item } from '@/pages/chat/timeline';
 
 type ToolItem = Extract<Item, { kind: 'tool' }>;
@@ -35,8 +36,46 @@ function detailOf(item: ToolItem): string {
   return first.trim();
 }
 
+const ANSWER_PAIR = /"([^"]*)"\s*=\s*"([^"]*)"/g;
+
+/**
+ * An answered AskUserQuestion as one line. The result text comes from Claude Code and is not documented; it has
+ * looked like `User has answered your questions: "<question>"="<answer>". ...`. When no pair is found the result
+ * text itself is shown, cut to fit.
+ */
+function QuestionRecord({ item }: { item: ToolItem }) {
+  const qs = parseQuestions(item.input);
+  const question = qs ? qs[0].header?.trim() || qs[0].question : 'Question';
+  const text = item.result?.text.trim() ?? '';
+  const skipped = item.outcome === 'denied' || (item.result?.isError ?? false);
+  const answers = [...text.matchAll(ANSWER_PAIR)].map((m) => m[2]).filter(Boolean);
+  let mark = '✓';
+  let tail: string;
+  if (!item.result) {
+    mark = '?';
+    tail = 'Waiting for your answer';
+  } else if (skipped) {
+    mark = '✕';
+    tail = 'Skipped';
+  } else if (answers.length > 0) tail = `You chose: ${answers.join(', ')}`;
+  else tail = text.split('\n')[0] || 'Answered';
+  return (
+    <p className="flex min-w-0 gap-1.5 px-1 text-sm text-muted-foreground">
+      <span aria-hidden>{mark}</span>
+      <span className="min-w-0 truncate">
+        <span className="font-medium text-foreground">{question}</span> — {tail}
+      </span>
+    </p>
+  );
+}
+
 /** A collapsible tool call: name and one-line summary, then the input and the result. */
 export function ToolCall({ item }: { item: ToolItem }) {
+  if (item.name === 'AskUserQuestion') return <QuestionRecord item={item} />;
+  return <PlainToolCall item={item} />;
+}
+
+function PlainToolCall({ item }: { item: ToolItem }) {
   const mobile = useIsMobile();
   const summary = inputSummary(item.name, item.input);
   const badges = (

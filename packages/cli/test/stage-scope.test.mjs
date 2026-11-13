@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { git, hook, makeRepo, removeDir, runInit, stage, storeOf, tmpDir } from './helpers.mjs';
-import { scopeOf } from '../templates/shipline/bin/lib.mjs';
+import { scopeOf, sensitiveKind } from '../templates/shipline/bin/lib.mjs';
 
 // plan (its "Files to touch" is optional here) -> verify (checks) -> pr.
 const workflow = (id, confirm) => `id: ${id}
@@ -480,5 +480,22 @@ describe('outside git', () => {
     assert.equal(a.code, 1);
     assert.match(a.stderr, /question: Advance past "verify"/);
     rmSync(path.join(storeOf(plain), 'tasks', slug, 'verification.md'));
+  });
+});
+
+// Stack gaps (1.3.0): test and lint files of more stacks count as sensitive.
+describe('sensitiveKind across stacks', () => {
+  const cfg = { scope_check: { enabled: true, sensitive_extra: [] } };
+  test('test files: RSpec, Minitest, ExUnit, JUnit, xUnit, PHPUnit, XCTest', () => {
+    for (const f of ['spec/models/user_spec.rb', 'lib/x_test.rb', 'apps/a/x_test.exs', 'src/main/FooTest.java', 'app/FooTest.kt', 'MyApp.Tests/FooTests.cs', 'src/BarTest.cs', 'app/FooTest.php', 'Tests/AppTests/AppTests.swift'])
+      assert.equal(sensitiveKind(f, cfg), 'test', f);
+  });
+  test('lint config: pylint, mypy, pyright, rustfmt, clippy, SwiftLint, PHP_CodeSniffer, PHPStan, Checkstyle, detekt, Credo, clang', () => {
+    for (const f of ['.pylintrc', 'mypy.ini', 'pyrightconfig.json', 'rustfmt.toml', 'clippy.toml', '.swiftlint.yml', 'phpcs.xml.dist', 'phpstan.neon', 'config/checkstyle.xml', 'detekt.yml', '.credo.exs', '.clang-format'])
+      assert.equal(sensitiveKind(f, cfg), 'lint', f);
+  });
+  test('ordinary source files are not sensitive', () => {
+    for (const f of ['src/main.rs', 'app/models/user.rb', 'lib/foo.ex', 'src/Foo.java', 'Program.cs', 'index.php', 'Sources/App/main.swift', 'specification.md'])
+      assert.equal(sensitiveKind(f, cfg), null, f);
   });
 });

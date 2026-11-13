@@ -42,6 +42,7 @@ const TITLE_LIMIT = 60;
 const ORPHAN_CHECK_MS = 400; // after claude exits: lets processes that handle SIGTERM finish dying
 const ORPHAN_POLL_MS = 2000; // while the notice is shown: has the group emptied by itself?
 const CONTROL_TIMEOUT_MS = 10_000; // a control_request that gets no control_response
+const INTERRUPT_RESULT_MS = 10_000; // after an accepted interrupt: no result by then, so the turn is ended here
 const TRUST_MESSAGE = /this workspace has not been trusted/;
 const TRUST_PATH = /projects\["([^"]+)"\]/;
 const CONTROL_LABEL = { model: 'model', effort: 'effort', permissionMode: 'mode' };
@@ -134,6 +135,15 @@ export function createChats(app) {
 
   const state = (id) => (active && active.id === id ? active : null);
 
+  // Sets busy and busySince together and tells the UI (SSE `busy`) when busy changed.
+  function setBusy(chat, busy) {
+    clearTimeout(chat.interruptTimer);
+    const was = chat.busy;
+    chat.busy = busy;
+    chat.busySince = busy ? new Date().toISOString() : null;
+    if (was !== busy) emit({ chatId: chat.id, kind: 'busy', busy, busySince: chat.busySince });
+  }
+
   // Reads <store>/state/<id>.json (written by stage.mjs start or resume) and stores its task_dir as the chat's current
   // task, adding it to task_dirs when the chat hasn't worked on it yet.
   function bindTask(chat) {
@@ -204,7 +214,7 @@ export function createChats(app) {
     }
     if (event.type === 'system' && event.subtype === 'status') onStatus(chat, event);
     if (isResult(event)) {
-      chat.busy = false;
+      setBusy(chat, false);
       updateChat(root, chat.id, { last_active: new Date().toISOString() });
     }
     if (!KNOWN_TYPES.has(event.type)) {
@@ -444,7 +454,7 @@ export function createChats(app) {
     updateChat(root, chat.id, { status: 'ended', last_active: new Date().toISOString() });
     releaseLock(root, app.port);
     if (active === chat) active = null;
-    chat.busy = false;
+    setBusy(chat, false);
 
     if (chat.fatal) emit({ chatId: chat.id, ...chat.fatal });
     else if (chat.stopping) emit({ chatId: chat.id, kind: 'ended' });
@@ -529,6 +539,8 @@ export function createChats(app) {
       resume,
       child: null,
       busy: false,
+      busySince: null,
+      interruptTimer: null,
       sawInit: false,
       stopping: false,
       done: false,
@@ -659,7 +671,7 @@ export function createChats(app) {
   }
 
   function writeUser(chat, text, images) {
-    chat.busy = true;
+    setBusy(chat, true);
     chat.child.stdin.write(userMessage(text, images));
   }
 
@@ -751,6 +763,34 @@ export function createChats(app) {
       if (chat.busy || chat.applying > 0)
         throw new HttpError(409, 'busy', 'Claude is still answering the last message.');
       writeUser(chat, text, images);
+    },
+
+    // { busy, busySince } for a live chat; false and null otherwise.
+    busyInfo(id) {
+      const chat = state(id);
+      return chat && chat.busy && !chat.done && !chat.stopping
+        ? { busy: true, busySince: chat.busySince }
+        : { busy: false, busySince: null };
+    },
+
+    // Ends the current turn without ending the chat. Waiting prompts are denied first. If no result follows within
+    // INTERRUPT_RESULT_MS of claude accepting the interrupt, the turn is marked finished here.
+    async interrupt(id) {
+      const chat = state(id);
+      if (!chat || chat.stopping || chat.done || !chat.busy)
+        throw new HttpError(409, 'not-busy', 'Claude is not working on a turn.');
+      app.prompts.denyAll(chat.id);
+      try {
+        await sendControl(chat, requests.interrupt());
+      } catch (e) {
+        throw new HttpError(502, 'interrupt-failed', (e && e.message) || 'Interrupt failed');
+      }
+      if (!chat.busy || chat.done) return;
+      clearTimeout(chat.interruptTimer);
+      chat.interruptTimer = setTimeout(() => {
+        if (chat.busy && !chat.done) setBusy(chat, false);
+      }, INTERRUPT_RESULT_MS);
+      chat.interruptTimer.unref();
     },
 
     async stop(id) {

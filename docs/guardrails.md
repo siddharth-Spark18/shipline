@@ -16,8 +16,8 @@ prompt shows) or `off`; a rail left out of the file uses its default.
 | `pipe_to_shell` | deny | `curl` or `wget` piped into `sh`, `bash`, `zsh`, `python`, `node`, `perl`, `ruby` and the like, and the same through process substitution (`bash <(curl ...)`, `source <(wget ...)`) or command substitution (`sh -c "$(curl ...)"`) |
 | `print_credentials` | deny | any command that names a credential file, except ones that never print contents (see below); `git diff`, `git show`, `git log -p` and `git blame` on one; `printenv`; `echo $GITHUB_TOKEN` |
 | `read_credentials` | ask | the Read tool on credential files, and the Grep tool when its `path` is one or its `glob` matches one |
-| `deploy` | ask | `kubectl apply`, `helm upgrade`, `terraform apply`, `fly deploy`, `vercel --prod`, `npm run deploy` and similar; add yours under `rails_commands.deploy` |
-| `migrate` | ask | `prisma migrate deploy`, `rails db:migrate`, `alembic upgrade`, `python manage.py migrate` and similar; add yours under `rails_commands.migrate` |
+| `deploy` | ask | `kubectl apply`, `helm upgrade`, `terraform apply`, `fly deploy`, `vercel --prod`, `wrangler deploy`, `firebase deploy`, `kamal deploy`, `npm run deploy` and similar; add yours under `rails_commands.deploy` |
+| `migrate` | ask | `prisma migrate deploy`, `rails db:migrate`, `alembic upgrade`, `python manage.py migrate`, `php artisan migrate`, `mix ecto.migrate`, `dotnet ef database update` and similar, also through `npx`, `uv run`, `poetry run` and other runners; add yours under `rails_commands.migrate` |
 | `agent_config` | ask | Edit or Write on `.claude/**`, `.shipline/**`, `CLAUDE.md` and `.mcp.json` |
 
 Credential files are `.env` and `.env.*` (not `.env.example`, `.sample` or `.template`), `.envrc`, `*.pem`, `*.key`,

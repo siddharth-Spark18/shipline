@@ -11,9 +11,11 @@ import {
 } from './hashes.mjs';
 import { detectCommands } from './detect-commands.mjs';
 import { detectUi } from './detect-ui.mjs';
-import { CONFIRMATIONS, RAIL_IDS, TRACKERS, branchPatternError, configLayout } from './setup-schema.mjs';
+import {
+  CONFIRMATIONS, RAIL_IDS, TRACKERS, branchPatternError, configLayout, headerFor, validateConfig, validateWorkflow,
+} from './setup-schema.mjs';
 import { storeDir } from './store.mjs';
-import { emitConfig } from './yaml-emit.mjs';
+import { emitConfig, emitWorkflow } from './yaml-emit.mjs';
 
 function readIfExists(file) {
   return existsSync(file) ? readFileSync(file, 'utf8') : null;
@@ -96,6 +98,20 @@ function hasShiplineHooks(settingsText) {
 const AGENT_PATH = (name) => `.claude/agents/${name}.md`;
 const ID_RE = /^[A-Za-z0-9_-]+$/;
 const COMMAND_KEYS = ['test', 'lint', 'build'];
+const GUARDRAIL_KEYS = ['rails', 'rails_commands', 'protected_paths', 'scope_check'];
+const CONFIG_TEMPLATE = path.join(TEMPLATES, 'shipline', 'config.yml');
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// Empty maps become null before emitting: the parser reads `key:` with nothing nested as null.
+function normalizeEmpty(v) {
+  if (Array.isArray(v)) return v.map(normalizeEmpty);
+  if (isObj(v)) {
+    const keys = Object.keys(v);
+    if (keys.length === 0) return null;
+    return Object.fromEntries(keys.map((k) => [k, normalizeEmpty(v[k])]));
+  }
+  return v;
+}
 export const DEFAULT_BRANCH_PATTERN = '{type}/{key}-{slug}';
 export const GUARDRAILS_OFF_NOTE = '# Guardrails are off (chosen at setup). Turn them on here or in Setup → Guardrails.';
 const pickCommands = (detected) => Object.fromEntries(COMMAND_KEYS.map((k) => [k, (detected && detected[k]) || '']));
@@ -174,6 +190,20 @@ function trackerDefault() {
   return 'none';
 }
 
+// The shipped workflows, rules and config as the models and texts the stepper starts from:
+// { workflows: { <id>: model }, rules: { <stageId>: text }, config: model }.
+function shippedTemplates() {
+  const dir = path.join(TEMPLATES, 'shipline');
+  const workflows = {};
+  for (const f of readdirSync(path.join(dir, 'workflows')).filter((n) => n.endsWith('.yml')).sort()) {
+    const wf = parseYaml(readFileSync(path.join(dir, 'workflows', f), 'utf8'));
+    workflows[wf.id] = wf;
+  }
+  const rules = {};
+  for (const id of listNames(path.join(dir, 'rules'))) rules[id] = readFileSync(path.join(dir, 'rules', `${id}.md`), 'utf8');
+  return { workflows, rules, config: parseYaml(readFileSync(path.join(dir, 'config.yml'), 'utf8')) || {} };
+}
+
 // What the repo already has, and what Shipline offers.
 export function installInfo(root) {
   const workflows = shippedWorkflows();
@@ -190,6 +220,7 @@ export function installInfo(root) {
     trackerDefault: trackerDefault(),
     uiDetected: detectUi(root).ui,
     agentUse,
+    templates: shippedTemplates(),
     state,
     found,
   };
@@ -229,7 +260,6 @@ export function checkSelection(info, sel, { partial = false } = {}) {
   const fail = (m) => {
     throw new Error(`invalid selection: ${m}`);
   };
-  const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
   if (!isObj(sel)) fail('not an object');
   const need = (k) => {
     if (!partial && sel[k] === undefined) fail(`${k} is required`);
@@ -267,6 +297,59 @@ export function checkSelection(info, sel, { partial = false } = {}) {
     if (bad) fail(`branchPattern ${bad}`);
   }
   if (need('skills') && (!Array.isArray(sel.skills) || sel.skills.some((n) => typeof n !== 'string' || !ID_RE.test(n)))) fail('skills must be a list of names');
+
+  // The stepper's fields, all optional. Shape problems fail at once; what the validators find is collected.
+  if (sel.workflowModels !== undefined) {
+    if (!isObj(sel.workflowModels)) fail('workflowModels must be an object');
+    for (const id of Object.keys(sel.workflowModels)) if (!sel.workflows.includes(id)) fail(`workflowModels "${id}" is not a chosen workflow`);
+    for (const id of sel.workflows) if (!isObj(sel.workflowModels[id])) fail(`workflowModels needs a model for "${id}"`);
+  }
+  if (sel.rules !== undefined) {
+    if (!isObj(sel.rules)) fail('rules must be an object');
+    for (const [id, text] of Object.entries(sel.rules)) {
+      if (!ID_RE.test(id)) fail(`rules "${id}" must be a stage id`);
+      if (typeof text !== 'string') fail(`rules "${id}" must be text`);
+    }
+  }
+  if (sel.guardrailConfig !== undefined) {
+    if (!isObj(sel.guardrailConfig)) fail('guardrailConfig must be an object');
+    for (const k of Object.keys(sel.guardrailConfig)) if (!GUARDRAIL_KEYS.includes(k)) fail(`guardrailConfig "${k}" is not a guardrail setting`);
+  }
+  if (sel.setupDone !== undefined && typeof sel.setupDone !== 'boolean') fail('setupDone must be true or false');
+
+  const issues = [];
+  if (sel.workflowModels !== undefined) {
+    const ok = new Set([...sel.agents, ...info.repoAgents]);
+    for (const id of sel.workflows) {
+      const file = `.shipline/workflows/${id}.yml`;
+      const model = normalizeEmpty(sel.workflowModels[id]) ?? {};
+      // Validated as written (UI-only stages dropped when there is no UI); paths point at the model the client sent.
+      const kept = Array.isArray(model.stages) ? model.stages.map((st, i) => [st, i]).filter(([st]) => !(sel.ui === false && isObj(st) && st.condition === 'ui_only')) : null;
+      const shown = kept ? { ...model, stages: kept.map(([st]) => st) } : model;
+      const own = (p) => (kept ? p.replace(/^stages\[(\d+)\]/, (_m, n) => `stages[${kept[Number(n)][1]}]`) : p);
+      const existingStageIds = (info.workflows.find((w) => w.id === id) || { stages: [] }).stages.map((st) => st.id);
+      for (const i of validateWorkflow(shown, { id, agents: [...ok], existingStageIds })) {
+        if (i.severity !== 'warning') issues.push({ file, path: own(i.path), message: i.message });
+      }
+      if (kept) {
+        kept.forEach(([st, orig]) => {
+          if (isObj(st) && typeof st.agent === 'string' && st.agent !== '' && !ok.has(st.agent)) {
+            issues.push({ file, path: `stages[${orig}].agent`, message: `agent "${st.agent}" is not installed; pick another agent or none` });
+          }
+        });
+      }
+    }
+  }
+  if (sel.workflowModels !== undefined || sel.guardrailConfig !== undefined || sel.setupDone !== undefined) {
+    const { model } = buildConfigModel(CONFIG_TEMPLATE, sel);
+    for (const i of validateConfig(model, { skills: info.repoSkills })) {
+      if (i.severity !== 'warning') issues.push({ file: '.shipline/config.yml', path: i.path, message: i.message });
+    }
+  }
+  if (issues.length) {
+    const summary = issues.map((i) => `${i.file}${i.path ? ` ${i.path}` : ''}: ${i.message}`).join('; ');
+    throw Object.assign(new Error(`invalid selection: ${summary}`), { issues });
+  }
 }
 
 // What happens to a Shipline agent whose name the repo already uses: 'keep' (the default), 'ours' or 'skip'.
@@ -340,55 +423,82 @@ function workflowText(from, wf, selection) {
   return applyStageAgents(removeStages(readFileSync(from, 'utf8'), uiOnly), wf.id, selection);
 }
 
+// The config.yml model for a selection, starting from the shipped file at `from`.
+// -> { model, text (the shipped text), changed, guardrailsOff }
+function buildConfigModel(from, selection) {
+  const text = readFileSync(from, 'utf8');
+  const model = parseYaml(text) || {};
+  const commands = { ...pickCommands(null), ...selection.commands };
+  let changed = false;
+  if (selection.skills && selection.skills.length) {
+    model.skills = selection.skills;
+    changed = true;
+  }
+  if (COMMAND_KEYS.some((k) => commands[k])) {
+    model.commands = commands;
+    changed = true;
+  }
+  if (selection.tracker && selection.tracker !== model.tracker) {
+    model.tracker = selection.tracker;
+    changed = true;
+  }
+  if (selection.confirmations === 'light') {
+    model.confirmations = 'light';
+    changed = true;
+  }
+  const pattern = typeof selection.branchPattern === 'string' ? selection.branchPattern.trim() : '';
+  if (pattern && pattern !== model.branch_pattern) {
+    model.branch_pattern = pattern;
+    changed = true;
+  }
+  // guardrailConfig (the stepper) takes precedence over the on/off switch.
+  const guardrailsOff = selection.guardrails === 'off' && selection.guardrailConfig === undefined;
+  if (selection.guardrailConfig !== undefined) {
+    for (const k of GUARDRAIL_KEYS) if (selection.guardrailConfig[k] !== undefined) model[k] = selection.guardrailConfig[k];
+    changed = true;
+  } else if (guardrailsOff) {
+    model.rails = Object.fromEntries(RAIL_IDS.map((id) => [id, 'off']));
+    model.protected_paths = [];
+    changed = true;
+  }
+  if (selection.setupDone === true) {
+    model.setup = 'done';
+    changed = true;
+  }
+  return { model: selection.guardrailConfig !== undefined ? normalizeEmpty(model) : model, text, changed, guardrailsOff };
+}
+
 // The files to write for a selection: [{ to, data (Buffer), overwrite? }].
 function planWrites(info, selection) {
   const wfs = info.workflows.filter((w) => selection.workflows.includes(w.id));
-  const ruleIds = new Set(wfs.flatMap((w) => activeStages(w, selection.ui).map((st) => st.id)));
+  const models = selection.workflowModels;
+  // With drafted models the stage list is theirs; otherwise it is the shipped one.
+  const ruleIds = new Set(
+    models
+      ? selection.workflows.flatMap((id) => activeStages(models[id], selection.ui).map((st) => st.id))
+      : wfs.flatMap((w) => activeStages(w, selection.ui).map((st) => st.id)),
+  );
+  const rulesText = (id, from) => (selection.rules && typeof selection.rules[id] === 'string' ? Buffer.from(selection.rules[id]) : readFileSync(from));
   const writes = [];
+  const shippedRules = new Set();
   for (const f of templateFiles()) {
     let m;
     if ((m = /^\.shipline\/workflows\/([^/]+)\.yml$/.exec(f.to))) {
       if (!selection.workflows.includes(m[1])) continue;
-      writes.push({ to: f.to, data: Buffer.from(workflowText(f.from, wfs.find((w) => w.id === m[1]), selection)) });
+      if (models) {
+        const model = { ...models[m[1]], stages: activeStages(models[m[1]], selection.ui) };
+        writes.push({ to: f.to, data: Buffer.from(emitWorkflow(normalizeEmpty(model), { header: headerFor(m[1]) })) });
+      } else writes.push({ to: f.to, data: Buffer.from(workflowText(f.from, wfs.find((w) => w.id === m[1]), selection)) });
     } else if ((m = /^\.shipline\/rules\/([^/]+)\.md$/.exec(f.to))) {
+      shippedRules.add(m[1]);
       if (!ruleIds.has(m[1])) continue;
-      writes.push({ to: f.to, data: readFileSync(f.from) });
+      writes.push({ to: f.to, data: rulesText(m[1], f.from) });
     } else if ((m = /^\.claude\/agents\/([^/]+)\.md$/.exec(f.to))) {
       const clash = clashOf(info, selection, m[1]);
       if (!selection.agents.includes(m[1]) || clash === 'skip' || clash === 'keep') continue;
       writes.push({ to: f.to, data: readFileSync(f.from), overwrite: clash === 'ours' });
     } else if (f.to === '.shipline/config.yml') {
-      const text = readFileSync(f.from, 'utf8');
-      const model = parseYaml(text) || {};
-      const commands = { ...pickCommands(null), ...selection.commands };
-      let changed = false;
-      if (selection.skills && selection.skills.length) {
-        model.skills = selection.skills;
-        changed = true;
-      }
-      if (COMMAND_KEYS.some((k) => commands[k])) {
-        model.commands = commands;
-        changed = true;
-      }
-      if (selection.tracker && selection.tracker !== model.tracker) {
-        model.tracker = selection.tracker;
-        changed = true;
-      }
-      if (selection.confirmations === 'light') {
-        model.confirmations = 'light';
-        changed = true;
-      }
-      const pattern = typeof selection.branchPattern === 'string' ? selection.branchPattern.trim() : '';
-      if (pattern && pattern !== model.branch_pattern) {
-        model.branch_pattern = pattern;
-        changed = true;
-      }
-      const guardrailsOff = selection.guardrails === 'off';
-      if (guardrailsOff) {
-        model.rails = Object.fromEntries(RAIL_IDS.map((id) => [id, 'off']));
-        model.protected_paths = [];
-        changed = true;
-      }
+      const { model, text, changed, guardrailsOff } = buildConfigModel(f.from, selection);
       if (!changed) writes.push({ to: f.to, data: Buffer.from(text) });
       else {
         let out = emitConfig(model, { layout: configLayout(), raw: text });
@@ -398,11 +508,19 @@ function planWrites(info, selection) {
       }
     } else writes.push({ to: f.to, data: readFileSync(f.from) });
   }
+  // Drafted stages with no shipped rules get a file too: their text, or an empty one.
+  if (models) {
+    for (const id of [...ruleIds].sort()) {
+      if (shippedRules.has(id)) continue;
+      writes.push({ to: `.shipline/rules/${id}.md`, data: Buffer.from(selection.rules && typeof selection.rules[id] === 'string' ? selection.rules[id] : '') });
+    }
+  }
   if (selection.ci) writes.push({ to: CI_WORKFLOW, data: readFileSync(CI_WORKFLOW_TEMPLATE) });
   return writes;
 }
 
-// The numbered "what now" checklist as lines of text (terminal and wizard show the same). Step 5 only with the CI check.
+// The numbered "what now" checklist as lines of text (terminal and wizard show the same). The CI step only with the
+// CI check; the "tailor the rules" step only until setup is done.
 export function nextSteps(selection = {}) {
   const ci = Boolean(selection.ci);
   const out = [
@@ -414,11 +532,15 @@ export function nextSteps(selection = {}) {
   out.push(
     '  2. Open Claude Code in this folder (`claude`) and trust it when asked, so the hooks run.',
     '  3. Try it: ask Claude for a small change, e.g. "fix the typo in README". It picks a workflow and shows the stages.',
-    '  4. Tailor the rules to this repo: run /shipline-setup in Claude Code (or `npx @forgeyard/shipline ui` → Setup).',
   );
+  let n = 4;
+  if (selection.setupDone !== true) {
+    out.push(`  ${n}. Tailor the rules to this repo: run /shipline-setup in Claude Code (or \`npx @forgeyard/shipline ui\` → Setup).`);
+    n++;
+  }
   if (ci) {
     out.push(
-      '  5. Make the CI check count: on GitHub, protect your main branch and require the "Shipline check", and add',
+      `  ${n}. Make the CI check count: on GitHub, protect your main branch and require the "Shipline check", and add`,
       '     CODEOWNERS for .shipline/ and .github/ (see the README, "The pull-request check").',
     );
   }

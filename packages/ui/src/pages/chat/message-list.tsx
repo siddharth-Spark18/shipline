@@ -5,31 +5,21 @@ import type { PromptEvent } from '@/lib/types';
 import { Markdown } from '@/components/markdown';
 import { ImageThumbs } from '@/components/image-viewer';
 import { NoticeItem } from '@/pages/chat/notices';
-import { PermissionCard } from '@/pages/chat/permission-card';
-import { QuestionCard, parseQuestions } from '@/pages/chat/question-card';
 import { ShellBlock } from '@/pages/chat/shell-block';
 import type { Item } from '@/pages/chat/timeline';
 import { ToolCall } from '@/pages/chat/tool-call';
-
-function PromptCard({ prompt }: { prompt: PromptEvent }) {
-  const questions = prompt.tool === 'AskUserQuestion' ? parseQuestions(prompt.input) : null;
-  // An AskUserQuestion with an unreadable shape falls back to a plain Allow/Deny card.
-  return questions ? (
-    <QuestionCard prompt={prompt} questions={questions} />
-  ) : (
-    <PermissionCard prompt={prompt} />
-  );
-}
+import { WorkingIndicator } from '@/pages/chat/working-indicator';
 
 /**
- * History and live items, then any pending permission cards. Sticks to the bottom while new items arrive.
- * On a phone the pending cards are not here: the decision dock above the composer shows them.
+ * History and live items, then the working indicator while a turn runs. Sticks to the bottom while new items arrive.
+ * Waiting questions and approvals are not here: the decision dock above the composer shows them.
  */
 export function MessageList({
   items,
   prompts,
   chatId,
   busy,
+  busySince,
   ended,
   onSendToClaude,
 }: {
@@ -37,33 +27,34 @@ export function MessageList({
   prompts: PromptEvent[];
   chatId: string;
   busy: boolean;
+  busySince: string | null;
   ended: boolean;
   onSendToClaude: (text: string) => Promise<boolean>;
 }) {
   const mobile = useIsMobile();
-  const shown = mobile ? [] : prompts;
+  const working = busy && prompts.length === 0 && !ended;
   const box = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
   const last = items[items.length - 1];
   const grow =
     last?.kind === 'text' ? last.text.length : last?.kind === 'shell' ? last.output.length : '';
-  const tick = `${items.length}:${grow}:${shown.length}`;
+  const tick = `${items.length}:${grow}:${working}`;
   useEffect(() => {
     const el = box.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [tick]);
 
-  // On a phone the box shrinks when the keyboard opens or the dock appears: keep the latest messages in view.
+  // The box shrinks when the keyboard opens (phone) or the dock appears: keep the latest messages in view.
   useEffect(() => {
     const el = box.current;
-    if (!mobile || !el || typeof ResizeObserver === 'undefined') return;
+    if (!el || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(() => {
       if (stick.current) el.scrollTop = el.scrollHeight;
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [mobile]);
+  }, []);
 
   return (
     <div
@@ -79,7 +70,7 @@ export function MessageList({
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
       }}
     >
-      {items.length === 0 && shown.length === 0 && (
+      {items.length === 0 && !working && (
         <p className="text-sm text-muted-foreground">No messages yet.</p>
       )}
       {items.map((item) => {
@@ -122,9 +113,7 @@ export function MessageList({
             return null;
         }
       })}
-      {shown.map((p) => (
-        <PromptCard key={p.id} prompt={p} />
-      ))}
+      {working && <WorkingIndicator items={items} busySince={busySince} mobile={mobile} />}
     </div>
   );
 }

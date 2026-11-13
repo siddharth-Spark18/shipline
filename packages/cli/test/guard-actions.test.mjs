@@ -207,3 +207,40 @@ describe('the shipped workflows', () => {
     }
   });
 });
+
+// Stack gaps (1.3.0): more deploy, migrate and release tools, and Python runners looked behind.
+describe('matchAction across stacks', () => {
+  const ctx = { cfg: { rails_commands: { deploy: [], migrate: [] } }, scriptBody: () => null, defaultBranches: () => ['main'], branch: () => 'x' };
+  const hits = (action, text) => parseCommand(text).some((p) => matchAction(p, action, ctx));
+
+  test('Python runners and npm exec / yarn exec / bun x are looked behind', () => {
+    for (const c of [
+      'uv run alembic upgrade head', 'uv run --with psycopg alembic downgrade -1', 'poetry run python manage.py migrate',
+      'pipenv run alembic upgrade head', 'hatch run alembic upgrade head', 'pdm run python manage.py migrate', 'rye run alembic upgrade head',
+      'npm exec prisma migrate deploy', 'yarn exec prisma migrate deploy', 'bun x prisma migrate deploy',
+    ]) assert.ok(hits('migrate', c), c);
+    for (const c of ['uv run pytest', 'poetry run ruff check .', 'uv run', 'npm exec -- eslint .']) assert.ok(!hits('migrate', c), c);
+  });
+
+  test('migrate: Laravel, Ecto, EF Core, sqlx, diesel, Supabase, Liquibase, Atlas, dbmate', () => {
+    for (const c of [
+      'php artisan migrate', 'php artisan migrate:fresh', './artisan migrate:rollback', 'mix ecto.migrate', 'mix ecto.rollback',
+      'dotnet ef database update', 'sqlx migrate run', 'sqlx database reset', 'diesel migration run', 'supabase db push',
+      'supabase db reset --linked', 'liquibase update', 'atlas migrate apply', 'atlas schema apply', 'dbmate up',
+    ]) assert.ok(hits('migrate', c), c);
+    for (const c of ['php artisan make:migration add_x', 'php artisan serve', 'mix test', 'dotnet ef migrations add X', 'sqlx migrate add x', 'supabase db reset', 'atlas migrate diff', 'dbmate new x'])
+      assert.ok(!hits('migrate', c), c);
+  });
+
+  test('deploy: wrangler, firebase, eb, sam, kamal, railway, capistrano, az', () => {
+    for (const c of ['wrangler deploy', 'wrangler pages deploy dist', 'npx wrangler deploy', 'firebase deploy --only hosting', 'eb deploy', 'sam deploy', 'kamal deploy', 'railway up', 'cap production deploy', 'az webapp deploy --src-path x.zip', 'az deployment group create -f main.bicep'])
+      assert.ok(hits('deploy', c), c);
+    for (const c of ['wrangler dev', 'firebase emulators:start', 'sam build', 'kamal app logs', 'railway logs', 'az login']) assert.ok(!hits('deploy', c), c);
+  });
+
+  test('release: uv, poetry, hatch, pdm, flit, bun, gem, maven, gradle, dotnet nuget', () => {
+    for (const c of ['uv publish', 'poetry publish --build', 'hatch publish', 'pdm publish', 'flit publish', 'bun publish', 'gem push x-1.0.gem', 'mvn deploy', './mvnw clean deploy', './gradlew publish', 'gradle :lib:publishToMavenCentral', 'dotnet nuget push x.nupkg'])
+      assert.ok(hits('release', c), c);
+    for (const c of ['uv build', 'poetry build', 'gem build x.gemspec', 'mvn package', './gradlew build', 'dotnet nuget list source']) assert.ok(!hits('release', c), c);
+  });
+});

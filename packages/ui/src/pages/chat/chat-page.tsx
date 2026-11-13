@@ -452,6 +452,7 @@ function ChatView({
 
   const ended = live.ended ?? chat?.status === 'ended';
   const busy = live.busy ?? chat?.busy ?? false;
+  const busySince = live.busySince ?? chat?.busySince ?? null;
   // The ticket notice: the chat's current task is at the ticket stage (`jira` in tasks from before 0.10.0) and the
   // repo's tracker can't be used. `ticket` is null when there is nothing to report (for GitHub, only at that stage).
   const chatTask = detail.data?.tasks?.find(
@@ -488,6 +489,23 @@ function ChatView({
       return false;
     }
   };
+
+  // Esc interrupts the current turn (the chat stays active). Not when something else already took the key: the
+  // composer's slash menu (defaultPrevented) or an open dialog or sheet, which close on Esc as usual.
+  const canInterrupt = busy && !ended;
+  useEffect(() => {
+    if (!canInterrupt) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (document.querySelector('[role="dialog"][data-state="open"]')) return;
+      api.interruptChat(id).catch((err: unknown) => {
+        if (err instanceof ApiError && err.code === 'not-busy') return; // the turn just ended
+        toast.error(err instanceof Error ? err.message : 'Could not interrupt Claude.');
+      });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [canInterrupt, id]);
 
   const stop = async () => {
     try {
@@ -600,6 +618,7 @@ function ChatView({
         prompts={prompts}
         chatId={id}
         busy={busy}
+        busySince={busySince}
         ended={Boolean(ended)}
         onSendToClaude={(text) => send(text)}
       />
@@ -611,7 +630,7 @@ function ChatView({
         <TicketNotice tracker={ticketProblem.tracker} status={ticketProblem.status} />
       )}
 
-      {mobile && <DecisionDock prompts={prompts} />}
+      {!ended && <DecisionDock prompts={prompts} />}
 
       {missing ? (
         <ClaudeMissingNotice code={missing.code} message={missing.message} />
@@ -644,11 +663,6 @@ function ChatView({
             if (e instanceof ApiError && e.code === 'chat-ended') refresh();
             onError(e);
           }}
-          hint={
-            busy
-              ? 'Claude is working. You can send the next message when this turn finishes.'
-              : undefined
-          }
           onSend={send}
         />
       )}

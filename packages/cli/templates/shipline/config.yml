@@ -82,9 +82,15 @@ protected_paths:
   - package-lock.json
   - pnpm-lock.yaml
   - yarn.lock
+  - bun.lock
+  - bun.lockb
   - poetry.lock
+  - uv.lock
+  - Pipfile.lock
   - Cargo.lock
   - go.sum
+  - Gemfile.lock
+  - composer.lock
 
 # At Verify, `stage.mjs check` lists the test, lint and CI files the change edits and the files outside the plan's
 # "Files to touch"; finishing the stage then needs the developer's answer, and the PR summary shows it.

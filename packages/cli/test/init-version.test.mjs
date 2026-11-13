@@ -36,7 +36,7 @@ describe('init writes VERSION', () => {
     assert.equal(v.package, PACKAGE_VERSION);
     assert.equal(v.interface, INTERFACE);
     assert.equal(INTERFACE, 1);
-    assert.equal(PACKAGE_VERSION, '1.2.0');
+    assert.equal(PACKAGE_VERSION, '1.3.0');
     assert.deepEqual(readRepoVersion(dir), { package: PACKAGE_VERSION, interface: INTERFACE, files: v.files, excluded });
   });
 

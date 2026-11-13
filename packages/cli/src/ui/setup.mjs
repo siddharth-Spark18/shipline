@@ -1000,6 +1000,32 @@ async function addWorkflowApply(app, body) {
   return { written: written.map(({ kind, id, action }) => ({ kind, id, action })) };
 }
 
+// ---------- mark setup as done ----------
+
+// Sets `setup: done` in config.yml, keeping its comments and layout (as a Setup save does).
+async function markDone(app) {
+  app.repo.requireWritable();
+  const file = targetPath(app.repo.root, 'config');
+  const current = readText(file);
+  if (current === null) throw new HttpError(400, 'invalid-config', 'config.yml was not found');
+  const parsed = parseModel(app, current);
+  if (parsed.error !== undefined)
+    throw new HttpError(
+      400,
+      'invalid-config',
+      `config.yml does not parse (${parsed.error}); fix it by hand first`,
+    );
+  if (parsed.model.setup === 'done') return { ok: true };
+  const text = emitConfig(normalize({ ...parsed.model, setup: 'done' }), {
+    layout: configLayout(),
+    raw: current,
+  });
+  writeAtomic(file, text);
+  log('mark-setup-done', { hashBefore: sha256(current), hashAfter: sha256(text) });
+  app.repo.reloadConfig();
+  return { ok: true };
+}
+
 // ---------- GET /api/setup ----------
 
 function setup(app) {
@@ -1033,6 +1059,7 @@ export function routes(app) {
     { method: 'GET', path: '/api/setup', handler: () => setup(app) },
     { method: 'POST', path: '/api/setup/preview', handler: ({ body }) => preview(app, body) },
     { method: 'POST', path: '/api/setup/save', handler: ({ body }) => save(app, body) },
+    { method: 'POST', path: '/api/setup/mark-done', handler: () => markDone(app) },
     { method: 'POST', path: '/api/setup/workflows', handler: ({ body }) => workflows(app, body) },
     {
       method: 'POST',

@@ -119,6 +119,7 @@ export const api = {
   setup: () => request<SetupData>('GET', '/api/setup'),
   previewSetup: (req: SaveRequest) => request<PreviewResponse>('POST', '/api/setup/preview', req),
   saveSetup: (req: SaveRequest) => request<SaveResponse>('POST', '/api/setup/save', req),
+  markSetupDone: () => request<{ ok: true }>('POST', '/api/setup/mark-done'),
   workflowAction: (req: WorkflowAction) =>
     request<{ ok: true }>('POST', '/api/setup/workflows', req),
   createWorkflow: (id: string, name: string) =>
@@ -180,6 +181,8 @@ export const api = {
     ),
   stopChat: (id: string) =>
     request<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/stop`),
+  interruptChat: (id: string) =>
+    request<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/interrupt`),
   killChat: (id: string) =>
     request<{ killed: true }>('POST', `/api/chats/${encodeURIComponent(id)}/kill`),
   continueChat: (id: string) =>

@@ -169,6 +169,12 @@ export default function SetupPage({
     },
   });
 
+  const markDone = useMutation({
+    mutationFn: api.markSetupDone,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.setup }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Something went wrong.'),
+  });
+
   if (isPending || !drafts) {
     return error ? (
       <Alert variant="destructive">
@@ -238,15 +244,30 @@ export default function SetupPage({
           <AlertTitle>This repo uses Shipline&apos;s default rules</AlertTitle>
           <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
             <span>
-              Claude can interview you and tailor the workflows, rules and commands to this repo.
+              Claude can interview you and tailor the workflows, rules and commands to this repo. Or
+              edit the sections below yourself, then mark setup as done.
             </span>
-            <Button
-              size="sm"
-              disabled={readOnly || startingChat}
-              onClick={() => void startSetupChat()}
-            >
-              Set up with Claude
-            </Button>
+            <span className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                disabled={readOnly || startingChat}
+                onClick={() => void startSetupChat()}
+              >
+                Run setup with Claude
+              </Button>
+              {!readOnly && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  // Marking done reloads the files from disk, which would drop unsaved edits.
+                  disabled={markDone.isPending || entries.length > 0}
+                  title={entries.length > 0 ? 'Save or discard your changes first' : undefined}
+                  onClick={() => markDone.mutate()}
+                >
+                  Mark setup as done
+                </Button>
+              )}
+            </span>
           </AlertDescription>
         </Alert>
       )}

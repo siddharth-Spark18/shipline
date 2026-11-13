@@ -70,7 +70,7 @@ describe('help and version', () => {
       assert.equal(r.code, 0, args.join(' '));
       assert.equal(r.stdout, `${VERSION}\n`, args.join(' '));
     }
-    assert.equal(VERSION, '1.2.0');
+    assert.equal(VERSION, '1.3.0');
   });
 });
 

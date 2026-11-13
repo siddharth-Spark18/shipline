@@ -12,13 +12,48 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DiffView } from '@/components/diff-view';
-import type { InstallPreview, InstallPreviewFile, InstallSelection } from '@/lib/types';
+import { ApiError } from '@/lib/api';
+import type {
+  InstallIssue,
+  InstallPreview,
+  InstallPreviewFile,
+  InstallSelection,
+} from '@/lib/types';
 
 const ACTION_LABEL: Record<InstallPreviewFile['action'], string> = {
   create: 'create',
   overwrite: 'overwrite',
   merge: 'merge',
 };
+
+/** The wizard steps an install problem can belong to. */
+export type IssueStep = 'stages' | 'agents' | 'project' | 'guardrails';
+
+export const ISSUE_STEP_LABEL: Record<IssueStep, string> = {
+  stages: 'Stages & rules',
+  agents: 'Agents & skills',
+  project: 'Project',
+  guardrails: 'Guardrails',
+};
+
+const GUARDRAIL_KEYS = ['rails', 'rails_commands', 'protected_paths', 'scope_check'];
+
+/** Which step fixes a problem: workflow files are Stages & rules; config.yml depends on the key. */
+export function issueStep(issue: InstallIssue): IssueStep {
+  if (issue.file.startsWith('.shipline/workflows/')) return 'stages';
+  const key = issue.path.split(/[.[]/)[0];
+  if (GUARDRAIL_KEYS.includes(key)) return 'guardrails';
+  if (key === 'skills') return 'agents';
+  return 'project';
+}
+
+/** The problems of a 400 `invalid` answer, or null for any other error (including a plain-message `invalid`). */
+function issuesOf(error: Error): InstallIssue[] | null {
+  if (!(error instanceof ApiError) || error.code !== 'invalid' || !Array.isArray(error.details))
+    return null;
+  const list = (error.details as InstallIssue[]).filter((i) => i && typeof i.message === 'string');
+  return list.length > 0 ? list : null;
+}
 
 /**
  * The last step: every file that will be written, with its text (create, overwrite) or its diff (the two merged
@@ -29,14 +64,60 @@ export function ReviewStep({
   loading,
   error,
   selection,
+  onGoToStep,
 }: {
   selection?: InstallSelection;
+  /** Jumps to the step that fixes a problem (the stepper only). */
+  onGoToStep?: (step: IssueStep) => void;
   preview: InstallPreview | undefined;
   loading: boolean;
   error: Error | null;
 }) {
   const [viewing, setViewing] = useState<InstallPreviewFile | null>(null);
 
+  const issues = error ? issuesOf(error) : null;
+  if (error && issues) {
+    const groups = (Object.keys(ISSUE_STEP_LABEL) as IssueStep[])
+      .map((step) => ({ step, items: issues.filter((i) => issueStep(i) === step) }))
+      .filter((g) => g.items.length > 0);
+    return (
+      <Alert variant="destructive">
+        <AlertTitle>Fix these before installing</AlertTitle>
+        <AlertDescription>
+          <div className="flex flex-col gap-3">
+            {groups.map((g) => (
+              <section key={g.step} className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-medium">{ISSUE_STEP_LABEL[g.step]}</h3>
+                  {onGoToStep && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      onClick={() => onGoToStep(g.step)}
+                    >
+                      Go to step
+                    </Button>
+                  )}
+                </div>
+                <ul className="list-disc pl-4 text-xs">
+                  {g.items.map((i, n) => (
+                    <li key={n}>
+                      <span className="font-mono">
+                        {i.file.replace('.shipline/', '')}
+                        {i.path ? ` ${i.path}` : ''}
+                      </span>
+                      : {i.message}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        </AlertDescription>
+      </Alert>
+    );
+  }
   if (error) {
     return (
       <Alert variant="destructive">
@@ -73,7 +154,7 @@ export function ReviewStep({
             <dt className="text-muted-foreground">Confirmations</dt>
             <dd>{selection.confirmations === 'light' ? 'Light' : 'Standard'}</dd>
             <dt className="text-muted-foreground">Guardrails</dt>
-            <dd>{selection.guardrails === 'off' ? 'Off' : 'On'}</dd>
+            <dd>{guardrailsSummary(selection)}</dd>
             <dt className="text-muted-foreground">Branch pattern</dt>
             <dd className="font-mono">{selection.branchPattern ?? '{type}/{key}-{slug}'}</dd>
           </dl>
@@ -156,4 +237,13 @@ export function ReviewStep({
       </Dialog>
     </div>
   );
+}
+
+/** One line for the Settings list: how many rails are active (stepper), or the on/off switch (defaults). */
+function guardrailsSummary(selection: InstallSelection): string {
+  const rails = selection.guardrailConfig?.rails;
+  if (!rails) return selection.guardrails === 'off' ? 'Off' : 'On';
+  const values = Object.values(rails);
+  const active = values.filter((v) => v !== 'off').length;
+  return `${active} of ${values.length} rails active`;
 }

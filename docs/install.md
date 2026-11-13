@@ -28,12 +28,24 @@ npx @forgeyard/shipline ui            # in a repo without Shipline: the setup wi
 The command line is strict: `--help` (or `-h`) works globally and per command, `--version` (or `-v`) prints the
 version, the folder is only given with `--dir`, and an unknown option, command or bare argument exits with code 2.
 
-**Installing from the browser.** `shipline ui` in a folder without Shipline opens a short wizard (workflows and
-whether the repo has a UI, agents and skills, commands and tracker, the CI check, then a review of every file).
+**Installing from the browser.** `shipline ui` in a folder without Shipline opens a setup wizard that starts with a
+choice of two paths. **Set up with Claude** goes straight to a review of the defaults (what `init --yes` installs);
+after Install, a chat opens in the UI with `/shipline-setup` already sent, and Claude interviews you (it needs Claude
+Code installed and signed in; if the chat can't start, the install still stands and the screen tells you to run
+`/shipline-setup` from the Setup page or in Claude Code). **Set up here** is a seven-step stepper, pre-filled with the
+same defaults: 1. Workflows (and whether the repo has a UI); 2. Stages & rules (a tab per workflow with the Setup
+page's stage editor: add, remove and reorder stages, optional, enforcement and blocks, confirm to advance, agent,
+and the rules text); 3. Agents & skills (worked out from the stages you drafted); 4. Project (tracker, branch
+pattern, test, lint and build commands, confirmations); 5. Guardrails (every rail as deny, ask or off, protected
+paths, extra deploy and migrate commands, the scope check); 6. CI check; 7. Review, a list of every file that will
+be written. If the server finds a problem (a bad stage id, a stage naming an agent that isn't installed), Review
+lists it under the step that fixes it with a **Go to step** button, and Install stays off until none are left.
 Nothing is written to the repo or to `~/.shipline` until you press **Install**; closing the page writes
-nothing. After Install the page shows a "You're set up" screen with the next steps and an **Open Shipline** button
-for the normal UI, without restarting the command. In a terminal, `init` starts this wizard by default. The wizard also asks about confirmations (Standard or
-Light), the branch pattern and guardrails (on or off, one switch).
+nothing. Installing from the stepper writes `setup: done` to `.shipline/config.yml`, so no "default rules" banner or
+session-start reminder follows. After Install the page shows a "You're set up" screen with the next steps and an
+**Open Shipline** button for the normal UI, without restarting the command. In a terminal, `init` starts this
+wizard by default. A repo that is installed but not marked done shows a banner on the Setup page with **Run setup
+with Claude** and **Mark setup as done**.
 
 **Only the files your choices need.** The same answers give the same files from the wizard, interactive `init`
 and `init --yes`. With "no UI", stages marked `condition: ui_only` (Feature's wireframes) and their rules are

@@ -32,7 +32,8 @@ function selectionOf(info, body) {
   try {
     checkSelection(info, body.selection);
   } catch (e) {
-    throw new HttpError(400, 'invalid', e.message);
+    // Validator problems carry `issues` ([{ file, path, message }]); shape errors are plain messages.
+    throw new HttpError(400, 'invalid', e.message, e.issues);
   }
   return body.selection;
 }
@@ -86,6 +87,7 @@ function infoBody(app) {
     detected: info.detected,
     trackerDefault: info.trackerDefault,
     uiDetected: info.uiDetected,
+    templates: info.templates,
     branchPatternDefault: DEFAULT_BRANCH_PATTERN,
     defaults: defaultSelection(info),
   };

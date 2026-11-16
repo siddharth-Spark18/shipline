@@ -726,10 +726,10 @@ describe('agents and skills (prepublish plan, Setup -> Agents & skills)', () => 
     assert.ok(xexists(x, '.shipline/bin/guard.mjs'));
   });
 
-  test('a "repo newer" VERSION refuses it with 423', async () => {
+  test('a "repo newer" VERSION refuses it with 409 (the repo is not served)', async () => {
     const x = await scratchRepo((d) => writeFileSync(path.join(d, '.shipline/bin/VERSION'), '{"package":"9.9.9","interface":99}\n'));
     const r = await agentsPost(x, { remove: ['researcher'], baseVersionHash: 'x', baseHashes: {} });
-    assert.equal(r.status, 423, r.text);
+    assert.equal(r.status, 409, r.text);
     assert.equal(r.json.error.code, 'repo-newer');
     assert.ok(xexists(x, AGENT('researcher')));
   });
@@ -769,29 +769,28 @@ describe('interchangeability', () => {
 });
 
 describe('version contract', () => {
-  test('a "repo newer" VERSION refuses the save; Tasks still works', async () => {
+  // One-server UI: a repo set up with a newer Shipline is listed with a restart card and its per-repo routes answer
+  // 409 repo-newer; nothing is written and other repos keep working.
+  test('a "repo newer" VERSION is listed with the restart card; every per-repo route answers 409 repo-newer', async () => {
     const x = await scratchRepo((d) => writeFileSync(path.join(d, '.shipline/bin/VERSION'), '{"package":"9.9.9","interface":99}\n'));
-    const status = await api(x.ui, 'GET', '/api/status');
-    assert.equal(status.json.versionState, 'repo-newer');
-    const s = await getSetup(x.ui);
+    const message = 'This repo uses Shipline 9.9.9. Stop this server (Ctrl+C) and run `npx @forgeyard/shipline@9.9.9 ui`.';
+    const listed = (await api(x.ui, 'GET', '/api/projects')).json.find((p) => p.id === x.ui.repoId);
+    assert.equal(listed.state, 'repo-newer');
+    assert.equal(listed.message, message);
     const before = snapshot(x.dir);
-    const model = clone(s.config.model);
-    model.commands.test = 'pnpm test';
-    const r = await save([{ kind: 'config', model, baseHash: s.config.hash }], x.ui);
-    assert.equal(r.status, 423);
-    assert.equal(r.json.error.code, 'repo-newer');
-    assert.match(r.json.error.message, /npx @forgeyard\/shipline@9\.9\.9 ui/);
-    const copy = await api(x.ui, 'POST', '/api/setup/workflows', { body: { action: 'copy', from: 'feature', id: 'review' } });
-    assert.equal(copy.status, 423);
-    assert.deepEqual(snapshot(x.dir), before);
-    assert.equal((await api(x.ui, 'GET', '/api/tasks')).status, 200);
-    const ev = await openEvents(x.ui);
-    try {
-      const b = await ev.waitFor((e) => e.type === 'banner' && e.data.kind === 'version', 10_000); // polls up to 10 s (Windows CI, 1.0 plan item 8)
-      assert.equal(b.data.text, 'This repo was set up with Shipline 9.9.9. Run `npx @forgeyard/shipline@9.9.9 ui`.');
-    } finally {
-      ev.close();
+    for (const [method, p, body] of [
+      ['GET', '/api/status'],
+      ['GET', '/api/setup'],
+      ['GET', '/api/tasks'],
+      ['POST', '/api/setup/save', { files: [] }],
+      ['POST', '/api/setup/workflows', { action: 'copy', from: 'feature', id: 'review' }],
+    ]) {
+      const r = await api(x.ui, method, p, body ? { body } : {});
+      assert.equal(r.status, 409, `${method} ${p}: ${r.text}`);
+      assert.equal(r.json.error.code, 'repo-newer');
+      assert.equal(r.json.error.message, message);
     }
+    assert.deepEqual(snapshot(x.dir), before);
   });
 
   // 1.0 plan, follow-up: a repo set up before 1.0 (a VERSION package below 1.0.0, or no or an unreadable VERSION) gets
@@ -802,31 +801,24 @@ describe('version contract', () => {
     ['no VERSION', (d) => rmSync(path.join(d, '.shipline/bin/VERSION')), 'unknown version'],
     ['an unreadable VERSION', (d) => writeFileSync(path.join(d, '.shipline/bin/VERSION'), 'not json\n'), 'unknown version'],
   ]) {
-    test(`a pre-1.0 repo (${label}): the uninstall-then-init banner, saves refused (423 pre-1.0), Tasks still works`, async () => {
+    test(`a pre-1.0 repo (${label}): listed with the uninstall-then-init card, every per-repo route answers 409 repo-too-old`, async () => {
       const x = await scratchRepo(prepare);
       const message = `This repo was set up with a pre-1.0 Shipline (${shown}). Run \`npx @forgeyard/shipline uninstall --yes\` then \`init\`; task data in ~/.shipline is kept.`;
-      const status = await api(x.ui, 'GET', '/api/status');
-      assert.equal(status.json.versionState, 'pre-1.0');
-      assert.equal(status.json.versionMessage, message);
-      const ev = await openEvents(x.ui);
-      try {
-        const b = await ev.waitFor((e) => e.type === 'banner' && e.data.kind === 'version', 10_000);
-        assert.equal(b.data.text, message);
-      } finally {
-        ev.close();
-      }
+      const listed = (await api(x.ui, 'GET', '/api/projects')).json.find((p) => p.id === x.ui.repoId);
+      assert.equal(listed.state, 'pre-1.0');
+      assert.equal(listed.message, message);
       const before = snapshot(x.dir);
-      const s = await getSetup(x.ui);
-      const model = clone(s.config.model);
-      model.commands.test = 'pnpm test';
-      const r = await save([{ kind: 'config', model, baseHash: s.config.hash }], x.ui);
-      assert.equal(r.status, 423, r.text);
-      assert.equal(r.json.error.code, 'pre-1.0');
-      assert.equal(r.json.error.message, message);
-      const copy = await api(x.ui, 'POST', '/api/setup/workflows', { body: { action: 'copy', from: 'feature', id: 'review' } });
-      assert.equal(copy.status, 423);
+      for (const [method, p, body] of [
+        ['GET', '/api/tasks'],
+        ['POST', '/api/setup/save', { files: [] }],
+        ['POST', '/api/setup/workflows', { action: 'copy', from: 'feature', id: 'review' }],
+      ]) {
+        const r = await api(x.ui, method, p, body ? { body } : {});
+        assert.equal(r.status, 409, `${method} ${p}: ${r.text}`);
+        assert.equal(r.json.error.code, 'repo-too-old');
+        assert.equal(r.json.error.message, message);
+      }
       assert.deepEqual(snapshot(x.dir), before);
-      assert.equal((await api(x.ui, 'GET', '/api/tasks')).status, 200);
     });
   }
 
@@ -835,9 +827,9 @@ describe('version contract', () => {
     const x = await scratchRepo((d) => writeFileSync(path.join(d, '.shipline/bin/VERSION'), '{"package":"0.13.0","interface":6}\n'));
     const r = run(process.execPath, [BIN, 'upgrade', '--dir', x.dir, '--yes'], { cwd: x.dir });
     assert.equal(r.code, 1);
-    const status = await api(x.ui, 'GET', '/api/status');
-    assert.equal(r.stderr, `shipline: ${status.json.versionMessage} Nothing was changed.\n`);
-    assert.equal(status.json.versionMessage, preOneMessage({ package: '0.13.0' }));
+    const listed = (await api(x.ui, 'GET', '/api/projects')).json.find((p) => p.id === x.ui.repoId);
+    assert.equal(r.stderr, `shipline: ${listed.message} Nothing was changed.\n`);
+    assert.equal(listed.message, preOneMessage({ package: '0.13.0' }));
   });
 });
 
@@ -1182,10 +1174,10 @@ describe('add a shipped workflow (setup wizard plan, G)', () => {
   test('GET /api/setup lists the shipped workflows the repo lacks, and whether a UI is detected', async () => {
     const x = await bugfixRepo();
     const s = await getSetup(x.ui);
-    assert.deepEqual(s.addableWorkflows.map((w) => w.id), ['feature', 'hotfix', 'small']);
+    assert.deepEqual(s.addableWorkflows.map((w) => w.id), ['feature', 'hotfix', 'small', 'deps', 'docs', 'refactor', 'release', 'spike']);
     assert.deepEqual(s.addableWorkflows[0], { id: 'feature', name: 'Feature', description: 'new functionality or a change in behavior' });
     assert.equal(s.uiDetected, false);
-    assert.deepEqual((await getSetup()).addableWorkflows, [], 'a full install has every workflow');
+    assert.deepEqual((await getSetup()).addableWorkflows.map((w) => w.id), ['deps', 'docs', 'refactor', 'release', 'spike'], 'a default install lacks only the five offered ones');
     const withUi = await bugfixRepo({ 'web/index.html': '<p>\n' });
     assert.equal((await getSetup(withUi.ui)).uiDetected, true);
   });
@@ -1252,7 +1244,7 @@ describe('add a shipped workflow (setup wizard plan, G)', () => {
     assert.deepEqual(Object.keys(v.files), [...Object.keys(v.files)].sort());
     const s = await getSetup(x.ui);
     assert.ok(wfEntry(s, 'feature'), 'the new workflow is served');
-    assert.deepEqual(s.addableWorkflows.map((w) => w.id), ['hotfix', 'small']);
+    assert.deepEqual(s.addableWorkflows.map((w) => w.id), ['hotfix', 'small', 'deps', 'docs', 'refactor', 'release', 'spike']);
     // A task can start on it at once.
     const st = stage(x.dir, ['start', '--workflow', 'feature', '--title', 'Add export'], 'aw1');
     assert.equal(st.code, 0, st.stderr);
@@ -1383,14 +1375,15 @@ describe('add a shipped workflow (setup wizard plan, G)', () => {
     assert.deepEqual(snapshot(x.dir), before);
   });
 
-  test('a "repo newer" VERSION refuses it with 423', async () => {
+  test('a "repo newer" VERSION refuses it with 409 repo-newer', async () => {
     const x = await bugfixRepo();
     writeFileSync(path.join(x.dir, '.shipline/bin/VERSION'), '{"package":"9.9.9","interface":99}\n');
     await x.ui.close();
     const u = await startUi(x.dir);
     extra.push({ dir: null, ui: u });
     const r = await api(u, 'POST', '/api/setup/add-workflow', { body: { id: 'feature', ui: true, baseVersionHash: 'x', baseHashes: {} } });
-    assert.equal(r.status, 423, r.text);
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.json.error.code, 'repo-newer');
     assert.ok(!existsSync(path.join(x.dir, '.shipline/workflows/feature.yml')));
   });
 });

@@ -25,11 +25,15 @@ export const timeoutMessage = (ms) =>
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
+// The timeout from SHIPLINE_UI_PROMPT_TIMEOUT_MS (a test override), or the default. The server reads it once when it
+// starts, because repo contexts are created lazily, long after the environment it was started in may have changed.
+export function promptTimeoutFromEnv() {
+  const n = Number(process.env.SHIPLINE_UI_PROMPT_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : PROMPT_TIMEOUT_MS;
+}
+
 export function createPrompts(app) {
-  const timeoutMs = (() => {
-    const n = Number(process.env.SHIPLINE_UI_PROMPT_TIMEOUT_MS);
-    return Number.isFinite(n) && n > 0 ? n : PROMPT_TIMEOUT_MS;
-  })();
+  const timeoutMs = app.promptTimeoutMs || promptTimeoutFromEnv();
   const root = app.repo.root;
   const pending = new Map(); // id -> prompt
   const secrets = new Map(); // chatId -> this spawn's secret
@@ -58,6 +62,7 @@ export function createPrompts(app) {
     log('prompt-resolved', { id: p.id, chatId: p.chatId, tool: p.tool, outcome });
     p.resolve(answer);
     app.hub.send('prompt-resolved', { id: p.id, outcome });
+    if (app.changed) app.changed();
   }
 
   function chatForSecret(supplied) {
@@ -102,6 +107,7 @@ export function createPrompts(app) {
           `Shipline UI: Claude is waiting for a permission answer (${p.tool}). Open the UI to answer.`,
         );
       app.hub.send('prompt', view(p));
+      if (app.changed) app.changed();
       // The relay went away (claude was killed): drop the card.
       res.on('close', () =>
         settle(p, 'deny', { behavior: 'deny', message: 'The request was cancelled' }),
@@ -133,7 +139,16 @@ export function createPrompts(app) {
     timeoutMs,
     pendingCount: () => pending.size,
 
+    // What waits for the developer, for the project switcher's badge: [{ chatId, reason }] where the reason is
+    // 'question' (AskUserQuestion, which also carries the stage confirmations) or 'permission'.
+    waiting: () =>
+      [...pending.values()].map((p) => ({
+        chatId: p.chatId,
+        reason: p.tool === ASK_USER_QUESTION ? 'question' : 'permission',
+      })),
+
     routes: () => [
+      // Served at /api/repos/:repoId/relay (the repo id is in the URL the MCP config gives the relay).
       { method: 'POST', path: '/api/relay', handler: relayHandler },
       { method: 'POST', path: '/api/prompts/:id', handler: answerHandler },
     ],
@@ -166,7 +181,7 @@ export function createPrompts(app) {
             command: process.execPath,
             args: [RELAY_PATH],
             env: {
-              SHIPLINE_UI_RELAY_URL: `http://127.0.0.1:${port}/api/relay`,
+              SHIPLINE_UI_RELAY_URL: `http://127.0.0.1:${port}/api/repos/${app.id}/relay`,
               SHIPLINE_UI_RELAY_SECRET: secret,
             },
           },

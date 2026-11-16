@@ -22,7 +22,11 @@
   },
   ".claude/skills/shipline-setup/SKILL.md": {
     "dada383a26cf8d85288156129d53c3b684455bea529fa78c314c299667cc3c39": "1.0.0",
-    "50d2c0c64a6aaddc3ccf5e592e89ea98f03ef644042325732ab2083e73763430": "1.1.0"
+    "50d2c0c64a6aaddc3ccf5e592e89ea98f03ef644042325732ab2083e73763430": "1.1.0",
+    "5920251a76600fad4bf13a05b8119b27e4cad4d7ba34f305ea1733eab94c80de": "2.0.0"
+  },
+  ".claude/skills/shipline-workflow-designer/SKILL.md": {
+    "b8c9f3b6e2e0ef6388b3912d4bdec23a5032291a9fd223d85b8a5354053a5de1": "2.0.0"
   },
   ".claude/skills/shipline-workflow/SKILL.md": {
     "6dd494f19b226db113881a715bdd1735a45eec8157c454bf34f2f2213b7fb049": "1.0.0"
@@ -38,7 +42,8 @@
   },
   ".shipline/bin/lib.mjs": {
     "53a892b1ed71a82f3fe98c1f4e6522cb5af4e95a5a522fd4ff0ba5ae87bbd732": "1.0.0",
-    "91f253aa7926973597bbeb023699d830a05d87669e83b1458cccf87b686f9ed0": "1.3.0"
+    "91f253aa7926973597bbeb023699d830a05d87669e83b1458cccf87b686f9ed0": "1.3.0",
+    "a8f3960790f0af4bd6e18c9b9322525d05504e28918d4b210185fc53921330ab": "2.0.0"
   },
   ".shipline/bin/prompt-submit.mjs": {
     "6a14bbaee6cc42c6bb65d03cddb30300647663402672fc75d6e1632f5c0ce75f": "1.0.0"
@@ -49,10 +54,42 @@
   ".shipline/bin/session-start.mjs": {
     "3df1dc88d1c5ab0e68ff12471b42689508f40ebf97bd8ecb97300cea0ebe91f6": "1.0.0"
   },
+  ".shipline/bin/shipped/bugfix.yml": {
+    "ea8e44006730bbd796ba231afc50ccfa454761b9d9912a166f5f55b76caf45a4": "2.0.0"
+  },
+  ".shipline/bin/shipped/deps.yml": {
+    "dd9cf24eef9ba04a1d635eb5e66759e27decf7abc62386310d57957a9c7f9bf1": "2.0.0"
+  },
+  ".shipline/bin/shipped/docs.yml": {
+    "3e2098c41b55b118e2eafb311de9011492497b7001478ee4c15c342f3a37bbc3": "2.0.0"
+  },
+  ".shipline/bin/shipped/feature.yml": {
+    "a41296761c8017651fb9f2f78220390ca902ecfe1ef0c4490ce3a784330c3a41": "2.0.0"
+  },
+  ".shipline/bin/shipped/hotfix.yml": {
+    "39cec8bd517b907874f1dd89b2a7a9a2975b107afb33b2a6b56b6ac6f6202854": "2.0.0"
+  },
+  ".shipline/bin/shipped/refactor.yml": {
+    "dd6f69828c911544a0d0149688485c0c3dcf28af9be729c7ba0af3feec6b3884": "2.0.0"
+  },
+  ".shipline/bin/shipped/release.yml": {
+    "8f4b94374d11d13266e41228a1b280aa89ebf6365b6de2a3de48a5962000c134": "2.0.0"
+  },
+  ".shipline/bin/shipped/small.yml": {
+    "ff5232ccfb54da96a666d21fb09259d74762a16f0913cddfa472f59ed4bc7c81": "2.0.0"
+  },
+  ".shipline/bin/shipped/spike.yml": {
+    "6b31c9a34ebce801ce4c01737284affb9498c074712df5328292755ecc429c96": "2.0.0"
+  },
   ".shipline/bin/stage.mjs": {
-    "bff7df0babdda47aedfb2a3e673999ea7209b1584db265dfcf277940aa71145e": "1.0.0"
+    "bff7df0babdda47aedfb2a3e673999ea7209b1584db265dfcf277940aa71145e": "1.0.0",
+    "7ca4007a7a165b012242e62cbc99ad56a7c4e6defd071933b1fe68a0602ed8fb": "2.0.0"
+  },
+  ".shipline/bin/workflow-check.mjs": {
+    "4b98feac1710c8574efbe39400deca95fe83ffcc2151b8e538263a024964b855": "2.0.0"
   },
   "CLAUDE.md#shipline": {
-    "4e8eb30e7722754044d9d98b80cbb3b353cf63f94e6e7742df9783327a4acf62": "1.0.0"
+    "4e8eb30e7722754044d9d98b80cbb3b353cf63f94e6e7742df9783327a4acf62": "1.0.0",
+    "74a91cb81ebfdb3663dc29509b6410457aa323407060cb03effdc68179362276": "2.0.0"
   }
 }

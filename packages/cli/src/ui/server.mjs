@@ -1,28 +1,24 @@
 // `shipline ui`: the local server. Node 20+, no dependencies.
+import crypto from 'node:crypto';
 import http from 'node:http';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { INTERFACE } from '../interface.mjs';
+import { projectId, readRegistry, registerQuietly } from '../registry.mjs';
 import { createAuth } from './auth.mjs';
-import { createChats } from './chat.mjs';
 import { createDevices } from './devices.mjs';
-import { routes as chatRoutes } from './chat-routes.mjs';
-import { routes as diagnosticsRoutes } from './diagnostics.mjs';
-import { installedRoutes, notInstalled, routes as installRoutes } from './install-routes.mjs';
 import { HttpError, parseJsonBody, readBody, sendError, sendJson } from './http.mjs';
-import { initLog, log } from './log.mjs';
+import { createLogger, serverLogFile, setDefaultLogger, withLogger } from './log.mjs';
 import { openBrowser } from './open-browser.mjs';
-import { createPrompts } from './prompts.mjs';
+import { createProjects } from './projects.mjs';
+import { notInstalled } from './install-routes.mjs';
 import { createRemote } from './remote.mjs';
 import { routes as remoteRoutes } from './remote-routes.mjs';
-import { gitRootOf, installRootFor, resolveRepo } from './repo.mjs';
+import { resolveRepo } from './repo.mjs';
+import { removeServerRecord, serverFile, writeServerRecord } from './server-record.mjs';
 import { stopEverything as stopAllShells } from './shell.mjs';
-import { routes as setupRoutes } from './setup.mjs';
 import { createHub } from './sse.mjs';
-import { routes as taskRoutes } from './tasks.mjs';
 import { storeDir } from '../store.mjs';
-import { startTaskWatch } from './watch.mjs';
 
 const UI_DIST = fileURLToPath(new URL('../../ui-dist/', import.meta.url));
 const UI_VERSION = JSON.parse(
@@ -48,13 +44,14 @@ function fail(message) {
 
 const UI_USAGE = `Usage: npx @forgeyard/shipline ui [--dir <path>] [--port <n>] [--no-open] [--remote]
 
-Local web UI for setup and tasks (Node 20+).
+Local web UI for setup and tasks (Node 20+). One server serves every repo on this machine: when one is already
+running, this opens the folder in it instead of starting another.
 
 Options:
   --dir <path>   Target folder (default: the current directory)
-  --port <n>     Port to listen on (default: a free one)
+  --port <n>     Port to listen on (default: a free one; ignored when a server is already running)
   --no-open      Don't open the browser
-  --remote       Also serve the UI to your paired phone over Tailscale (installed repos only)
+  --remote       Also serve the UI to your paired phone over Tailscale (turns it on in a running server too)
   -h, --help     Show this help`;
 
 function usageError(message) {
@@ -143,51 +140,21 @@ function sendStatic(req, res, pathname) {
   res.end(req.method === 'HEAD' ? undefined : body);
 }
 
-// Builds everything a repo needs (repo, log, store, prompts, chats, watch) on `app` and returns its route table.
-// Used when the server starts on an installed repo, and again when the install wizard finishes. `repo` is an
-// already resolved repo (startServer resolves it first to detect install mode).
-export async function startRepoMode(app, root, repo = null) {
-  repo = repo || (await resolveRepo(root));
-  storeDir(repo.root);
-  initLog(repo.root);
-  log('start', { root: repo.root, uiVersion: UI_VERSION, node: process.version });
-  log('version', { repo: repo.version, ui: INTERFACE, state: repo.state });
-
-  app.repo = repo;
-  if (repo.state === 'pre-1.0') {
-    app.addBanner({ id: 'version', kind: 'version', text: repo.versionMessage });
-  } else if (repo.state === 'repo-newer') {
-    const v = repo.version.package || 'latest';
-    app.addBanner({
-      id: 'version',
-      kind: 'version',
-      text: `This repo was set up with Shipline ${v}. Run \`npx @forgeyard/shipline@${v} ui\`.`,
-    });
+// '/api/repos/<id>/chats' -> { id, rest: '/api/chats' } (the per-repo modules keep their own route paths), or null.
+function splitRepoPath(pathname) {
+  const m = /^\/api\/repos\/([^/]+)(\/.*)?$/.exec(pathname);
+  if (!m) return null;
+  let id;
+  try {
+    id = decodeURIComponent(m[1]);
+  } catch {
+    return { id: null, rest: null };
   }
-  app.prompts = createPrompts(app);
-  app.chats = createChats(app);
-  app.watch = await startTaskWatch(app);
-  app.table = [
-    ...diagnosticsRoutes(app),
-    ...app.prompts.routes(),
-    ...chatRoutes(app),
-    ...setupRoutes(app),
-    ...taskRoutes(app),
-    ...installedRoutes(),
-    ...remoteRoutes(app),
-    {
-      method: 'GET',
-      path: '/api/events',
-      handler: ({ req, res, who }) =>
-        app.hub.connect(req, res, {
-          deviceId: who && who.kind === 'device' ? who.deviceId : undefined,
-        }),
-    },
-  ];
-  app.mode = 'repo'; // last: until now the install routes answer
-  return app.table;
+  return { id, rest: `/api${m[2] || ''}` };
 }
 
+// Returns { port, url, repoId, close }. Always starts a server: finding a running one and handing over to it is
+// `launchUi` (server-record.mjs), which the CLI calls.
 export async function startServer({ dir, port = 0, open = true, remote = false } = {}) {
   let repo = null;
   try {
@@ -195,6 +162,14 @@ export async function startServer({ dir, port = 0, open = true, remote = false }
   } catch (e) {
     // No Shipline setup here: serve the install wizard, which writes nothing until Install.
     if (e.code !== 'NO_REPO') fail(`Could not load the repo's .shipline/bin/lib.mjs: ${e.message}`);
+  }
+  // The start folder's task store must be usable (the repo's own context is created later, on its first request).
+  if (repo) {
+    try {
+      storeDir(repo.root);
+    } catch (e) {
+      fail(e.message);
+    }
   }
   // Phone access state: the hub asks it on every heartbeat whether a device's stream may stay open.
   const devices = createDevices();
@@ -204,47 +179,33 @@ export async function startServer({ dir, port = 0, open = true, remote = false }
       return devices.has(id) ? null : 'revoked';
     },
   });
-  const banners = new Map();
-  let switching = null;
+  const serverLogger = createLogger(serverLogFile());
+  setDefaultLogger(serverLogger);
+  const recordFile = serverFile();
   const app = {
-    mode: repo ? 'repo' : 'install',
-    install: repo ? null : { root: installRootFor(dir), isGit: gitRootOf(dir) !== null },
-    repo,
     hub,
     uiVersion: UI_VERSION,
     port: null,
     auth: null,
     remote: null,
-    watch: null,
-    prompts: null,
-    chats: null,
+    projects: null,
+    serverLogger,
+    log: (event, data) => serverLogger.log(event, data),
+    // The key a later `shipline ui` run shows to the handoff routes (it is also in server.json, mode 0600).
+    serverKey: crypto.randomBytes(32).toString('hex'),
     table: [],
-    addBanner(banner) {
-      banners.set(banner.id, banner);
-      hub.send('banner', banner);
-    },
-    // After a successful install: the same server, port and auth, now with the repo's full routes. Requests
-    // that arrive meanwhile share the one switch; a failed switch can be tried again.
-    async switchToRepo() {
-      if (app.mode === 'repo') return;
-      switching ||= startRepoMode(app, app.install.root).catch((e) => {
-        switching = null;
-        throw e;
-      });
-      await switching;
-    },
   };
-  hub.onConnect((reply) => {
-    for (const b of banners.values()) reply('banner', b);
-  });
-  if (!repo) app.table = installRoutes(app);
 
   const server = http.createServer(async (req, res) => {
+    let logger = serverLogger;
     try {
       const url = new URL(req.url || '/', 'http://127.0.0.1');
       const { pathname } = url;
       const isApi = pathname.startsWith('/api/');
       const isStatic = !isApi && (req.method === 'GET' || req.method === 'HEAD');
+      const repoPath = isApi ? splitRepoPath(pathname) : null;
+      const peeked = repoPath && repoPath.id ? app.projects.peek(repoPath.id) : null;
+      if (peeked) logger = peeked.logger;
 
       // The Host classification comes first (a foreign Host is refused), then the token exchange (laptop host
       // only), then cookie and Origin.
@@ -253,10 +214,12 @@ export async function startServer({ dir, port = 0, open = true, remote = false }
         return app.auth.exchange(req, res, url.searchParams.get('t'));
       }
       const who = app.auth.check(req, { method: req.method, pathname, isStatic });
-      // Audit: what a paired device changed (method, path and status only; never a body).
+      // Audit: what a paired device changed (method, path and status only; never a body). It goes to the repo's
+      // log for /api/repos/:id/..., and to the server log otherwise.
       if (kind === 'remote' && isApi && who.deviceId && req.method !== 'GET') {
+        const audit = logger;
         res.once('finish', () =>
-          log('remote', {
+          audit.log('remote', {
             device: who.deviceId,
             name: who.name,
             method: req.method,
@@ -267,23 +230,31 @@ export async function startServer({ dir, port = 0, open = true, remote = false }
       }
 
       if (isStatic) return sendStatic(req, res, pathname);
-      // Installed meanwhile (a terminal `init`, or another tab's Install): serve the repo from now on, so the
-      // wizard's reload opens the normal UI.
-      if (
-        isApi &&
-        app.mode === 'install' &&
-        existsSync(path.join(app.install.root, '.shipline', 'config.yml'))
-      )
-        await app.switchToRepo();
+
+      let table = app.table;
+      let routePath = pathname;
+      let ctx = null;
+      if (repoPath) {
+        if (!repoPath.id) throw new HttpError(404, 'unknown-repo', 'No such project');
+        ctx = await app.projects.contextFor(repoPath.id);
+        logger = ctx.logger;
+        // Installed meanwhile (a terminal `init`, or another tab's Install): serve the repo from now on, so the
+        // wizard's reload opens the normal UI.
+        if (ctx.mode === 'install' && existsSync(path.join(ctx.install.root, '.shipline', 'config.yml')))
+          await withLogger(logger, () => ctx.switchToRepo());
+        table = ctx.table;
+        routePath = repoPath.rest;
+        logger = ctx.logger;
+      }
       // Routes may have :params (for example /api/chats/:id); an exact path matches first.
       const matches = [];
-      for (const r of app.table) {
-        const params = matchPath(r.path, pathname);
+      for (const r of table) {
+        const params = matchPath(r.path, routePath);
         if (params) matches.push({ ...r, params });
       }
       const route = matches.find((r) => r.method === req.method);
       if (!route) {
-        if (isApi && app.mode === 'install') notInstalled();
+        if (ctx && ctx.mode === 'install') notInstalled();
         if (isApi && matches.length)
           throw new HttpError(405, 'method-not-allowed', 'Method not allowed');
         throw new HttpError(404, 'not-found', 'Not found');
@@ -292,10 +263,12 @@ export async function startServer({ dir, port = 0, open = true, remote = false }
         req.method === 'POST'
           ? parseJsonBody(await readBody(req, { max: route.maxBody }))
           : undefined;
-      const result = await route.handler({ req, res, url, body, params: route.params, who });
+      const result = await withLogger(logger, () =>
+        route.handler({ req, res, url, body, params: route.params, who }),
+      );
       if (!res.headersSent) sendJson(res, 200, result === undefined ? {} : result);
     } catch (e) {
-      if (!(e instanceof HttpError)) log('error', { method: req.method, message: e && e.message });
+      if (!(e instanceof HttpError)) logger.log('error', { method: req.method, message: e && e.message });
       sendError(res, e);
     }
   });
@@ -316,17 +289,46 @@ export async function startServer({ dir, port = 0, open = true, remote = false }
   app.port = server.address().port;
   app.remote = createRemote({ app, devices });
   app.auth = createAuth(app.port, app);
+  app.projects = createProjects(app);
+  app.table = [
+    ...app.projects.routes(),
+    ...remoteRoutes(app),
+    {
+      method: 'GET',
+      path: '/api/events',
+      handler: ({ req, res, who }) =>
+        app.hub.connect(req, res, {
+          deviceId: who && who.kind === 'device' ? who.deviceId : undefined,
+        }),
+    },
+  ];
 
-  // Started modules, closed in reverse order. watch, chats and shell exist only once a repo is served.
-  const closers = [{ name: 'hub', close: () => hub.close() }];
+  // The start folder: registered when it has Shipline, an install context when it doesn't. Its repo context is
+  // created on its first request, like every other.
+  let repoId;
   if (repo) {
-    try {
-      await startRepoMode(app, repo.root, repo);
-    } catch (e) {
-      fail(e.message);
-    }
+    repoId = projectId(repo.root);
+    if (!registerQuietly(repo.root, (m) => console.error(m))) app.projects.adopt(repoId, repo.root);
+  } else repoId = app.projects.openInstall(dir).id;
+  try {
+    writeServerRecord({
+      pid: process.pid,
+      port: app.port,
+      version: UI_VERSION,
+      key: app.serverKey,
+      startedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    // The server works without it; a later `shipline ui` just can't find it to hand over.
+    console.error(`shipline: could not write ${recordFile} (${e.message}); other terminals will start their own UI.`);
   }
-  closers.push({ name: 'watch', close: () => app.watch && app.watch.close() });
+  serverLogger.log('start', { port: app.port, version: UI_VERSION, node: process.version, dir });
+
+  // Started modules, closed in reverse order. The first one pushed runs last: server.json goes only after
+  // everything else has stopped (and only if it is still ours).
+  const closers = [{ name: 'server-record', close: () => removeServerRecord(recordFile, app.port) }];
+  closers.push({ name: 'hub', close: () => hub.close() });
+  closers.push({ name: 'watch', close: () => app.projects.closeWatches() });
   closers.push({
     name: 'http',
     close: () =>
@@ -336,8 +338,8 @@ export async function startServer({ dir, port = 0, open = true, remote = false }
       }),
   });
 
-  // After http, so shutdown stops the claude process group and releases the lock before the server closes.
-  closers.push({ name: 'chats', close: () => app.chats && app.chats.close() });
+  // After http, so shutdown stops every claude process group and releases the locks before the server closes.
+  closers.push({ name: 'chats', close: () => app.projects.closeChats() });
   closers.push({ name: 'shell', close: () => stopAllShells() });
   // Last pushed, first closed: take the phone mapping down before anything else stops.
   closers.push({ name: 'remote', close: () => app.remote.stop() });
@@ -346,13 +348,13 @@ export async function startServer({ dir, port = 0, open = true, remote = false }
   async function shutdown(code, reason) {
     if (shuttingDown) return;
     shuttingDown = true;
-    log('exit', { reason, code });
+    serverLogger.log('exit', { reason, code });
     const closeAll = (async () => {
       for (const c of [...closers].reverse()) {
         try {
           await c.close();
         } catch (e) {
-          log('close-error', { name: c.name, message: e && e.message });
+          serverLogger.log('close-error', { name: c.name, message: e && e.message });
         }
       }
     })();
@@ -362,30 +364,32 @@ export async function startServer({ dir, port = 0, open = true, remote = false }
       new Promise((resolve) => (limit = setTimeout(resolve, SHUTDOWN_LIMIT_MS))),
     ]);
     clearTimeout(limit);
+    removeServerRecord(recordFile, app.port);
     process.exit(code);
   }
   process.on('SIGINT', () => shutdown(0, 'SIGINT'));
   process.on('SIGTERM', () => shutdown(0, 'SIGTERM'));
   process.on('uncaughtException', (e) => {
-    log('uncaught', { message: e && e.message, stack: e && e.stack });
+    serverLogger.log('uncaught', { message: e && e.message, stack: e && e.stack });
     console.error(e);
     shutdown(1, 'uncaughtException');
   });
   process.on('unhandledRejection', (e) => {
-    log('unhandled-rejection', { message: e && e.message });
+    serverLogger.log('unhandled-rejection', { message: e && e.message });
     console.error(e);
     shutdown(1, 'unhandledRejection');
   });
 
-  // The URL carries the token on purpose: it is printed and opened, and never logged.
-  const url = `http://127.0.0.1:${app.port}/?t=${app.auth.token}`;
+  // The URL carries the token on purpose: it is printed and opened, and never logged. The fragment opens the
+  // start folder's project: the new-chat screen preset to it, or its Setup wizard when it has no Shipline yet.
+  const url = `http://127.0.0.1:${app.port}/?t=${app.auth.token}#/${repo ? 'new' : 'setup'}/${repoId}`;
   if (!repo) {
-    console.log(`Shipline setup for ${app.install.root}`);
+    console.log(`Shipline setup for ${app.projects.peek(repoId).install.root}`);
     console.log('Nothing is written until you press Install in the browser.');
   } else console.log(`Shipline UI for ${repo.root}`);
   console.log(url);
   if (remote) {
-    if (!repo) {
+    if (!repo && readRegistry().projects.length === 0) {
       console.log(
         'Phone access needs an installed repo, so it is off. Install Shipline here first.',
       );
@@ -400,5 +404,5 @@ export async function startServer({ dir, port = 0, open = true, remote = false }
   console.log('Press Ctrl+C to stop.');
   if (open) openBrowser(url);
 
-  return { port: app.port, url, close: () => shutdown(0, 'close') };
+  return { port: app.port, url, repoId, close: () => shutdown(0, 'close') };
 }

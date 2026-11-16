@@ -41,14 +41,14 @@ async function startUiProcess(script) {
   let err = '';
   child.stderr.on('data', (d) => (err += d));
   const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
-  const url = await new Promise((resolve, reject) => {
+  const { url, repoId } = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`no URL printed: ${out} ${err}`)), 10_000);
     child.stdout.on('data', (d) => {
       out += d;
-      const m = /http:\/\/127\.0\.0\.1:\d+\/\?t=[0-9a-f]+/.exec(out);
+      const m = /(http:\/\/127\.0\.0\.1:\d+\/\?t=[0-9a-f]+)#\/new\/([0-9a-f]{12})/.exec(out);
       if (m) {
         clearTimeout(timer);
-        resolve(m[0]);
+        resolve({ url: m[1], repoId: m[2] });
       }
     });
     child.on('exit', () => reject(new Error(`server exited: ${err}`)));
@@ -56,12 +56,12 @@ async function startUiProcess(script) {
   const base = new URL(url).origin;
   const r = await fetch(url, { redirect: 'manual' });
   const cookie = r.headers.get('set-cookie').split(';')[0];
-  return { child, exited, base, cookie, stderr: () => err };
+  return { child, exited, base, cookie, repoId, stderr: () => err };
 }
 
 // Starts a chat through the API and waits until the fake has recorded its pid and its grandchild's.
 async function startHangingChat(server) {
-  const r = await fetch(`${server.base}/api/chats`, {
+  const r = await fetch(`${server.base}/api/repos/${server.repoId}/chats`, {
     method: 'POST',
     headers: { cookie: server.cookie, origin: server.base, 'content-type': 'application/json' },
     body: JSON.stringify({ message: 'hang around' }),

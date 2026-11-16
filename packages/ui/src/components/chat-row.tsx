@@ -1,53 +1,49 @@
-import { Badge } from '@/components/ui/badge';
-import { StageDot, StageTrail } from '@/components/stage-dots';
-import type { ChatSummary, Task } from '@/lib/types';
+import { StageTrail } from '@/components/stage-dots';
+import type { ChatListItem, Project, WaitingReason } from '@/lib/types';
 
-/** Active chats first, then the most recently active; the server already sends newest first. */
-export function sortChats(chats: ChatSummary[]): ChatSummary[] {
-  const stamp = (c: ChatSummary) => new Date(c.last_active).getTime() || 0;
-  return [...chats].sort(
-    (a, b) => Number(b.status === 'active') - Number(a.status === 'active') || stamp(b) - stamp(a),
-  );
+export const WAITING_LABEL: Record<WaitingReason, string> = {
+  permission: 'Permission needed',
+  question: 'Question or confirmation waiting',
+  error: 'Stopped with an error',
+};
+
+/** Newest activity first (the server sends it that way; this keeps a list that was patched in place in order). */
+export function sortChats(chats: ChatListItem[]): ChatListItem[] {
+  const stamp = (c: ChatListItem) => (c.updatedAt ? new Date(c.updatedAt).getTime() : 0) || 0;
+  return [...chats].sort((a, b) => stamp(b) - stamp(a));
 }
 
-/** The folder name of a task, used as its title when the task is finished and so not in the unfinished list. */
-const taskName = (dir: string) =>
-  dir
-    .replace(/[\\/]+$/, '')
-    .split(/[\\/]/)
-    .pop() ?? dir;
+/** The project's name, plus the worktree folder when it isn't the main worktree ("repo / worktree"). */
+export function projectLabel(p: Pick<Project, 'name' | 'groupName'> | undefined): string {
+  if (!p) return 'Unknown project';
+  return p.groupName && p.groupName !== p.name ? `${p.groupName} / ${p.name}` : p.name;
+}
 
 /**
- * What one chat shows in a list: title, "Needs answer" badge, the task it works on and its stage dots.
- * The sidebar wraps it in a menu button, the phone's Chats tab in a 64px row.
+ * What one chat shows in the flat list: title and waiting dot, then its project, workflow and stage dots. The sidebar
+ * wraps it in a menu button, the phone's Chats tab in a 64px row.
  */
-export function ChatRow({
-  chat,
-  task,
-  waiting,
-}: {
-  chat: ChatSummary;
-  /** The task the chat works in, when it is among the unfinished ones. */
-  task: Task | undefined;
-  /** The chat has a prompt waiting for an answer. */
-  waiting: boolean;
-}) {
-  const active = chat.status === 'active';
+export function ChatRow({ chat, project }: { chat: ChatListItem; project: Project | undefined }) {
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-1">
+    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
       <div className="flex min-w-0 items-center gap-2">
-        <StageDot status={active ? 'in_progress' : 'done'} className="size-2 ring-2" />
         <span className="min-w-0 flex-1 truncate">{chat.title || 'Untitled chat'}</span>
-        {waiting && <Badge className="h-4 px-1.5 text-[10px]">Needs answer</Badge>}
+        {chat.waiting && (
+          <span
+            role="img"
+            className="size-2 shrink-0 rounded-full bg-primary"
+            aria-label={WAITING_LABEL[chat.waiting]}
+            title={WAITING_LABEL[chat.waiting]}
+          />
+        )}
       </div>
-      {chat.task_dir && (
-        <div className="flex min-w-0 items-center gap-2 pl-4 text-xs text-muted-foreground">
-          <span className="min-w-0 flex-1 truncate">
-            {task ? task.title || task.slug : taskName(chat.task_dir)}
-          </span>
-          {task && <StageTrail stages={task.stages} />}
-        </div>
-      )}
+      <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+        <span className="min-w-0 flex-1 truncate">
+          {projectLabel(project)}
+          {chat.task ? ` · ${chat.task.workflow}` : ''}
+        </span>
+        {chat.task && <StageTrail stages={chat.task.stages} />}
+      </div>
     </div>
   );
 }

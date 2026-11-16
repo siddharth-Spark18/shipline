@@ -48,7 +48,7 @@ export async function askSelection(info) {
     choices: info.workflows.map((w) => ({
       name: `${w.name}${w.description ? ` - ${w.description}` : ''}`,
       value: w.id,
-      checked: true,
+      checked: w.default !== false,
     })),
     validate: (chosen) => chosen.length > 0 || 'Choose at least one workflow.',
   });

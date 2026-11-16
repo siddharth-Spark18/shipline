@@ -34,7 +34,7 @@ function packFiles() {
 describe('package.json', () => {
   test('name, version, bin and files', () => {
     assert.equal(pkg.name, '@forgeyard/shipline');
-    assert.equal(pkg.version, '1.3.0');
+    assert.equal(pkg.version, '2.0.0');
     assert.deepEqual(pkg.bin, { shipline: 'bin/shipline.mjs' });
     // npm adds LICENSE on its own but not CHANGELOG.md; both are listed (1.0 plan, item 1-2).
     for (const f of ['bin', 'src', 'templates', 'ui-dist', 'CHANGELOG.md', 'LICENSE']) assert.ok(pkg.files.includes(f), f);
@@ -168,7 +168,7 @@ describe('the bin', () => {
     const usage = {
       init: /npx @forgeyard\/shipline init \[--dir <path>\] \[--yes\] \[--dry-run\]/,
       uninstall: /npx @forgeyard\/shipline uninstall \[--dir <path>\] \[--yes\] \[--dry-run\] \[--purge\]/,
-      upgrade: /npx @forgeyard\/shipline upgrade \[--dir <path>\] \[--yes\] \[--dry-run\] \[--force\]/,
+      upgrade: /npx @forgeyard\/shipline upgrade \[--dir <path> \| --all\] \[--yes\] \[--dry-run\] \[--force\]/,
       ui: /npx @forgeyard\/shipline ui \[--dir <path>\] \[--port <n>\] \[--no-open\]/,
     };
     for (const [c, re] of Object.entries(usage)) {
@@ -216,22 +216,36 @@ describe('known-hashes.json', () => {
 
   // 1.0 plan, item 3: the upgrade history starts over at 1.0.0. Setup polish plan, item 9: 1.1.0 adds its hashes
   // (only the shipline-setup skill changed) and keeps every 1.0.0 one, so upgrade from 1.0.0 refreshes unedited files.
-  // 1.3.0 adds lib.mjs (more stacks in the deploy, migrate and release rails and the scope check).
-  test('keeps one 1.0.0 hash per path, the 1.1.0 shipline-setup skill and the 1.3.0 lib.mjs', () => {
+  // 1.3.0 adds lib.mjs (more stacks in the deploy, migrate and release rails and the scope check). 2.0.0 adds the
+  // workflow designer: new files (the skill, workflow-check.mjs, bin/shipped/*) and new hashes for stage.mjs, lib.mjs,
+  // the shipline-setup skill and the CLAUDE.md block.
+  test('keeps one 1.0.0 hash per path that existed in 1.0.0, and records the later changes', () => {
     const current = templateHashes();
     assert.deepEqual(Object.keys(KNOWN).sort(), Object.keys(current).sort());
     const SKILL = '.claude/skills/shipline-setup/SKILL.md';
     const LIB = '.shipline/bin/lib.mjs';
+    const NEW_IN_2 = (p) => /^\.shipline\/bin\/(shipped\/|workflow-check\.mjs$)|^\.claude\/skills\/shipline-workflow-designer\//.test(p);
+    const CHANGED_IN_2 = ['.shipline/bin/stage.mjs', 'CLAUDE.md#shipline'];
     for (const [p, byHash] of Object.entries(KNOWN)) {
+      assert.ok(Object.values(byHash).every((v) => ['1.0.0', '1.1.0', '1.3.0', '2.0.0'].includes(v)), p);
+      if (NEW_IN_2(p)) {
+        assert.deepEqual(byHash, { [current[p]]: '2.0.0' }, p);
+        continue;
+      }
       assert.equal(Object.values(byHash).filter((v) => v === '1.0.0').length, 1, `${p}: its 1.0.0 entry`);
-      assert.ok(Object.values(byHash).every((v) => ['1.0.0', '1.1.0', '1.3.0'].includes(v)), p);
-      if (p !== SKILL && p !== LIB) assert.deepEqual(byHash, { [current[p]]: '1.0.0' }, p);
+      if (p !== SKILL && p !== LIB && !CHANGED_IN_2.includes(p)) assert.deepEqual(byHash, { [current[p]]: '1.0.0' }, p);
     }
-    assert.equal(Object.keys(KNOWN[LIB]).length, 2);
-    assert.equal(KNOWN[LIB][current[LIB]], '1.3.0');
+    for (const p of CHANGED_IN_2) {
+      assert.equal(Object.keys(KNOWN[p]).length, 2, p);
+      assert.equal(KNOWN[p][current[p]], '2.0.0', p);
+    }
+    assert.equal(Object.keys(KNOWN[LIB]).length, 3);
+    assert.equal(KNOWN[LIB][current[LIB]], '2.0.0');
+    assert.ok(Object.values(KNOWN[LIB]).includes('1.3.0'));
     assert.deepEqual(KNOWN[SKILL], {
       dada383a26cf8d85288156129d53c3b684455bea529fa78c314c299667cc3c39: '1.0.0',
-      [current[SKILL]]: '1.1.0',
+      '50d2c0c64a6aaddc3ccf5e592e89ea98f03ef644042325732ab2083e73763430': '1.1.0',
+      [current[SKILL]]: '2.0.0',
     });
     assert.equal(current[SKILL], sha256(readFileSync(path.join(CLI_ROOT, 'templates', 'claude', 'skills', 'shipline-setup', 'SKILL.md'))));
   });
@@ -244,12 +258,13 @@ describe('known-hashes.json', () => {
       let checked = 0;
       for (const [p, h] of Object.entries(v.files)) {
         if (!KNOWN[p]) continue; // files known-hashes.json doesn't track (none expected beyond the team-owned ones)
-        assert.equal(KNOWN[p][h], { '.claude/skills/shipline-setup/SKILL.md': '1.1.0', '.shipline/bin/lib.mjs': '1.3.0' }[p] || '1.0.0', p);
+        const since2 = /^\.shipline\/bin\/(shipped\/|workflow-check\.mjs$|stage\.mjs$|lib\.mjs$)|^\.claude\/skills\/shipline-(workflow-designer|setup)\/|^CLAUDE\.md#shipline$/.test(p);
+        assert.equal(KNOWN[p][h], since2 ? '2.0.0' : '1.0.0', p);
         if (!p.includes('#')) assert.equal(sha256(readFileSync(path.join(dir, p))), h, p);
         checked++;
       }
       assert.ok(checked >= 10, `checked ${checked} files`);
-      assert.equal(KNOWN['CLAUDE.md#shipline'][v.files['CLAUDE.md#shipline']], '1.0.0');
+      assert.equal(KNOWN['CLAUDE.md#shipline'][v.files['CLAUDE.md#shipline']], '2.0.0');
       assert.equal(KNOWN['.claude/settings.json#shipline'][v.files['.claude/settings.json#shipline']], '1.0.0');
     } finally {
       removeDir(dir);
@@ -262,7 +277,9 @@ describe('known-stub-rules.mjs', () => {
   test('one hash per shipped rules file: the LF-normalised 1.0 template', async () => {
     const { KNOWN_STUB_RULES } = await import('../src/known-stub-rules.mjs');
     const dir = path.join(CLI_ROOT, 'templates', 'shipline', 'rules');
-    const shipped = readdirSync(dir).filter((f) => f.endsWith('.md')).sort();
+    // The ten rules files of the 2.0.0 workflows (spike, refactor, docs, deps, release) have no stub history.
+    const NEW_IN_2 = ['question', 'research', 'outline', 'write', 'review', 'assess', 'upgrade', 'prepare', 'publish', 'refactor_plan'].map((n) => `${n}.md`);
+    const shipped = readdirSync(dir).filter((f) => f.endsWith('.md') && !NEW_IN_2.includes(f)).sort();
     assert.deepEqual(Object.keys(KNOWN_STUB_RULES).sort(), shipped);
     for (const f of shipped) {
       assert.deepEqual(KNOWN_STUB_RULES[f], [sha256(readFileSync(path.join(dir, f), 'utf8').replace(/\r\n/g, '\n'))], f);
@@ -342,8 +359,8 @@ describe('LICENSE and CHANGELOG.md', () => {
     const log = readFileSync(path.join(CLI_ROOT, 'CHANGELOG.md'), 'utf8');
     assert.match(log, /Keep a Changelog/);
     assert.ok(log.includes(`## [${PACKAGE_VERSION}] - `), `## [${PACKAGE_VERSION}]`);
-    assert.equal(PACKAGE_VERSION, '1.3.0');
-    assert.ok(log.indexOf('## [1.3.0] - ') < log.indexOf('## [1.0.0] - '), 'newest first, 1.0.0 kept');
+    assert.equal(PACKAGE_VERSION, '2.0.0');
+    assert.ok(log.indexOf('## [2.0.0] - ') < log.indexOf('## [1.0.0] - '), 'newest first, 1.0.0 kept');
     assert.deepEqual([...log.matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)].map((m) => m[1]).filter((v) => v.startsWith('0.')), []);
   });
 });

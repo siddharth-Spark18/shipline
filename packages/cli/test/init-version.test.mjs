@@ -36,7 +36,7 @@ describe('init writes VERSION', () => {
     assert.equal(v.package, PACKAGE_VERSION);
     assert.equal(v.interface, INTERFACE);
     assert.equal(INTERFACE, 1);
-    assert.equal(PACKAGE_VERSION, '1.3.0');
+    assert.equal(PACKAGE_VERSION, '2.0.0');
     assert.deepEqual(readRepoVersion(dir), { package: PACKAGE_VERSION, interface: INTERFACE, files: v.files, excluded });
   });
 
@@ -48,7 +48,7 @@ describe('init writes VERSION', () => {
     for (const k of keys) {
       if (k === 'CLAUDE.md#shipline' || k === '.claude/settings.json#shipline') continue;
       assert.equal(files[k], sha(readFileSync(path.join(dir, k))), k);
-      assert.ok(/^\.shipline\/bin\/[^/]+\.mjs$|^\.claude\/agents\/[^/]+\.md$|^\.claude\/skills\/shipline-[^/]+\//.test(k), `${k} is Shipline-owned`);
+      assert.ok(/^\.shipline\/bin\/[^/]+\.mjs$|^\.shipline\/bin\/shipped\/[^/]+\.yml$|^\.claude\/agents\/[^/]+\.md$|^\.claude\/skills\/shipline-[^/]+\//.test(k), `${k} is Shipline-owned`);
     }
     for (const must of ['.shipline/bin/lib.mjs', '.shipline/bin/guard.mjs', '.shipline/bin/stage.mjs', '.claude/agents/planner.md', '.claude/skills/shipline-workflow/SKILL.md', 'CLAUDE.md#shipline', '.claude/settings.json#shipline']) {
       assert.ok(keys.includes(must), must);

@@ -15,11 +15,20 @@ import {
 } from '@/components/ui/dialog';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
-import type { BannerEvent, BannerKind, Status } from '@/lib/types';
+import type { BannerEvent, BannerKind, ProjectState, Status } from '@/lib/types';
+
+/** What a project that isn't served says about itself; `ok` says nothing. */
+export const STATE_LABEL: Record<ProjectState, string | null> = {
+  ok: null,
+  install: 'Not set up',
+  missing: 'Folder not found',
+  'pre-1.0': 'Needs reinstall',
+  'repo-newer': 'Newer Shipline',
+};
 
 // A repo on an older 1.x interface than this UI (none yet: 1.0 is interface 1).
 const UPGRADE_TEXT =
-  'This repo was set up with an older Shipline. Run `npx @forgeyard/shipline upgrade` to update it.';
+  'This repo was set up with an older Shipline. Run `npx @forgeyard/shipline upgrade` to update it (or `upgrade --all` for every repo).';
 
 // Fallback only: the server sends the pre-1.0 text in status.versionMessage (shared with `upgrade`).
 const PRE_ONE_TEXT =
@@ -63,12 +72,12 @@ function BannerItem({
   banner,
   destructive,
   onDismiss,
-  onOpenDiagnostics,
+  onOpenHealth,
 }: {
   banner: BannerEvent;
   destructive?: boolean;
   onDismiss: () => void;
-  onOpenDiagnostics?: () => void;
+  onOpenHealth?: () => void;
 }) {
   const Icon = banner.kind === 'version' && !destructive ? InfoIcon : TriangleAlertIcon;
   const [confirming, setConfirming] = useState(false);
@@ -107,15 +116,15 @@ function BannerItem({
             </Button>
           </>
         )}
-        {onOpenDiagnostics && (
+        {onOpenHealth && (
           <>
             {' '}
             <button
               type="button"
               className="underline underline-offset-2"
-              onClick={onOpenDiagnostics}
+              onClick={onOpenHealth}
             >
-              Open diagnostics
+              Open Health
             </button>
           </>
         )}
@@ -159,7 +168,7 @@ function BannerItem({
 
 /**
  * SSE `banner` events (version, fail-open, lost-task, usage-limit) plus the version banner built
- * from /api/status. They stay until dismissed. `all` ignores dismissal and drives the status row.
+ * from /api/status. They stay until dismissed. `all` ignores dismissal and drives the Health dot.
  */
 export function useBanners(status: Status | undefined) {
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
@@ -189,12 +198,12 @@ export function Banners({
   banners,
   isDestructive,
   onDismiss,
-  onOpenDiagnostics,
+  onOpenHealth,
 }: {
   banners: BannerEvent[];
   isDestructive: (b: BannerEvent) => boolean;
   onDismiss: (id: string) => void;
-  onOpenDiagnostics?: () => void;
+  onOpenHealth?: () => void;
 }) {
   if (banners.length === 0) return null;
   return (
@@ -205,9 +214,94 @@ export function Banners({
           banner={b}
           destructive={isDestructive(b)}
           onDismiss={() => onDismiss(b.id)}
-          onOpenDiagnostics={onOpenDiagnostics}
+          onOpenHealth={onOpenHealth}
         />
       ))}
+    </div>
+  );
+}
+
+/** What a project's health card shows (Health and Setup build it from the project and its health row). */
+export interface HealthCardData {
+  repoId: string;
+  name: string;
+  root: string;
+  state: ProjectState;
+  version: { package: string | null; interface: number } | null;
+  uiVersion: string;
+  upgradeAvailable: boolean;
+  setupDone: boolean;
+  message: string | null;
+}
+type Health = HealthCardData;
+
+/** The card a repo's state gets: why it isn't served, or how it differs from this UI. Null when there is nothing to say. */
+function healthText(h: Pick<Health, 'state' | 'message' | 'upgradeAvailable' | 'uiVersion' | 'version' | 'setupDone' | 'root'>) {
+  const current = h.version?.package ?? 'an unknown version';
+  if (h.state === 'ok' && h.upgradeAvailable)
+    return `This repo has Shipline ${current}; ${h.uiVersion} is available. Run \`npx @forgeyard/shipline upgrade --dir ${h.root}\`, or \`upgrade --all\` for every repo.`;
+  if (h.state !== 'ok') return h.message;
+  return null;
+}
+
+/**
+ * One repo's health: its Shipline version, "setup not done", and the upgrade, restart-with-the-newer-version, reinstall
+ * or folder-not-found card. A folder that is gone can be removed from the list (the folder and task data aren't touched).
+ */
+export function HealthCard({
+  health,
+  onRemove,
+  onOpen,
+}: {
+  health: Health;
+  onRemove?: (id: string) => void;
+  onOpen?: (id: string) => void;
+}) {
+  const text = healthText(health);
+  const bad = health.state !== 'ok' && health.state !== 'install';
+  const Icon = bad ? TriangleAlertIcon : InfoIcon;
+  return (
+    <div className="flex flex-col gap-1.5 rounded-lg border bg-card p-3 text-sm">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        {onOpen && health.state !== 'missing' ? (
+          <button
+            type="button"
+            className="min-w-0 truncate font-medium underline-offset-2 hover:underline"
+            onClick={() => onOpen(health.repoId)}
+          >
+            {health.name}
+          </button>
+        ) : (
+          <span className="min-w-0 truncate font-medium">{health.name}</span>
+        )}
+        {health.version?.package && (
+          <span className="text-xs text-muted-foreground">Shipline {health.version.package}</span>
+        )}
+        {STATE_LABEL[health.state] && (
+          <span className={cn('text-xs', bad ? 'text-destructive' : 'text-muted-foreground')}>
+            {STATE_LABEL[health.state]}
+          </span>
+        )}
+        {health.state === 'ok' && !health.setupDone && (
+          <span className="text-xs text-notice-reminder">Setup not done</span>
+        )}
+      </div>
+      <div className="truncate text-xs text-muted-foreground" title={health.root}>
+        {health.root}
+      </div>
+      {text && (
+        <div className="flex items-start gap-2 text-xs">
+          <Icon className={cn('mt-0.5 size-3.5 shrink-0', bad ? 'text-destructive' : 'text-notice-reminder')} />
+          <span className="min-w-0 break-words">{text}</span>
+        </div>
+      )}
+      {health.state === 'missing' && onRemove && (
+        <div>
+          <Button size="xs" variant="outline" onClick={() => onRemove(health.repoId)}>
+            Remove from list
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

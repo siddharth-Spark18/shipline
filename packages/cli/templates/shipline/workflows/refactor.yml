@@ -1,0 +1,43 @@
+# Refactor workflow: change structure, not behavior (offered at install; edit freely or via /shipline-setup). See feature.yml for field docs.
+id: refactor
+name: Refactor
+description: restructure code without changing what it does
+stages:
+  - id: ticket
+    name: Ticket
+    artifact: ticket.md
+    optional: true
+    enforcement: guide
+    confirm_to_advance: false
+  - id: refactor_plan
+    name: Plan
+    artifact: plan.md
+    agent: planner
+    sections: [Scope, Files to touch, Behaviour that must not change]
+    enforcement: block
+    confirm_to_advance: true
+    checkpoint: true
+    blocks:
+      - tools: 'Edit|Write|MultiEdit|NotebookEdit'
+  - id: implement
+    name: Implement
+    artifact: implementation.md
+    agent: builder
+    enforcement: guide
+    confirm_to_advance: false
+  - id: verify
+    name: Verify
+    artifact: verification.md
+    agent: qa-bug-hunter
+    checks: true
+    sections: [Checklist]
+    enforcement: block
+    confirm_to_advance: true
+    blocks:
+      - actions: [commit, pr]
+  - id: pr
+    name: Commit and PR
+    artifact: pr.md
+    agent: builder
+    enforcement: guide
+    confirm_to_advance: false

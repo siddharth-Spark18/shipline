@@ -8,6 +8,15 @@ import { homeFor } from '../helpers.mjs';
 // SIGINT uses), so exit is stubbed for the duration of the close.
 // The server runs in this process, so process.env.SHIPLINE_HOME is pointed at the repo's own temp home (and
 // left there: the server reads it on every request, and the fake claude inherits it).
+// Server-wide routes keep their /api/<x> paths; every other /api path is a per-repo route, served at
+// /api/repos/<repoId>/<x>. api(), openEvents() and repoPath() add the prefix for the server's start folder.
+const SERVER_WIDE = /^\/api\/(repos\/|remote(\/|\?|$)|events|projects|overview|handoff)/;
+export function repoPath(ui, pathname) {
+  return pathname.startsWith('/api/') && !SERVER_WIDE.test(pathname)
+    ? `/api/repos/${ui.repoId}${pathname.slice('/api'.length)}`
+    : pathname;
+}
+
 export async function startUi(dir, { env = {} } = {}) {
   process.env.SHIPLINE_HOME = homeFor(dir);
   const saved = {};
@@ -31,6 +40,7 @@ export async function startUi(dir, { env = {} } = {}) {
   const token = new URL(handle.url).searchParams.get('t');
   const ui = {
     port: handle.port,
+    repoId: handle.repoId,
     url: handle.url,
     token,
     base: `http://127.0.0.1:${handle.port}`,
@@ -59,19 +69,23 @@ export async function startUi(dir, { env = {} } = {}) {
   if (r.status !== 302) throw new Error(`token exchange failed: ${r.status}`);
   ui.setCookie = r.headers.get('set-cookie');
   ui.cookie = ui.setCookie.split(';')[0];
+  // A repo's context is created by the first request for it (as the browser's first call does); do that now, so what
+  // a test does next (open the event stream, change a file) finds the repo loaded. A repo the UI doesn't serve answers
+  // an error here, which is ignored.
+  await fetch(`${ui.base}${repoPath(ui, '/api/status')}`, { headers: { cookie: ui.cookie } }).then((x) => x.arrayBuffer());
   return ui;
 }
 
 // fetch with the session cookie, and the server's own Origin on POST, unless overridden (null removes).
 // When several servers (on repos with different SHIPLINE_HOMEs) run in this process, each request first points
 // process.env.SHIPLINE_HOME back at the home of the server it talks to.
-export async function api(ui, method, pathname, { body, cookie = ui.cookie, origin = method === 'POST' ? ui.origin : null, headers = {} } = {}) {
+export async function api(ui, method, pathname, { body, cookie = ui.cookie, origin = method === 'GET' ? null : ui.origin, headers = {} } = {}) {
   if (ui.home) process.env.SHIPLINE_HOME = ui.home;
   const h = { ...headers };
   if (cookie !== null) h.cookie = cookie;
   if (origin !== null) h.origin = origin;
   if (body !== undefined) h['content-type'] = 'application/json';
-  const r = await fetch(ui.base + pathname, {
+  const r = await fetch(ui.base + repoPath(ui, pathname), {
     method,
     headers: h,
     body: body === undefined ? undefined : typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body),

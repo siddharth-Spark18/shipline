@@ -1,5 +1,5 @@
 # A hand-edited header that is not the shipped one.
-id: spike
+id: scratch
 name: Spike # time-boxed
 stages:
   - id: explore # try things out

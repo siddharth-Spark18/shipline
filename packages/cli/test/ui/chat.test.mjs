@@ -105,7 +105,7 @@ describe('spawn', () => {
     assert.deepEqual(Object.keys(run.mcpConfig.mcpServers), ['shipline_ui']);
     assert.equal(server.command, process.execPath);
     assert.deepEqual(server.args, [RELAY]);
-    assert.equal(server.env.SHIPLINE_UI_RELAY_URL, `http://127.0.0.1:${ui.port}/api/relay`);
+    assert.equal(server.env.SHIPLINE_UI_RELAY_URL, `http://127.0.0.1:${ui.port}/api/repos/${ui.repoId}/relay`);
     assert.match(server.env.SHIPLINE_UI_RELAY_SECRET, /^[0-9a-f]{64}$/); // 32 random bytes
     assert.equal(run.secretInEnv, false, 'no env value of claude contains the secret');
     assert.ok(!run.envKeys.includes('SHIPLINE_UI_RELAY_SECRET'));
@@ -568,10 +568,11 @@ describe('chat-first tasks', () => {
   });
 });
 
-// 1.0: chat is disabled for a repo set up before 1.0 (its hooks predate the store); start, message and continue give
-// 423 pre-1.0 with the same guidance `upgrade` gives, and claude is never spawned.
+// 1.0: chat is disabled for a repo set up before 1.0 (its hooks predate the store). In the one-server UI such a repo is
+// listed with a card (the same guidance `upgrade` gives) and its per-repo routes answer 409 repo-too-old, so claude is
+// never spawned.
 describe('a pre-1.0 repo', () => {
-  test('POST /api/chats, /message and /continue return 423 pre-1.0; nothing is spawned; no lock is taken', async () => {
+  test('POST /api/chats, /message and /continue return 409 repo-too-old; nothing is spawned; no lock is taken', async () => {
     const legacy = makeRepo({ commitInit: true });
     writeFileSync(path.join(legacy, '.shipline', 'bin', 'VERSION'), JSON.stringify({ package: '0.14.0', interface: 7 }) + '\n');
     // A chat recorded earlier, so /message and /continue get past the 404 for an unknown chat.
@@ -585,17 +586,19 @@ describe('a pre-1.0 repo', () => {
     let legacyUi;
     try {
       legacyUi = await startUi(legacy);
-      const status = await api(legacyUi, 'GET', '/api/status');
-      assert.equal(status.json.versionState, 'pre-1.0');
+      const message = 'This repo was set up with a pre-1.0 Shipline (0.14.0). Run `npx @forgeyard/shipline uninstall --yes` then `init`; task data in ~/.shipline is kept.';
+      const listed = (await api(legacyUi, 'GET', '/api/projects')).json.find((x) => x.id === legacyUi.repoId);
+      assert.equal(listed.state, 'pre-1.0');
+      assert.equal(listed.message, message);
       for (const [p, body] of [
         ['/api/chats', { message: 'hi' }],
         [`/api/chats/${chatId}/message`, { text: 'hi' }],
         [`/api/chats/${chatId}/continue`, {}],
       ]) {
         const r = await api(legacyUi, 'POST', p, { body });
-        assert.equal(r.status, 423, `${p}: ${r.text}`);
-        assert.equal(r.json.error.code, 'pre-1.0', p);
-        assert.equal(r.json.error.message, 'This repo was set up with a pre-1.0 Shipline (0.14.0). Run `npx @forgeyard/shipline uninstall --yes` then `init`; task data in ~/.shipline is kept.', p);
+        assert.equal(r.status, 409, `${p}: ${r.text}`);
+        assert.equal(r.json.error.code, 'repo-too-old', p);
+        assert.equal(r.json.error.message, message, p);
       }
       assert.deepEqual(fake.records(argvFile), [], 'claude was never spawned');
       assert.ok(!existsSync(path.join(ui2Dir, 'lock.json')), 'no lock was taken');
@@ -762,7 +765,7 @@ describe('leftover processes after Stop (Trust plan, E)', {
   test('a grandchild that ignores SIGTERM produces the orphans event with the group id; claude itself is gone', async () => {
     const { id, pgid, child, orphans } = await stopWithOrphan();
     try {
-      assert.deepEqual(orphans.data, { chatId: id, kind: 'orphans', pgid });
+      assert.deepEqual(orphans.data, { chatId: id, kind: 'orphans', pgid, repoId: ui.repoId });
       assert.ok(!pidAlive(pgid), 'claude exited');
       assert.ok(pidAlive(child), 'the grandchild is still running');
       assert.deepEqual(groupPids(pgid), [child]);
@@ -778,7 +781,7 @@ describe('leftover processes after Stop (Trust plan, E)', {
     assert.equal(r.status, 200, r.text);
     assert.deepEqual(r.json, { killed: true });
     const cleared = await ev.waitFor(isCleared(id), 2000, since);
-    assert.deepEqual(cleared.data, { chatId: id, kind: 'orphans-cleared' });
+    assert.deepEqual(cleared.data, { chatId: id, kind: 'orphans-cleared', repoId: ui.repoId });
     await waitUntil(() => !pidAlive(child), 3000);
     assert.deepEqual(groupPids(pgid), []);
     const again = await kill(id);
@@ -791,7 +794,7 @@ describe('leftover processes after Stop (Trust plan, E)', {
     const since = ev.mark();
     process.kill(child, 'SIGKILL');
     const cleared = await ev.waitFor(isCleared(id), 5000, since); // the poll runs every 2 s
-    assert.deepEqual(cleared.data, { chatId: id, kind: 'orphans-cleared' });
+    assert.deepEqual(cleared.data, { chatId: id, kind: 'orphans-cleared', repoId: ui.repoId });
     assert.equal((await kill(id)).status, 404);
   });
 

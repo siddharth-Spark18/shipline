@@ -9,6 +9,7 @@ import {
   renameSync,
   rmSync,
   rmdirSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -25,7 +26,7 @@ import {
 import { planWorkflowAdd, shippedAgents, shippedWorkflows } from '../install.mjs';
 import { detectUi } from '../detect-ui.mjs';
 import { CI_WORKFLOW, CI_WORKFLOW_TEMPLATE, TEMPLATES, VERSION_FILE } from '../hashes.mjs';
-import { detectEol, toEol } from '../store.mjs';
+import { detectEol, draftsDir, toEol } from '../store.mjs';
 import { HttpError } from './http.mjs';
 import { textDiff } from './git.mjs';
 import { log } from './log.mjs';
@@ -1000,6 +1001,185 @@ async function addWorkflowApply(app, body) {
   return { written: written.map(({ kind, id, action }) => ({ kind, id, action })) };
 }
 
+// ---------- workflow drafts (left by /shipline-workflow-designer in the store, reviewed here) ----------
+
+const DRAFT_SKILL = '.claude/skills/shipline-workflow-designer/SKILL.md';
+
+// Does this repo's vendored scripts and skill support drafts? Older repos get no "Describe a workflow" buttons.
+function designerSupported(root) {
+  const stage = readText(path.join(root, '.shipline', 'bin', 'stage.mjs'));
+  return (
+    stage !== null &&
+    stage.includes("case 'draft'") &&
+    existsSync(path.join(root, '.shipline', 'bin', 'workflow-check.mjs')) &&
+    existsSync(path.join(root, DRAFT_SKILL))
+  );
+}
+
+function draftIdOf(id) {
+  if (typeof id !== 'string' || !ID_RE.test(id))
+    throw new HttpError(400, 'bad-target', `Not a draft id: ${JSON.stringify(id)}`);
+  return id;
+}
+
+const hashOrNull = (text) => (text === null ? null : sha256(text));
+
+// One draft folder as { id, createdAt, meta, text, model | parseError, rules: { stageId: text } }, or null.
+function readDraft(app, id) {
+  const dir = path.join(draftsDir(app.repo.root), id);
+  const text = readText(path.join(dir, 'workflow.yml'));
+  if (text === null) return null;
+  let meta = {};
+  try {
+    const m = JSON.parse(readText(path.join(dir, 'meta.json')) ?? '{}');
+    if (isObj(m)) meta = m;
+  } catch {
+    // A draft with no readable meta.json counts as based on "no file", so it is stale when the file exists.
+  }
+  const rules = {};
+  for (const stageId of listIds(path.join(dir, 'rules'), '.md'))
+    rules[stageId] = readText(path.join(dir, 'rules', `${stageId}.md`)) ?? '';
+  const parsed = parseModel(app, text);
+  return {
+    id,
+    meta,
+    text,
+    rules,
+    createdAt: typeof meta.createdAt === 'string' ? meta.createdAt : null,
+    ...(parsed.error !== undefined ? { parseError: parsed.error } : { model: parsed.model }),
+  };
+}
+
+// The staleness of a draft: the workflow file, and each rules file the draft carries, against the hashes recorded
+// when the draft was made. A file that is missing now but was there then (or the reverse) also counts.
+function draftState(app, draft) {
+  const { root } = app.repo;
+  const current = readText(targetPath(root, 'workflow', draft.id));
+  const base = typeof draft.meta.baseHash === 'string' ? draft.meta.baseHash : null;
+  const rulesBase = isObj(draft.meta.rulesBase) ? draft.meta.rulesBase : {};
+  const staleRules = Object.keys(draft.rules).filter((stageId) => {
+    const was = typeof rulesBase[stageId] === 'string' ? rulesBase[stageId] : null;
+    return hashOrNull(readText(targetPath(root, 'rules', stageId))) !== was;
+  });
+  return { current, isNew: base === null, stale: hashOrNull(current) !== base, staleRules };
+}
+
+function draftIssues(app, draft, current) {
+  if (draft.parseError !== undefined) return [{ path: '', message: `does not parse: ${draft.parseError}` }];
+  const disk = current !== null ? parseModel(app, current) : { model: null };
+  return validateWorkflow(normalize(draft.model) ?? {}, {
+    id: draft.id,
+    agents: listAgents(app.repo.root),
+    existingStageIds: stageIds(disk.model),
+  });
+}
+
+// GET setup/drafts, and the payload of the `drafts` SSE event.
+export function listDrafts(app) {
+  const out = [];
+  for (const entry of safeReaddir(draftsDir(app.repo.root))) {
+    if (!entry.isDirectory() || !ID_RE.test(entry.name)) continue;
+    const draft = readDraft(app, entry.name);
+    if (!draft) continue;
+    const { current, isNew, stale, staleRules } = draftState(app, draft);
+    const issues = draftIssues(app, draft, current);
+    out.push({
+      workflowId: draft.id,
+      name: draft.model && typeof draft.model.name === 'string' && draft.model.name ? draft.model.name : draft.id,
+      createdAt: draft.createdAt ?? new Date(mtimeOf(path.join(draftsDir(app.repo.root), draft.id, 'workflow.yml'))).toISOString(),
+      isNew,
+      stale,
+      staleRules,
+      errors: issues.filter((i) => i.severity !== 'warning'),
+      warnings: issues.filter((i) => i.severity === 'warning'),
+    });
+  }
+  return out.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
+}
+
+function safeReaddir(dir) {
+  try {
+    return readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+function mtimeOf(file) {
+  try {
+    return statSync(file).mtimeMs;
+  } catch {
+    return Date.now();
+  }
+}
+
+// The entries (workflow, then its rules files) a draft would save, with base hashes taken from the disk now.
+function draftEntries(app, draft) {
+  const { root } = app.repo;
+  if (draft.parseError !== undefined)
+    throw new HttpError(400, 'invalid', 'The draft has errors', [
+      { kind: 'workflow', id: draft.id, path: '', message: `does not parse: ${draft.parseError}` },
+    ]);
+  const entries = [
+    {
+      kind: 'workflow',
+      id: draft.id,
+      model: draft.model,
+      baseHash: hashOrNull(readText(targetPath(root, 'workflow', draft.id))),
+    },
+  ];
+  for (const [stageId, text] of Object.entries(draft.rules)) {
+    entries.push({
+      kind: 'rules',
+      id: stageId,
+      text,
+      baseHash: hashOrNull(readText(targetPath(root, 'rules', stageId))),
+    });
+  }
+  return entries;
+}
+
+function requireDraft(app, id) {
+  const draft = readDraft(app, draftIdOf(id));
+  if (!draft) throw new HttpError(404, 'no-draft', `There is no draft for workflow "${id}"`);
+  return draft;
+}
+
+async function draftPreview(app, id) {
+  const draft = requireDraft(app, id);
+  const { isNew, stale, staleRules } = draftState(app, draft);
+  const result = await preview(app, { files: draftEntries(app, draft) });
+  return { ...result, draft: { workflowId: draft.id, isNew, stale, staleRules } };
+}
+
+async function draftSave(app, id, body) {
+  app.repo.requireWritable();
+  const draft = requireDraft(app, id);
+  const overwrite = isObj(body) && body.overwrite === true;
+  const { stale, staleRules } = draftState(app, draft);
+  if ((stale || staleRules.length) && !overwrite) {
+    throw new HttpError(409, 'draft-stale', 'This workflow changed since the draft was made', {
+      stale,
+      staleRules,
+    });
+  }
+  const result = commit(
+    app,
+    draftEntries(app, draft).map((e) => prepare(app, e)),
+  );
+  rmSync(path.join(draftsDir(app.repo.root), draft.id), { recursive: true, force: true });
+  log('draft-save', { workflow: draft.id, overwrite, files: result.written.length });
+  return result;
+}
+
+function draftDiscard(app, id) {
+  app.repo.requireWritable();
+  draftIdOf(id);
+  rmSync(path.join(draftsDir(app.repo.root), id), { recursive: true, force: true });
+  log('draft-discard', { workflow: id });
+  return { ok: true };
+}
+
 // ---------- mark setup as done ----------
 
 // Sets `setup: done` in config.yml, keeping its comments and layout (as a Setup save does).
@@ -1051,6 +1231,7 @@ function setup(app) {
       .filter((w) => !existsSync(path.join(root, '.shipline', 'workflows', `${w.id}.yml`)))
       .map((w) => ({ id: w.id, name: w.name, description: w.description })),
     uiDetected: detectUi(root).ui,
+    designer: { supported: designerSupported(root) },
   };
 }
 
@@ -1060,6 +1241,22 @@ export function routes(app) {
     { method: 'POST', path: '/api/setup/preview', handler: ({ body }) => preview(app, body) },
     { method: 'POST', path: '/api/setup/save', handler: ({ body }) => save(app, body) },
     { method: 'POST', path: '/api/setup/mark-done', handler: () => markDone(app) },
+    { method: 'GET', path: '/api/setup/drafts', handler: () => listDrafts(app) },
+    {
+      method: 'POST',
+      path: '/api/setup/drafts/:workflowId/preview',
+      handler: ({ params }) => draftPreview(app, params.workflowId),
+    },
+    {
+      method: 'POST',
+      path: '/api/setup/drafts/:workflowId/save',
+      handler: ({ params, body }) => draftSave(app, params.workflowId, body),
+    },
+    {
+      method: 'POST',
+      path: '/api/setup/drafts/:workflowId/discard',
+      handler: ({ params }) => draftDiscard(app, params.workflowId),
+    },
     { method: 'POST', path: '/api/setup/workflows', handler: ({ body }) => workflows(app, body) },
     {
       method: 'POST',

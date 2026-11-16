@@ -6,8 +6,9 @@ import net from 'node:net';
 import path from 'node:path';
 import { shiplineHome } from '../store.mjs';
 
-// The HTTPS ports tried, in order. (`tailscale serve --https=<port>` accepts any port; this short list is
-// what Tailscale Funnel allows too, and is plenty for a few repos at a time.)
+// The HTTPS ports tried, in order. There is one mapping for the whole server (every repo is served through it);
+// the fallback stays because other software on the tailnet name can hold 443 or 8443. (`tailscale serve
+// --https=<port>` accepts any port; this short list is what Tailscale Funnel allows too.)
 export const HTTPS_PORTS = [443, 8443, 10000];
 
 const TAILSCALE_TIMEOUT_MS = 15_000;
@@ -57,7 +58,8 @@ function answers(port) {
 
 const recordFile = () => path.join(shiplineHome(), 'remote-serve.json');
 
-// Which HTTPS ports this Shipline registered, and for which local port: [{ httpsPort, targetPort }].
+// Which HTTPS ports this Shipline registered, and for which local port: [{ httpsPort, targetPort }]. At most one
+// entry belongs to a running server; older entries are what a crashed server left behind.
 function readRecord() {
   try {
     const data = JSON.parse(readFileSync(recordFile(), 'utf8'));

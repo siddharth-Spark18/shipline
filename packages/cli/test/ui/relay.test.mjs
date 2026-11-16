@@ -37,11 +37,11 @@ let httpServer; // the node:http server startServer made
 
 const secretOf = (d, id) => JSON.parse(readFileSync(path.join(uiDir(d), `mcp-${id}.json`), 'utf8')).mcpServers.shipline_ui.env.SHIPLINE_UI_RELAY_SECRET;
 
-// POST /api/relay like relay.mjs does: no cookie, no Origin unless given. Resolves when the server answers.
+// POST /api/repos/<id>/relay like relay.mjs does: no cookie, no Origin unless given. Resolves when the server answers.
 const relayPost = (u, secret, body = { tool_name: 'Bash', input: { command: 'ls' }, tool_use_id: 'toolu_x' }, headers = {}) =>
   rawRequest(u.port, {
     method: 'POST',
-    path: '/api/relay',
+    path: `/api/repos/${u.repoId}/relay`,
     headers: { 'content-type': 'application/json', ...(secret === null ? {} : { 'x-shipline-relay': secret }), ...headers },
     body: JSON.stringify(body),
   });
@@ -260,7 +260,7 @@ describe('POST /api/relay', () => {
     const since = ev.mark();
     const pending = relayPost(ui, secret, { tool_name: 'Bash', input: { command: 'npm test' }, tool_use_id: 'toolu_a' });
     const p = await ev.waitFor(isPrompt, WAIT_MS, since);
-    assert.deepEqual(Object.keys(p.data).sort(), ['chatId', 'expiresAt', 'id', 'input', 'tool']);
+    assert.deepEqual(Object.keys(p.data).sort(), ['chatId', 'expiresAt', 'id', 'input', 'repoId', 'tool']);
     assert.equal(p.data.chatId, id);
     assert.equal(p.data.tool, 'Bash');
     assert.deepEqual(p.data.input, { command: 'npm test' });

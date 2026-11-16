@@ -167,6 +167,14 @@ export function acquireLock(root, { sessionId, port }) {
   return held;
 }
 
+// The 409 lock-held text: another server process holds this repo's chat lock (an older per-repo `shipline ui`, or a
+// second server started before the first wrote server.json).
+export function lockHeldMessage(heldBy) {
+  return heldBy
+    ? `A chat is active in another Shipline UI process (port ${heldBy}), for example an older per-repo server. Stop that chat or that UI first.`
+    : 'A chat is active in another Shipline UI process, for example an older per-repo server. Stop that chat or that UI first.';
+}
+
 // Removes lock.json only when it is this process's (and, when given, this server's port).
 export function releaseLock(root, port) {
   const file = lockFile(root);

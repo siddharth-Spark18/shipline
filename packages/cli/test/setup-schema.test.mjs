@@ -507,7 +507,7 @@ describe('confirmations and checkpoint (Teams Phase 4)', () => {
 
   test('the shipped checkpoints: feature plan and bugfix root_cause only', () => {
     const cps = Object.fromEntries(WORKFLOW_IDS.map((id) => [id, template(id).stages.filter((s) => s.checkpoint === true).map((s) => s.id)]));
-    assert.deepEqual(cps, Object.fromEntries(WORKFLOW_IDS.map((id) => [id, { feature: ['plan'], bugfix: ['root_cause'] }[id] || []])));
+    assert.deepEqual(cps, Object.fromEntries(WORKFLOW_IDS.map((id) => [id, { feature: ['plan'], bugfix: ['root_cause'], spike: ['research'], refactor: ['refactor_plan'], docs: ['outline'], deps: ['assess'], release: ['prepare'] }[id] || []])));
     for (const id of WORKFLOW_IDS) for (const s of template(id).stages) if (s.checkpoint) assert.equal(s.confirm_to_advance, true, `${id}.${s.id}`);
   });
 

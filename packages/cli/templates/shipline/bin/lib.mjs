@@ -370,6 +370,16 @@ export function stateDir(root) {
   return path.join(storeDir(root), 'state');
 }
 
+// Workflow drafts that /shipline-workflow-designer leaves for review in Setup: drafts/<workflow id>/. drafts-tmp/ is
+// scratch space the skill writes into before `stage.mjs draft` validates and moves it.
+export function draftsDir(root) {
+  return path.join(storeDir(root), 'drafts');
+}
+
+export function draftsTmpDir(root) {
+  return path.join(storeDir(root), 'drafts-tmp');
+}
+
 // ---------- state ----------
 
 export function safeId(id) {

@@ -287,7 +287,7 @@ export async function collectTasks(app) {
 
 // Task entries (from readOpenTasks or readTask) -> the Task shape the browser gets. Stage names come from the task's
 // workflow file; a `jira` stage in the manifest finds the workflow's `ticket` stage and the other way round.
-function makeTaskView(app) {
+export function makeTaskView(app) {
   const { root } = app.repo;
   const workflows = new Map();
   const workflowStages = (id) => {

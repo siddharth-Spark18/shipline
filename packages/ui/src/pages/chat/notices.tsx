@@ -3,6 +3,7 @@ import {
   BanIcon,
   BellIcon,
   CopyIcon,
+  FilePenLineIcon,
   GaugeIcon,
   HandIcon,
   InfoIcon,
@@ -14,7 +15,8 @@ import { cn } from 'cn';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import type { TicketStatus } from '@/lib/types';
+import { draftHash } from '@/lib/routes';
+import type { TicketStatus, WorkflowDraftInfo } from '@/lib/types';
 import type { FatalInfo } from '@/pages/chat/chat-store';
 import type { ChatResult, NoticeLevel } from '@/pages/chat/timeline';
 
@@ -248,5 +250,35 @@ export function TicketNotice({
         {tracker === 'github' ? GITHUB_TEXT[status] : JIRA_TEXT[status]}
       </AlertDescription>
     </Alert>
+  );
+}
+
+/** A workflow draft that /shipline-workflow-designer left while this chat was open; Review opens it in Setup. */
+export function DraftReadyNotice({
+  repoId,
+  drafts,
+}: {
+  repoId: string;
+  drafts: WorkflowDraftInfo[];
+}) {
+  if (drafts.length === 0) return null;
+  return (
+    <>
+      {drafts.map((d) => (
+        <Alert key={d.workflowId} className="border-l-4 border-l-notice-reminder py-2">
+          <FilePenLineIcon />
+          <AlertTitle>Draft ready: {d.name}</AlertTitle>
+          <AlertDescription className="flex flex-wrap items-center gap-2">
+            <span>
+              {d.isNew ? 'A new workflow' : 'A change to this workflow'}, ready to review before
+              anything is written to the repo.
+            </span>
+            <Button asChild size="xs" variant="outline">
+              <a href={draftHash(repoId, d.workflowId)}>Review</a>
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ))}
+    </>
   );
 }

@@ -66,8 +66,8 @@ const tabLabel = (q: QuestionItem, i: number) => q.header?.trim() || `Q${i + 1}`
  * next tab or submits. A filled-in "Other" replaces the chosen labels. The answer is
  * `{ [question text]: label }`, multi-select labels joined by ", ".
  *
- * `bare` drops the card shell (frame, title, countdown) so the phone's bottom sheet can hold the same
- * question body and buttons; on a phone the options and buttons get larger touch targets.
+ * `bare` drops the card shell (frame, title, countdown) so the decision dock, which has its own header and
+ * countdown, can hold the same question body and buttons; on a phone the options and buttons get larger touch targets.
  */
 export function QuestionCard({
   prompt,
@@ -250,13 +250,6 @@ export function QuestionCard({
           className={cn(mobile && 'h-11')}
           aria-label={`Other answer for: ${q.question}`}
         />
-        {multi && q.multiSelect && (
-          <div>
-            <Button size="sm" variant="outline" className={btn} onClick={next}>
-              Next
-            </Button>
-          </div>
-        )}
       </fieldset>
     );
   };
@@ -335,9 +328,21 @@ export function QuestionCard({
     questionBody(questions[0], 0)
   );
 
+  // One row: the primary action (Next on a question tab, Send on the Submit tab or a single question), then Skip.
   const buttons = (
     <>
-      {(!multi || onSubmitTab) && sendButton}
+      {!multi || onSubmitTab ? (
+        sendButton
+      ) : (
+        <Button
+          size="sm"
+          className={btn}
+          disabled={pending || valueOf(questions[tab]) === ''}
+          onClick={next}
+        >
+          Next
+        </Button>
+      )}
       <Button
         size="sm"
         variant="outline"
@@ -361,12 +366,7 @@ export function QuestionCard({
       {bare ? (
         <div className="flex flex-col gap-4">
           {body}
-          <div className="flex items-center gap-2">
-            {buttons}
-            <span className="ml-auto">
-              <Countdown expiresAt={prompt.expiresAt} />
-            </span>
-          </div>
+          <div className="flex items-center gap-2">{buttons}</div>
         </div>
       ) : (
         <Card className="ring-2 ring-primary/40">

@@ -22,7 +22,7 @@ folder (`claude`), trust it when asked, and ask for a small change.
 ## What gets installed
 
 - `.shipline/`: config, workflows, per-stage rules and the dependency-free hook scripts.
-- `.claude/`: agents, the `/shipline-setup` and workflow skills, and hook entries in `settings.json`.
+- `.claude/`: agents, the `/shipline-setup`, `/shipline-workflow-designer` and workflow skills, and hook entries in `settings.json`.
 - A marked block in `CLAUDE.md`.
 - Optionally, a GitHub Actions check for pull requests.
 
@@ -33,8 +33,8 @@ Commit all of it so teammates get the same flow.
 | Command | What it does |
 | --- | --- |
 | `init` | Sets Shipline up in a repo. Flags: `--terminal`, `--yes`, `--dry-run`, `--dir <path>` |
-| `ui` | Opens the local web UI (the setup wizard if Shipline isn't installed). Flags: `--remote`, `--port`, `--no-open`, `--dir <path>` |
-| `upgrade` | Updates the installed files to this version. Flags: `--yes`, `--dry-run`, `--force`, `--dir <path>` |
+| `ui` | Opens the local web UI (the setup wizard if Shipline isn't installed). One server serves every repo on the machine; a second run hands over to it. Flags: `--remote`, `--port`, `--no-open`, `--dir <path>` |
+| `upgrade` | Updates the installed files to this version. Flags: `--yes`, `--dry-run`, `--force`, `--dir <path>`, or `--all` for every registered repo |
 | `uninstall` | Removes what `init` installed. Flags: `--yes`, `--dry-run`, `--purge`, `--dir <path>` |
 
 Run `npx @forgeyard/shipline <command> --help` for details.
@@ -43,7 +43,7 @@ Run `npx @forgeyard/shipline <command> --help` for details.
 
 `npx @forgeyard/shipline ui --remote` serves the UI to your own phone over [Tailscale](https://tailscale.com), so you
 can answer a waiting gate or permission prompt away from your desk. Pair the phone with the QR code in **Setup >
-Phone access**. Nothing is public and there is no relay.
+Phone access**. One paired phone reaches every repo registered on the computer. Nothing is public and there is no relay.
 [How to set it up](https://github.com/siddharth-Spark18/shipline/blob/main/docs/phone-access.md).
 
 ## Requirements

@@ -1,16 +1,41 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { accessIssueStore, api } from '@/lib/api';
+import { accessIssueStore, api, getCurrentRepo } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
-import type { AccessIssue, ClaimBody, PromptEvent, Task } from '@/lib/types';
+import type {
+  AccessIssue,
+  ChatListItem,
+  ClaimBody,
+  Project,
+  PromptEvent,
+  Task,
+  WorkflowDraftInfo,
+} from '@/lib/types';
 
 /** Kept fresh by SSE `tasks` events; the first load comes from GET /api/tasks. */
 export function useTasks() {
-  return useQuery({ queryKey: queryKeys.tasks, queryFn: api.tasks, staleTime: Infinity });
+  // Off where no repo is selected (All projects, Health).
+  return useQuery({
+    queryKey: queryKeys.tasks,
+    queryFn: api.tasks,
+    staleTime: Infinity,
+    enabled: getCurrentRepo() !== null,
+  });
 }
 
-/** Pending permission/question prompts, pushed over SSE into the query cache. */
+/** Workflow drafts waiting for review. Kept fresh by SSE `drafts` events; the first load comes from GET setup/drafts. */
+export function useDrafts() {
+  return useQuery<WorkflowDraftInfo[]>({
+    queryKey: queryKeys.drafts,
+    queryFn: api.drafts,
+    staleTime: Infinity,
+    enabled: getCurrentRepo() !== null,
+  });
+}
+
+/** Pending permission/question prompts of the repo on screen, pushed over SSE into the query cache. */
 export function usePrompts(): PromptEvent[] {
+  const repoId = getCurrentRepo();
   const { data = [] } = useQuery<PromptEvent[]>({
     queryKey: queryKeys.prompts,
     queryFn: () => [],
@@ -19,7 +44,38 @@ export function usePrompts(): PromptEvent[] {
     enabled: false,
     initialData: [],
   });
-  return data;
+  return useMemo(() => data.filter((p) => p.repoId === repoId), [data, repoId]);
+}
+
+/**
+ * GET /api/projects: every registered repo (and the "Not set up" folders this server opened). Kept fresh by the SSE
+ * `projects` event.
+ */
+export function useProjects() {
+  return useQuery<Project[]>({
+    queryKey: queryKeys.projects,
+    queryFn: api.projects,
+    staleTime: Infinity,
+  });
+}
+
+/** GET /api/overview: the combined view. Refreshed when the SSE stream says something changed. */
+export function useOverview() {
+  return useQuery({ queryKey: queryKeys.overview, queryFn: api.overview, staleTime: 5_000 });
+}
+
+/** GET /api/chats: every chat of every project. Kept fresh by the SSE `chats` event. */
+export function useAllChats() {
+  return useQuery<ChatListItem[]>({
+    queryKey: queryKeys.allChats,
+    queryFn: api.allChats,
+    staleTime: Infinity,
+  });
+}
+
+/** GET /api/health: the machine and every project's health. Refreshed with the `projects` event. */
+export function useHealth() {
+  return useQuery({ queryKey: queryKeys.health, queryFn: api.health, staleTime: 15_000 });
 }
 
 const normDir = (p: string) => p.replace(/\/+$/, '');

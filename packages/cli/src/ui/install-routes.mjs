@@ -1,4 +1,4 @@
-// The install wizard's API, served while no repo is installed ("install mode"). Nothing here writes to the repo or
+// The install wizard's API, served at /api/repos/:repoId while that project is "not set up" (an install context). Nothing here writes to the repo or
 // to the store until POST /api/install succeeds. Node 20+, no dependencies.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -16,9 +16,9 @@ import {
   planInstall,
   DEFAULT_BRANCH_PATTERN,
 } from '../install.mjs';
+import { registerQuietly } from '../registry.mjs';
 import { HttpError } from './http.mjs';
 import { gitRun, parseUnifiedDiff } from './git.mjs';
-import { log } from './log.mjs';
 
 // Every other /api route while in install mode.
 export function notInstalled() {
@@ -162,7 +162,10 @@ async function install(app, body) {
       `Installed, but the UI could not open the repo (${e.message}). Stop this command and run \`npx @forgeyard/shipline ui\` again.`,
     );
   }
-  log('installed', { root, workflows: selection.workflows, ui: selection.ui, ci: selection.ci });
+  // The folder joins the machine-wide project list; the switcher shows it as a normal repo from now on.
+  registerQuietly(root, (m) => console.error(m));
+  if (app.changed) app.changed();
+  app.log('installed', { root, workflows: selection.workflows, ui: selection.ui, ci: selection.ci });
   return { installed: true, nextSteps: nextSteps(selection) };
 }
 

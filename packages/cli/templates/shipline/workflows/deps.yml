@@ -1,0 +1,43 @@
+# Dependency bump workflow: upgrade packages with a risk check first (offered at install; edit freely or via /shipline-setup). See feature.yml for field docs.
+id: deps
+name: Dependency bump
+description: upgrade one or more dependencies and check nothing breaks
+stages:
+  - id: ticket
+    name: Ticket
+    artifact: ticket.md
+    optional: true
+    enforcement: guide
+    confirm_to_advance: false
+  - id: assess
+    name: Assess
+    artifact: assessment.md
+    agent: researcher
+    sections: [Packages, Breaking changes, Risks]
+    enforcement: block
+    confirm_to_advance: true
+    checkpoint: true
+    blocks:
+      - tools: 'Edit|Write|MultiEdit|NotebookEdit'
+  - id: upgrade
+    name: Upgrade
+    artifact: upgrade.md
+    agent: builder
+    enforcement: guide
+    confirm_to_advance: false
+  - id: verify
+    name: Verify
+    artifact: verification.md
+    agent: qa-bug-hunter
+    checks: true
+    sections: [Checklist]
+    enforcement: block
+    confirm_to_advance: true
+    blocks:
+      - actions: [commit, pr]
+  - id: pr
+    name: Commit and PR
+    artifact: pr.md
+    agent: builder
+    enforcement: guide
+    confirm_to_advance: false

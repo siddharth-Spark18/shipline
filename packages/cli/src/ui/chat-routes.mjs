@@ -1,4 +1,4 @@
-// Chat API handlers: GET/POST /api/chats, GET /api/chats/<id>, <id>/message, /stop, /interrupt, /kill, /continue, plus
+// Chat API handlers (served under /api/repos/:repoId): GET/POST /api/chats, GET /api/chats/<id>, <id>/message, /stop, /interrupt, /kill, /continue, plus
 // /api/chat/commands, /api/chat/controls and /api/trust.
 // Node 20+, no dependencies.
 import { MIN_CLAUDE_VERSION, claudeHealth } from './claude.mjs';
@@ -119,6 +119,7 @@ export function routes(app) {
       path: '/api/chats/:id',
       handler: async ({ params }) => {
         const chat = withStatus(app, requireChat(app, params.id));
+        app.chats.markSeen(chat.id); // opening a chat counts as seeing its error
         const h = readHistory(root, chat.id);
         const init = app.chats.initInfo(chat.id);
         const tasks = chatTasks(app, chat.task_dirs);

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { PlusIcon } from 'lucide-react';
+import { PlusIcon, SparklesIcon } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -13,6 +13,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { AddWorkflowDialog } from '@/pages/setup/add-workflow-dialog';
 import { AgentsSkills } from '@/pages/setup/agents-skills';
 import { CiCheck } from '@/pages/setup/ci-check';
+import { DraftBanner, DraftReview } from '@/pages/setup/draft-review';
 import { PhoneAccess } from '@/pages/setup/phone-access';
 import { ConfigForm } from '@/pages/setup/config-form';
 import { GuardrailsSection } from '@/pages/setup/guardrails-section';
@@ -33,7 +34,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { chatStore } from '@/pages/chat/chat-store';
 import { ApiError, api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
-import { cn } from 'cn';
+import { useDrafts } from '@/lib/queries';
 import type { ConfigModel, ValidationIssue, VersionState } from '@/lib/types';
 
 /** Nav key of the Agents & skills section. The colon can't occur in a workflow id. */
@@ -55,17 +56,13 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 const SETUP_MESSAGE = '/shipline-setup';
+/** Starts the workflow designer skill in UI mode: it interviews the user and leaves a draft to review here. */
+const DESCRIBE_MESSAGE = '/shipline-workflow-designer --draft';
+const changeMessage = (workflowId: string) => `${DESCRIBE_MESSAGE} --edit ${workflowId}`;
+const UPGRADE_HINT = 'Upgrade this repo to use Describe a workflow';
 
-/** Phone only: Theme and Status, which the desktop keeps in the sidebar footer. */
-function MobileSettingsRows({
-  warnings,
-  hasBlocker,
-  onOpenDiagnostics,
-}: {
-  warnings: number;
-  hasBlocker: boolean;
-  onOpenDiagnostics: (() => void) | undefined;
-}) {
+/** Phone only: Theme, which the desktop keeps in the sidebar footer. */
+function MobileSettingsRows() {
   const { theme = 'system', setTheme } = useTheme();
   return (
     <div className="flex flex-col divide-y rounded-xl border bg-card">
@@ -86,22 +83,6 @@ function MobileSettingsRows({
           ))}
         </div>
       </div>
-      <button
-        type="button"
-        className="flex min-h-12 items-center gap-3 px-3 py-2 text-left text-sm"
-        onClick={onOpenDiagnostics}
-      >
-        <span>Status</span>
-        <span className="ml-auto flex items-center gap-2 text-muted-foreground">
-          <span
-            className={cn(
-              'size-2.5 shrink-0 rounded-full',
-              warnings === 0 ? 'bg-stage-done' : hasBlocker ? 'bg-enf-block' : 'bg-enf-warn',
-            )}
-          />
-          {warnings === 0 ? 'All good' : `${warnings} warning${warnings === 1 ? '' : 's'}`}
-        </span>
-      </button>
     </div>
   );
 }
@@ -109,17 +90,17 @@ function MobileSettingsRows({
 export default function SetupPage({
   versionState,
   onChatStarted,
-  warnings = 0,
-  hasBlocker = false,
-  onOpenDiagnostics,
+  draftId,
+  onOpenDraft,
+  onCloseDraft,
 }: {
   versionState: VersionState | undefined;
   /** Called with the id of the chat started by "Set up with Claude", so the app can show it. */
   onChatStarted: (id: string) => void;
-  /** Phone only (the sidebar footer has them on the desktop): the Status row. */
-  warnings?: number;
-  hasBlocker?: boolean;
-  onOpenDiagnostics?: () => void;
+  /** The workflow draft open for review (the route #/setup/<repoId>/draft/<workflowId>), or null. */
+  draftId: string | null;
+  onOpenDraft: (workflowId: string) => void;
+  onCloseDraft: () => void;
 }) {
   const queryClient = useQueryClient();
   const mobile = useIsMobile();
@@ -131,6 +112,7 @@ export default function SetupPage({
     staleTime: Infinity,
   });
 
+  const workflowDrafts = useDrafts();
   const [drafts, setDrafts] = useState<Drafts | null>(null);
   const [selected, setSelected] = useState('config');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -206,11 +188,11 @@ export default function SetupPage({
 
   // Shown until /shipline-setup writes `setup: done` into config.yml.
   const usesDefaultRules = (data.config.model as ConfigModel | undefined)?.setup !== 'done';
-  const startSetupChat = async () => {
+  const startChat = async (message: string) => {
     setStartingChat(true);
     try {
-      const { id } = await api.createChat(SETUP_MESSAGE);
-      chatStore.addUser(id, SETUP_MESSAGE, true, []);
+      const { id } = await api.createChat(message);
+      chatStore.addUser(id, message, true, []);
       void queryClient.invalidateQueries({ queryKey: queryKeys.chats });
       onChatStarted(id);
     } catch (e) {
@@ -221,6 +203,9 @@ export default function SetupPage({
       setStartingChat(false);
     }
   };
+
+  const startSetupChat = () => startChat(SETUP_MESSAGE);
+  const designerSupported = data.designer?.supported === true;
 
   const saveError = save.error;
   const conflict = saveError instanceof ApiError && saveError.status === 409;
@@ -239,6 +224,11 @@ export default function SetupPage({
 
   return (
     <div className="flex flex-col gap-4">
+      <DraftBanner
+        drafts={workflowDrafts.data ?? []}
+        readOnly={readOnly}
+        onReview={onOpenDraft}
+      />
       {usesDefaultRules && (
         <Alert>
           <AlertTitle>This repo uses Shipline&apos;s default rules</AlertTitle>
@@ -271,13 +261,7 @@ export default function SetupPage({
           </AlertDescription>
         </Alert>
       )}
-      {mobile && (
-        <MobileSettingsRows
-          warnings={warnings}
-          hasBlocker={hasBlocker}
-          onOpenDiagnostics={onOpenDiagnostics}
-        />
-      )}
+      {mobile && <MobileSettingsRows />}
       {!mobile && (
         <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card/95 px-3 py-2 shadow-xs backdrop-blur">
           <span className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -353,6 +337,17 @@ export default function SetupPage({
               <PlusIcon />
               Add shipped workflow
             </Button>
+            {designerSupported && (
+              <Button
+                variant="outline"
+                className="h-11 shrink-0 rounded-full px-4"
+                disabled={readOnly || startingChat}
+                onClick={() => void startChat(DESCRIBE_MESSAGE)}
+              >
+                <SparklesIcon />
+                Describe a workflow
+              </Button>
+            )}
           </nav>
         ) : (
           <nav
@@ -417,6 +412,20 @@ export default function SetupPage({
               <PlusIcon />
               Add shipped workflow
             </Button>
+            {designerSupported ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="justify-start"
+                disabled={readOnly || startingChat}
+                onClick={() => void startChat(DESCRIBE_MESSAGE)}
+              >
+                <SparklesIcon />
+                Describe a workflow
+              </Button>
+            ) : (
+              <p className="px-2 text-xs text-muted-foreground">{UPGRADE_HINT}</p>
+            )}
             {data.workflows.map((w) => (
               <Button
                 key={w.id}
@@ -482,6 +491,11 @@ export default function SetupPage({
               onChange={(d) => updateWorkflow(workflowFile.id!, d)}
               onRulesChange={updateRules}
               onStructureChange={(id) => setSelected(id ?? 'config')}
+              onChangeWithClaude={
+                designerSupported && !startingChat
+                  ? () => void startChat(changeMessage(workflowFile.id!))
+                  : undefined
+              }
             />
           )}
         </div>
@@ -556,6 +570,8 @@ export default function SetupPage({
         data={data}
         onAdded={setSelected}
       />
+
+      {draftId && <DraftReview workflowId={draftId} readOnly={readOnly} onClose={onCloseDraft} />}
 
       <SaveDialog
         open={dialogOpen}

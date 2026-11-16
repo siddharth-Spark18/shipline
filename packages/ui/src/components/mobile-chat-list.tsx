@@ -3,28 +3,30 @@ import { PlusIcon } from 'lucide-react';
 import { cn } from 'cn';
 import { Button } from '@/components/ui/button';
 import { ChatRow, sortChats } from '@/components/chat-row';
-import { findTask, usePrompts, useTasks } from '@/lib/queries';
-import type { ChatSummary } from '@/lib/types';
+import type { ChatListItem, Project } from '@/lib/types';
 
-/** The phone's Chats tab: every chat as a 64px row, chats waiting for an answer pinned first. */
+/**
+ * The phone's Chats tab: every chat of every project as a 64px row, chats waiting for you pinned first. Chats of a
+ * project that isn't served are left out.
+ */
 export function MobileChatList({
   chats,
+  projects,
   selectedId,
   onSelectChat,
   onNewChat,
 }: {
-  chats: ChatSummary[];
+  chats: ChatListItem[];
+  projects: Project[];
   selectedId: string | null;
   onSelectChat: (id: string) => void;
   onNewChat: () => void;
 }) {
-  const tasks = useTasks();
-  const prompts = usePrompts();
-  const waiting = useMemo(() => new Set(prompts.map((p) => p.chatId)), [prompts]);
+  const byId = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
   const sorted = useMemo(() => {
-    const all = sortChats(chats);
-    return [...all.filter((c) => waiting.has(c.id)), ...all.filter((c) => !waiting.has(c.id))];
-  }, [chats, waiting]);
+    const all = sortChats(chats).filter((c) => byId.get(c.repoId)?.state === 'ok');
+    return [...all.filter((c) => c.waiting), ...all.filter((c) => !c.waiting)];
+  }, [chats, byId]);
 
   if (sorted.length === 0) {
     return (
@@ -51,11 +53,7 @@ export function MobileChatList({
               c.id === selectedId && 'bg-accent text-accent-foreground',
             )}
           >
-            <ChatRow
-              chat={c}
-              task={findTask(tasks.data?.tasks, c.task_dir)}
-              waiting={waiting.has(c.id)}
-            />
+            <ChatRow chat={c} project={byId.get(c.repoId)} />
           </button>
         </li>
       ))}

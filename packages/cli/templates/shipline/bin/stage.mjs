@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Stage CLI that Claude calls through Bash to record workflow progress.
-//   node .shipline/bin/stage.mjs workflows
+//   node .shipline/bin/stage.mjs workflows [--shipped]   (--shipped: the shipped workflows this repo doesn't have yet)
 //   node .shipline/bin/stage.mjs start --workflow feature --title "Add export" [--ticket PROJ-12 | 123] [--ui true|false]
 //   node .shipline/bin/stage.mjs resume <task folder name or absolute path>
 //   node .shipline/bin/stage.mjs status [--json] [--verbose]   (without a session: the unfinished tasks on this branch)
@@ -10,6 +10,9 @@
 //   node .shipline/bin/stage.mjs flag ui true|false
 //   node .shipline/bin/stage.mjs check
 //   node .shipline/bin/stage.mjs pr-summary
+//   node .shipline/bin/stage.mjs validate <folder with workflow.yml and rules/ | workflow .yml file | .shipline>
+//   node .shipline/bin/stage.mjs draft --tmp                           (a fresh scratch folder for /shipline-workflow-designer)
+//   node .shipline/bin/stage.mjs draft <workflow-id> --from <folder>   (validates the folder, then stores it as a draft for Setup)
 // A confirm_to_advance stage (and skipping a non-optional stage) needs the developer's own answer to the
 // question that `advance` / `skip` prints; there are no override flags.
 // `check` runs the test, lint and build commands from config.yml and records the results in the manifest; a stage
@@ -17,15 +20,17 @@
 // `check` also records the scope of the change (test, lint and CI files it edits, files outside the plan); when
 // there is any, finishing that stage needs the developer's answer to a `scope` question too.
 // Session: $SHIPLINE_SESSION (set by the SessionStart hook) or --session <id>. Task override: --task <folder>.
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import {
   findRoot, loadConfig, needsAnswer, loadWorkflow, listWorkflows, readManifest, manifestPath, readSession, statePath,
   tasksDir, writeJson, isDone, currentStage, slugify, stageEnforcement, confirmQuestion, readApprovals,
   consumeApproval, CONFIRM_OPTIONS, sameStage, findStage, fingerprint, findSection, sectionProblems, scopeOf, scopeText,
-  listOpenTasks, currentBranch,
+  listOpenTasks, currentBranch, draftsDir, draftsTmpDir, parseYaml, isInside,
 } from './lib.mjs';
+import { validateWorkflow } from './workflow-check.mjs';
 
 function die(msg) {
   console.error(`shipline: ${msg}`);
@@ -291,8 +296,197 @@ function activateNext(manifest, wf) {
   return null;
 }
 
+// ---------- workflow validation and drafts (used by /shipline-workflow-designer) ----------
+
+const ID_RE = /^[A-Za-z0-9_-]+$/;
+const DRAFT_TMP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const sha256 = (text) => createHash('sha256').update(text).digest('hex');
+
+function listNames(dir, ext) {
+  try {
+    return readdirSync(dir)
+      .filter((f) => f.endsWith(ext) && ID_RE.test(f.slice(0, -ext.length)))
+      .map((f) => f.slice(0, -ext.length))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+function readTextOrNull(file) {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  }
+}
+
+// What to check for a `validate` target: [{ file (shown in messages), path, id (null: the file's own id), rulesDir }].
+function validationTargets(target) {
+  const abs = path.resolve(process.cwd(), target);
+  let st;
+  try {
+    st = statSync(abs);
+  } catch {
+    die(`validate: ${target} does not exist`);
+  }
+  const repoShipline = path.join(root, '.shipline');
+  if (st.isDirectory() && path.resolve(abs) === repoShipline) {
+    return listNames(path.join(repoShipline, 'workflows'), '.yml').map((id) => ({
+      file: `.shipline/workflows/${id}.yml`,
+      path: path.join(repoShipline, 'workflows', `${id}.yml`),
+      id,
+      rulesDir: null,
+    }));
+  }
+  if (st.isDirectory()) {
+    const wf = path.join(abs, 'workflow.yml');
+    if (!existsSync(wf)) die(`validate: ${target} has no workflow.yml`);
+    return [{ file: path.join(target, 'workflow.yml'), path: wf, id: null, rulesDir: path.join(abs, 'rules') }];
+  }
+  if (!abs.endsWith('.yml')) die('validate: expected a folder, a .yml file or .shipline');
+  return [{ file: target, path: abs, id: path.basename(abs, '.yml'), rulesDir: null }];
+}
+
+// -> { errors: [string], warnings: [string], model } for one target.
+function validateTarget(t, agents) {
+  const errors = [];
+  const warnings = [];
+  const line = (i) => `${t.file}: ${i.path || '(workflow)'}: ${i.message}`;
+  let model = null;
+  try {
+    model = parseYaml(readFileSync(t.path, 'utf8'));
+  } catch (e) {
+    errors.push(`${t.file}: (workflow): ${e.message}`);
+    return { errors, warnings, model };
+  }
+  const id = t.id ?? (model && typeof model.id === 'string' ? model.id : '');
+  if (t.id === null && !ID_RE.test(id)) {
+    errors.push(`${t.file}: id: must be set, and may only contain letters, digits, - and _`);
+    return { errors, warnings, model };
+  }
+  const onDisk = readTextOrNull(path.join(root, '.shipline', 'workflows', `${id}.yml`));
+  let existingStageIds = [];
+  try {
+    const cur = onDisk === null ? null : parseYaml(onDisk);
+    existingStageIds = cur && Array.isArray(cur.stages) ? cur.stages.filter((s) => s && typeof s === 'object').map((s) => s.id) : [];
+  } catch {
+    // An unreadable file on disk only means no stage id is exempt from the id-format check.
+  }
+  for (const i of validateWorkflow(model, { id, agents, existingStageIds })) (i.severity === 'warning' ? warnings : errors).push(line(i));
+  // A stage without a rules file works, but has no repo rules to follow.
+  if (model && Array.isArray(model.stages)) {
+    model.stages.forEach((s, i) => {
+      if (!s || typeof s.id !== 'string' || !ID_RE.test(s.id)) return;
+      const names = sameStage(s.id, 'ticket') ? ['ticket', 'jira'] : [s.id];
+      const has = names.some((n) => (t.rulesDir && existsSync(path.join(t.rulesDir, `${n}.md`))) || existsSync(path.join(root, '.shipline', 'rules', `${n}.md`)));
+      if (!has) warnings.push(`${t.file}: stages[${i}].id: no rules file rules/${s.id}.md for stage "${s.id}"`);
+    });
+  }
+  return { errors, warnings, model };
+}
+
+// Prints the result; returns true when there are no errors.
+function validateReport(targets) {
+  const agents = listNames(path.join(root, '.claude', 'agents'), '.md');
+  let ok = true;
+  const results = targets.map((t) => ({ t, ...validateTarget(t, agents) }));
+  for (const r of results) {
+    for (const w of r.warnings) console.log(`warning: ${w}`);
+    for (const e of r.errors) console.log(e);
+    if (r.errors.length) ok = false;
+  }
+  if (ok) console.log('ok');
+  return { ok, results };
+}
+
+function removeOldTmp(base) {
+  let names = [];
+  try {
+    names = readdirSync(base);
+  } catch {
+    return;
+  }
+  for (const n of names) {
+    try {
+      if (Date.now() - statSync(path.join(base, n)).mtimeMs > DRAFT_TMP_MAX_AGE_MS) rmSync(path.join(base, n), { recursive: true, force: true });
+    } catch {
+      // Best effort: a folder that is in use or already gone is left alone.
+    }
+  }
+}
+
+function realOrResolved(p) {
+  try {
+    return realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+function draftCommand() {
+  const tmpBase = draftsTmpDir(root);
+  removeOldTmp(tmpBase);
+  if (flags.tmp === true) {
+    const dir = path.join(tmpBase, randomBytes(4).toString('hex'));
+    mkdirSync(dir, { recursive: true });
+    console.log(dir);
+    return;
+  }
+  const id = pos[1];
+  if (!id || typeof flags.from !== 'string') die('usage: draft --tmp | draft <workflow-id> --from <folder in the drafts-tmp folder>');
+  if (!ID_RE.test(id)) die(`draft: "${id}" is not a workflow id (letters, digits, - and _ only)`);
+  const from = path.resolve(process.cwd(), flags.from);
+  const inside = [[path.resolve(tmpBase), path.resolve(from)], [realOrResolved(tmpBase), realOrResolved(from)]].every(([b, f]) => f !== b && isInside(b, f));
+  if (!inside) die(`draft: --from must be a folder inside ${tmpBase} (create one with \`draft --tmp\`)`);
+  if (!existsSync(path.join(from, 'workflow.yml'))) die(`draft: ${flags.from} has no workflow.yml`);
+
+  const target = { file: 'workflow.yml', path: path.join(from, 'workflow.yml'), id: null, rulesDir: path.join(from, 'rules') };
+  const { ok, results } = validateReport([target]);
+  if (!ok) process.exit(1);
+  const model = results[0].model;
+  if (model.id !== id) die(`draft: the id in workflow.yml ("${model.id}") must equal "${id}"`);
+
+  const rules = listNames(path.join(from, 'rules'), '.md');
+  const dest = path.join(draftsDir(root), id);
+  const staging = `${dest}.${process.pid}.new`;
+  rmSync(staging, { recursive: true, force: true });
+  mkdirSync(path.join(staging, 'rules'), { recursive: true });
+  cpSync(path.join(from, 'workflow.yml'), path.join(staging, 'workflow.yml'));
+  const rulesBase = {};
+  for (const n of rules) {
+    cpSync(path.join(from, 'rules', `${n}.md`), path.join(staging, 'rules', `${n}.md`));
+    const cur = readTextOrNull(path.join(root, '.shipline', 'rules', `${n}.md`));
+    rulesBase[n] = cur === null ? null : sha256(cur);
+  }
+  const curWf = readTextOrNull(path.join(root, '.shipline', 'workflows', `${id}.yml`));
+  writeJson(path.join(staging, 'meta.json'), { workflowId: id, createdAt: now(), baseHash: curWf === null ? null : sha256(curWf), rulesBase });
+  rmSync(dest, { recursive: true, force: true }); // one draft per workflow id: the new one replaces the old
+  mkdirSync(path.dirname(dest), { recursive: true });
+  cpSync(staging, dest, { recursive: true });
+  rmSync(staging, { recursive: true, force: true });
+  rmSync(from, { recursive: true, force: true });
+  console.log(dest);
+}
+
 switch (cmd) {
   case 'workflows': {
+    if (flags.shipped) {
+      const dir = path.join(root, '.shipline', 'bin', 'shipped');
+      const have = new Set(listWorkflows(root).map((w) => w.id));
+      for (const id of listNames(dir, '.yml')) {
+        if (have.has(id) || existsSync(path.join(root, '.shipline', 'workflows', `${id}.yml`))) continue;
+        let w;
+        try {
+          w = parseYaml(readFileSync(path.join(dir, `${id}.yml`), 'utf8'));
+        } catch {
+          continue;
+        }
+        if (w && Array.isArray(w.stages)) console.log(`${id}: ${w.name || id} - ${w.description || ''} [${w.stages.map((x) => x.id).join(' > ')}]`);
+      }
+      break;
+    }
     for (const w of listWorkflows(root)) console.log(`${w.id}: ${w.name || w.id} - ${w.description || ''} [${w.stages.map((s) => s.id).join(' > ')}]`);
     break;
   }
@@ -507,8 +701,18 @@ switch (cmd) {
     break;
   }
 
+  case 'validate': {
+    if (!pos[1]) die('usage: validate <folder with workflow.yml and rules/ | workflow .yml file | .shipline>');
+    if (!validateReport(validationTargets(pos[1])).ok) process.exit(1);
+    break;
+  }
+
+  case 'draft':
+    draftCommand();
+    break;
+
   default:
-    console.log('usage: stage.mjs workflows | start | resume <task> | status | advance | skip | reopen <stage> | flag ui true|false | check | pr-summary');
+    console.log('usage: stage.mjs workflows [--shipped] | start | resume <task> | status | advance | skip | reopen <stage> | flag ui true|false | check | pr-summary | validate <path> | draft --tmp | draft <id> --from <folder>');
     process.exit(cmd ? 1 : 0);
 }
 

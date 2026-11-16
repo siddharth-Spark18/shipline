@@ -51,8 +51,9 @@ with Claude** and **Mark setup as done**.
 and `init --yes`. With "no UI", stages marked `condition: ui_only` (Feature's wireframes) and their rules are
 left out. Agents are installed only when a stage of a chosen workflow uses them; standalone agents such as
 `reviewer` are off by default. Agents that are not installed are recorded as excluded, so `upgrade` does not add
-them. The CI check is written only when you pick it. Later, **Setup → Add shipped workflow** adds a workflow
-Shipline ships (with its missing rules and agents).
+them. The CI check is written only when you pick it. Four workflows are ticked by default (Feature, Bugfix, Hotfix,
+Small change); Spike, Refactor, Docs, Dependency bump and Release are offered unticked. Later, **Setup → Add shipped
+workflow** adds a workflow Shipline ships (with its missing rules and agents).
 
 With `init --terminal`, `init` asks in seven numbered steps: workflows and whether the repo has a UI; the test, lint
 and build commands (Enter keeps the detected one, type `none` to leave it empty); the tracker; confirmations and the
@@ -77,7 +78,7 @@ you once per developer.
 
 - `.shipline/`: `config.yml`, `workflows/*.yml`, `rules/<stage>.md`, `bin/*.mjs` (the hook and stage scripts,
   dependency-free) and `bin/VERSION`.
-- `.claude/agents/` and `.claude/skills/shipline-setup`, `.claude/skills/shipline-workflow`.
+- `.claude/agents/` and `.claude/skills/shipline-setup`, `.claude/skills/shipline-workflow`, `.claude/skills/shipline-workflow-designer`.
 - Hook entries and allow rules merged into `.claude/settings.json`.
 - A `<!-- shipline:start -->` block in `CLAUDE.md`.
 
@@ -88,14 +89,26 @@ shared through git. A new session resumes your unfinished tasks from there.
 ## Upgrade and uninstall
 
 ```bash
-npx @forgeyard/shipline upgrade [--dir <path>] [--yes] [--dry-run] [--force]
+npx @forgeyard/shipline upgrade [--dir <path> | --all] [--yes] [--dry-run] [--force]
 npx @forgeyard/shipline uninstall [--dir <path>] [--yes] [--dry-run] [--purge]
 ```
+
+**The project list.** `init` (including the wizard's Install), `ui` and `upgrade` record the repo in
+`~/.shipline/projects.json` (or `$SHIPLINE_HOME`), and `uninstall` removes it after it succeeds. The list is what the
+browser UI's All projects view and `upgrade --all` use. It holds a path and an id, nothing else, and a repo that can't be
+recorded is a warning, not a failed command. The first time it is needed it is filled from the repos that already have
+task data and still have `.shipline/config.yml`.
 
 **upgrade** shows a preview and asks before changing anything. `--dry-run` only previews, `--yes` skips the
 question, `--force` also replaces Shipline files your team edited (they are skipped otherwise). Your `config.yml`,
 workflows and rules are yours: only an untouched shipped rules file is replaced. It never commits: review and commit
 the result.
+
+**`upgrade --all`** runs `upgrade` once for every repo in the project list (sorted by path, skipping any whose folder is
+gone), each with its own preview and confirmation, or with `--yes` / `--dry-run` / `--force` passed through. It can't be
+combined with `--dir`. A failure in one repo (for example a pre-1.0 one) is reported and the run goes on; the summary
+counts upgraded, already current, declined, skipped (folder not found) and failed repos, and the exit code is 1 if any
+failed. As with a single `upgrade`, restart running Claude Code sessions afterwards.
 
 **Coming from a pre-1.0 Shipline.** Versions before 1.0 were never published to npm, so `upgrade` doesn't migrate
 them: it exits with an error and changes nothing. Run `npx @forgeyard/shipline uninstall --yes`, then `init` again.

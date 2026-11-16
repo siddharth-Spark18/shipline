@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import {
-  MessageSquareIcon,
+  HeartPulseIcon,
+  LayoutDashboardIcon,
   MonitorIcon,
   MoonIcon,
   PlusIcon,
@@ -21,7 +22,6 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -29,15 +29,23 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { ChatRow, sortChats } from '@/components/chat-row';
-import { findTask, usePrompts, useTasks } from '@/lib/queries';
-import type { ChatSummary, Status } from '@/lib/types';
+import { Badge } from '@/components/ui/badge';
+import type { ChatListItem, HealthDot, Project } from '@/lib/types';
 
-export type View = 'chat' | 'setup';
+/** The highlighted item: a chat (the list row is highlighted instead), or one of the four fixed items. */
+export type NavItem = 'new' | 'all' | 'setup' | 'health' | 'chat';
 
-const NAV: { view: View; label: string; icon: typeof MessageSquareIcon }[] = [
-  { view: 'chat', label: 'Chat', icon: MessageSquareIcon },
-  { view: 'setup', label: 'Setup', icon: SettingsIcon },
-];
+/** The dot colour classes (the same ones the stage dots and banners use). */
+export const DOT_CLASS: Record<HealthDot, string> = {
+  green: 'bg-stage-done',
+  amber: 'bg-enf-warn',
+  red: 'bg-enf-block',
+};
+export const DOT_LABEL: Record<HealthDot, string> = {
+  green: 'Healthy',
+  amber: 'Needs a look',
+  red: 'Needs attention',
+};
 
 export const THEMES = [
   { value: 'system', label: 'System', icon: MonitorIcon },
@@ -72,64 +80,39 @@ function ThemeMenu() {
 }
 
 export function AppSidebar({
-  view,
-  onNavigate,
+  active,
   chats,
-  selectedId,
-  onSelectChat,
-  onNewChat,
-  status,
-  warnings,
-  hasBlocker,
-  onOpenDiagnostics,
+  projects,
+  selectedChatId,
+  waitingTotal,
+  healthDot,
+  onNavigate,
 }: {
-  view: View;
-  onNavigate: (view: View) => void;
-  chats: ChatSummary[];
-  selectedId: string | null;
-  onSelectChat: (id: string) => void;
-  onNewChat: () => void;
-  status: Status | undefined;
-  warnings: number;
-  hasBlocker: boolean;
-  onOpenDiagnostics: () => void;
+  active: NavItem;
+  /** The flat chat list across every project, newest first. */
+  chats: ChatListItem[];
+  projects: Project[];
+  selectedChatId: string | null;
+  /** Chats waiting for you, across all projects. */
+  waitingTotal: number;
+  /** The worst health state across projects, or null while it loads. */
+  healthDot: HealthDot | null;
+  onNavigate: (target: 'new' | 'all' | 'setup' | 'health' | { chat: string }) => void;
 }) {
-  const tasks = useTasks();
-  const prompts = usePrompts();
   const { isMobile, setOpenMobile } = useSidebar();
-  const waiting = useMemo(() => new Set(prompts.map((p) => p.chatId)), [prompts]);
   const sorted = useMemo(() => sortChats(chats), [chats]);
+  const byId = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
+  // Chats of a project that is gone from the list (or not served) are not listed.
+  const listed = useMemo(() => sorted.filter((c) => byId.get(c.repoId)?.state === 'ok'), [sorted, byId]);
 
-  const repoName = status?.root
-    ? (status.root.split(/[\\/]/).filter(Boolean).pop() ?? 'Shipline')
-    : 'Shipline';
   // Close the mobile drawer after a navigation; no-op on desktop.
-  const done = () => isMobile && setOpenMobile(false);
+  const go = (target: Parameters<typeof onNavigate>[0]) => {
+    onNavigate(target);
+    if (isMobile) setOpenMobile(false);
+  };
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="lg"
-              className="pointer-events-none"
-              tooltip={status?.root ?? 'Shipline'}
-            >
-              <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">
-                S
-              </div>
-              <div className="grid min-w-0 flex-1 text-left leading-tight">
-                <span className="truncate font-semibold">{repoName}</span>
-                <span className="truncate text-xs text-muted-foreground" title={status?.root}>
-                  {status?.root ?? 'Shipline'}
-                </span>
-              </div>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarHeader>
-
       <SidebarContent>
         <SidebarGroup>
           <SidebarMenu>
@@ -137,58 +120,82 @@ export function AppSidebar({
               <SidebarMenuButton
                 tooltip="New chat"
                 className="bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground"
-                onClick={() => {
-                  onNewChat();
-                  done();
-                }}
+                onClick={() => go('new')}
               >
                 <PlusIcon />
                 <span>New chat</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
-            {NAV.map(({ view: v, label, icon: Icon }) => (
-              <SidebarMenuItem key={v}>
-                <SidebarMenuButton
-                  tooltip={label}
-                  isActive={view === v}
-                  onClick={() => {
-                    onNavigate(v);
-                    done();
-                  }}
-                >
-                  <Icon />
-                  <span>{label}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip="All projects"
+                isActive={active === 'all'}
+                onClick={() => go('all')}
+              >
+                <LayoutDashboardIcon />
+                <span>All projects</span>
+                {waitingTotal > 0 && (
+                  <Badge
+                    className="ml-auto h-4 min-w-4 px-1.5 text-[10px] group-data-[collapsible=icon]:hidden"
+                    aria-label={`${waitingTotal} waiting for you`}
+                  >
+                    {waitingTotal}
+                  </Badge>
+                )}
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip="Setup"
+                isActive={active === 'setup'}
+                onClick={() => go('setup')}
+              >
+                <SettingsIcon />
+                <span>Setup</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip={healthDot ? `Health: ${DOT_LABEL[healthDot]}` : 'Health'}
+                isActive={active === 'health'}
+                onClick={() => go('health')}
+              >
+                <HeartPulseIcon />
+                <span>Health</span>
+                {healthDot && (
+                  <span
+                    role="img"
+                    aria-label={DOT_LABEL[healthDot]}
+                    className={cn(
+                      'ml-auto size-2.5 shrink-0 rounded-full group-data-[collapsible=icon]:hidden',
+                      DOT_CLASS[healthDot],
+                    )}
+                  />
+                )}
+              </SidebarMenuButton>
+            </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroup>
 
-        {sorted.length === 0 && (
+        {listed.length === 0 && (
           <SidebarGroup className="group-data-[collapsible=icon]:hidden">
             <p className="px-2 text-xs text-muted-foreground">No chats yet.</p>
           </SidebarGroup>
         )}
-        {sorted.length > 0 && (
-          <SidebarGroup className="py-1 group-data-[collapsible=icon]:hidden">
+        {listed.length > 0 && (
+          <SidebarGroup className="border-t py-1 group-data-[collapsible=icon]:hidden">
             <SidebarMenu>
-              {sorted.map((c) => {
-                const task = findTask(tasks.data?.tasks, c.task_dir);
-                return (
-                  <SidebarMenuItem key={c.id}>
-                    <SidebarMenuButton
-                      className="h-auto py-1.5"
-                      isActive={view === 'chat' && c.id === selectedId}
-                      onClick={() => {
-                        onSelectChat(c.id);
-                        done();
-                      }}
-                    >
-                      <ChatRow chat={c} task={task} waiting={waiting.has(c.id)} />
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
+              {listed.map((c) => (
+                <SidebarMenuItem key={c.id}>
+                  <SidebarMenuButton
+                    className="h-auto py-1.5"
+                    isActive={active === 'chat' && c.id === selectedChatId}
+                    onClick={() => go({ chat: c.id })}
+                  >
+                    <ChatRow chat={c} project={byId.get(c.repoId)} />
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
             </SidebarMenu>
           </SidebarGroup>
         )}
@@ -196,28 +203,6 @@ export function AppSidebar({
 
       <SidebarFooter>
         <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              variant="outline"
-              tooltip={
-                warnings === 0
-                  ? 'Status: all good'
-                  : `Status: ${warnings} warning${warnings === 1 ? '' : 's'}`
-              }
-              onClick={onOpenDiagnostics}
-            >
-              <span
-                className={cn(
-                  'size-2.5 shrink-0 rounded-full',
-                  warnings === 0 ? 'bg-stage-done' : hasBlocker ? 'bg-enf-block' : 'bg-enf-warn',
-                )}
-              />
-              <span>
-                Status:{' '}
-                {warnings === 0 ? 'all good' : `${warnings} warning${warnings === 1 ? '' : 's'}`}
-              </span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
           <SidebarMenuItem>
             <ThemeMenu />
           </SidebarMenuItem>

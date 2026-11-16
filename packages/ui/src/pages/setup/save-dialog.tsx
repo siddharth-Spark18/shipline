@@ -126,11 +126,21 @@ export interface SaveDialogProps {
   removedStages: { workflow: string; stage: string }[];
   onSave: () => void;
   onReload: () => void;
+  /** Reviewing a workflow draft from /shipline-workflow-designer instead of the page's own edits. */
+  draft?: {
+    /** The workflow file (or a rules file the draft carries) changed since the draft was made. */
+    stale: boolean;
+    staleRules: string[];
+    /** Save again, replacing what changed on disk. Shown instead of Save while the draft is stale. */
+    onOverwrite: () => void;
+    onDiscard: () => void;
+    discarding: boolean;
+  };
 }
 
 /** Shows the diff, removed comments, open-task impact and errors before anything is written. */
 export function SaveDialog(props: SaveDialogProps) {
-  const { preview, readOnly } = props;
+  const { preview, readOnly, draft } = props;
   const blocked =
     readOnly ||
     props.previewLoading ||
@@ -143,9 +153,11 @@ export function SaveDialog(props: SaveDialogProps) {
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent className="sm:max-w-4xl">
         <DialogHeader>
-          <DialogTitle>Review changes</DialogTitle>
+          <DialogTitle>{draft ? 'Review workflow draft' : 'Review changes'}</DialogTitle>
           <DialogDescription>
-            Nothing is written until you save. Shipline never commits for you.
+            {draft
+              ? 'Claude drafted this. Nothing is written to the repo until you save. Shipline never commits for you.'
+              : 'Nothing is written until you save. Shipline never commits for you.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -157,6 +169,18 @@ export function SaveDialog(props: SaveDialogProps) {
                 <AlertDescription>
                   This repo was set up with a newer Shipline than this UI. See the banner at the
                   top.
+                </AlertDescription>
+              </Alert>
+            )}
+            {draft?.stale && (
+              <Alert variant="destructive">
+                <AlertTitle>This workflow changed since the draft was made</AlertTitle>
+                <AlertDescription>
+                  Saving the draft replaces the current file
+                  {draft.staleRules.length > 0
+                    ? `, and the rules for ${draft.staleRules.join(', ')}`
+                    : ''}
+                  . The diff below shows what would change. Overwrite, or Cancel and decide later.
                 </AlertDescription>
               </Alert>
             )}
@@ -220,12 +244,28 @@ export function SaveDialog(props: SaveDialogProps) {
         </ScrollArea>
 
         <DialogFooter>
+          {draft && (
+            <Button
+              variant="outline"
+              className="sm:mr-auto"
+              disabled={draft.discarding || props.saving}
+              onClick={draft.onDiscard}
+            >
+              {draft.discarding ? 'Discarding...' : 'Discard draft'}
+            </Button>
+          )}
           <Button variant="outline" onClick={() => props.onOpenChange(false)}>
             Cancel
           </Button>
-          <Button disabled={blocked} onClick={props.onSave}>
-            {props.saving ? 'Saving...' : 'Save'}
-          </Button>
+          {draft?.stale ? (
+            <Button variant="destructive" disabled={blocked} onClick={draft.onOverwrite}>
+              {props.saving ? 'Saving...' : 'Overwrite'}
+            </Button>
+          ) : (
+            <Button disabled={blocked} onClick={props.onSave}>
+              {props.saving ? 'Saving...' : 'Save'}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -1,0 +1,26 @@
+# Release workflow: prepare, verify and publish a release (offered at install; edit freely or via /shipline-setup). See feature.yml for field docs.
+id: release
+name: Release
+description: cut a release; nothing is released or deployed before it is verified
+stages:
+  - id: prepare
+    name: Prepare
+    artifact: release-notes.md
+    sections: [Version, Changes]
+    enforcement: guide
+    confirm_to_advance: true
+    checkpoint: true
+  - id: verify
+    name: Verify
+    artifact: verification.md
+    checks: true
+    sections: [Checklist]
+    enforcement: block
+    confirm_to_advance: true
+    blocks:
+      - actions: [release, deploy]
+  - id: publish
+    name: Publish
+    artifact: publish.md
+    enforcement: guide
+    confirm_to_advance: true

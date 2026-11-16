@@ -10,7 +10,9 @@ import type {
   ClaimBody,
   CiPreviewResponse,
   ChatDetail,
+  ChatListItem,
   ChatsResponse,
+  HealthData,
   Diagnostics,
   FileMode,
   FileResponse,
@@ -28,9 +30,12 @@ import type {
   SaveResponse,
   SetControlsResponse,
   SetupData,
+  Overview,
+  Project,
   Status,
   TasksData,
   WorkflowAction,
+  WorkflowDraftInfo,
 } from '@/lib/types';
 
 /** The server's error envelope, raised as an exception. */
@@ -72,7 +77,29 @@ export const accessIssueStore = {
   get: () => accessIssue,
 };
 
-async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+/**
+ * The repo the app is showing (the project of the chat, new-chat or Setup view). Per-repo calls go to /api/repos/<repoId>/..., and the
+ * app is keyed by it, so every query and event in view belongs to this repo.
+ */
+let currentRepoId: string | null = null;
+
+export function setCurrentRepo(id: string | null) {
+  currentRepoId = id;
+}
+
+export const getCurrentRepo = () => currentRepoId;
+
+/** '/api/chats' -> '/api/repos/<current repo>/chats'. */
+function repoPath(path: string): string {
+  if (!currentRepoId) throw new ApiError(0, 'no-repo', 'No project is selected.');
+  return `/api/repos/${encodeURIComponent(currentRepoId)}${path.slice('/api'.length)}`;
+}
+
+async function request<T>(
+  method: 'GET' | 'POST' | 'DELETE',
+  path: string,
+  body?: unknown,
+): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
@@ -107,7 +134,28 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
   return (await res.json()) as T;
 }
 
+/** A call to the current repo's routes. */
+function repoRequest<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+  return request<T>(method, repoPath(path), body);
+}
+
 export const api = {
+  projects: () => request<Project[]>('GET', '/api/projects'),
+  overview: () => request<Overview>('GET', '/api/overview'),
+  /** Every chat of every project (the sidebar's flat list). */
+  allChats: () => request<ChatListItem[]>('GET', '/api/chats'),
+  /** Which project a chat belongs to (404 unknown-chat). */
+  chatRepo: (chatId: string) =>
+    request<{ repoId: string }>('GET', `/api/chats/${encodeURIComponent(chatId)}/repo`),
+  health: () => request<HealthData>('GET', '/api/health'),
+  /** The Health page asks about a project that isn't on screen, so these name the repo. */
+  statusOf: (repoId: string) =>
+    request<Status>('GET', `/api/repos/${encodeURIComponent(repoId)}/status`),
+  diagnosticsOf: (repoId: string) =>
+    request<Diagnostics>('GET', `/api/repos/${encodeURIComponent(repoId)}/diagnostics`),
+  /** Unregisters the project (or dismisses a "Not set up" one). The folder and its task data stay. */
+  removeProject: (id: string) =>
+    request<{ ok: true }>('DELETE', `/api/projects/${encodeURIComponent(id)}`),
   remote: () => request<RemoteInfo>('GET', '/api/remote'),
   setRemote: (enabled: boolean) => request<RemoteInfo>('POST', '/api/remote', { enabled }),
   createPairing: () => request<PairResponse>('POST', '/api/remote/pair'),
@@ -115,78 +163,101 @@ export const api = {
     request<{ id: string; name: string }>('POST', '/api/remote/claim', body),
   revokeDevice: (id: string) =>
     request<{ ok: true }>('POST', `/api/remote/devices/${encodeURIComponent(id)}/revoke`),
-  status: () => request<Status>('GET', '/api/status'),
-  setup: () => request<SetupData>('GET', '/api/setup'),
-  previewSetup: (req: SaveRequest) => request<PreviewResponse>('POST', '/api/setup/preview', req),
-  saveSetup: (req: SaveRequest) => request<SaveResponse>('POST', '/api/setup/save', req),
-  markSetupDone: () => request<{ ok: true }>('POST', '/api/setup/mark-done'),
+  status: () => repoRequest<Status>('GET', '/api/status'),
+  setup: () => repoRequest<SetupData>('GET', '/api/setup'),
+  previewSetup: (req: SaveRequest) =>
+    repoRequest<PreviewResponse>('POST', '/api/setup/preview', req),
+  saveSetup: (req: SaveRequest) => repoRequest<SaveResponse>('POST', '/api/setup/save', req),
+  markSetupDone: () => repoRequest<{ ok: true }>('POST', '/api/setup/mark-done'),
+  /** Workflow drafts left by /shipline-workflow-designer, awaiting review. */
+  drafts: () => repoRequest<WorkflowDraftInfo[]>('GET', '/api/setup/drafts'),
+  previewDraft: (workflowId: string) =>
+    repoRequest<PreviewResponse>(
+      'POST',
+      `/api/setup/drafts/${encodeURIComponent(workflowId)}/preview`,
+    ),
+  /** 409 `draft-stale` unless `overwrite` is true and the workflow changed since the draft was made. */
+  saveDraft: (workflowId: string, overwrite: boolean) =>
+    repoRequest<SaveResponse>('POST', `/api/setup/drafts/${encodeURIComponent(workflowId)}/save`, {
+      overwrite,
+    }),
+  discardDraft: (workflowId: string) =>
+    repoRequest<{ ok: true }>(
+      'POST',
+      `/api/setup/drafts/${encodeURIComponent(workflowId)}/discard`,
+    ),
   workflowAction: (req: WorkflowAction) =>
-    request<{ ok: true }>('POST', '/api/setup/workflows', req),
+    repoRequest<{ ok: true }>('POST', '/api/setup/workflows', req),
   createWorkflow: (id: string, name: string) =>
-    request<{ ok: true }>('POST', '/api/setup/workflows', { action: 'create', id, name }),
+    repoRequest<{ ok: true }>('POST', '/api/setup/workflows', { action: 'create', id, name }),
   agentsPreview: (req: AgentsChange) =>
-    request<AgentsPreviewResponse>('POST', '/api/setup/agents?preview=1', req),
-  agentsApply: (req: AgentsChange) => request<unknown>('POST', '/api/setup/agents', req),
+    repoRequest<AgentsPreviewResponse>('POST', '/api/setup/agents?preview=1', req),
+  agentsApply: (req: AgentsChange) => repoRequest<unknown>('POST', '/api/setup/agents', req),
   addWorkflowPreview: (req: AddWorkflowRequest) =>
-    request<AgentsPreviewResponse & { paths: string[] }>(
+    repoRequest<AgentsPreviewResponse & { paths: string[] }>(
       'POST',
       '/api/setup/add-workflow?preview=1',
       req,
     ),
   addWorkflow: (req: AddWorkflowRequest) =>
-    request<unknown>('POST', '/api/setup/add-workflow', req),
-  installInfo: () => request<InstallInfo>('GET', '/api/install/info'),
+    repoRequest<unknown>('POST', '/api/setup/add-workflow', req),
+  installInfo: () => repoRequest<InstallInfo>('GET', '/api/install/info'),
   installPreview: (selection: InstallSelection) =>
-    request<InstallPreview>('POST', '/api/install/preview', { selection }),
+    repoRequest<InstallPreview>('POST', '/api/install/preview', { selection }),
   install: (selection: InstallSelection, base: InstallBase) =>
-    request<{ installed: true; nextSteps: string[] }>('POST', '/api/install', { selection, base }),
-  ciPreview: (req: CiChange) => request<CiPreviewResponse>('POST', '/api/setup/ci?preview=1', req),
-  ciApply: (req: CiChange) => request<unknown>('POST', '/api/setup/ci', req),
-  tasks: () => request<TasksData>('GET', '/api/tasks'),
+    repoRequest<{ installed: true; nextSteps: string[] }>('POST', '/api/install', {
+      selection,
+      base,
+    }),
+  ciPreview: (req: CiChange) =>
+    repoRequest<CiPreviewResponse>('POST', '/api/setup/ci?preview=1', req),
+  ciApply: (req: CiChange) => repoRequest<unknown>('POST', '/api/setup/ci', req),
+  tasks: () => repoRequest<TasksData>('GET', '/api/tasks'),
   file: (path: string, mode: FileMode) =>
-    request<FileResponse>('GET', `/api/file?path=${encodeURIComponent(path)}&mode=${mode}`),
-  diagnostics: () => request<Diagnostics>('GET', '/api/diagnostics'),
-  chats: () => request<ChatsResponse>('GET', '/api/chats'),
-  chat: (id: string) => request<ChatDetail>('GET', `/api/chats/${encodeURIComponent(id)}`),
+    repoRequest<FileResponse>('GET', `/api/file?path=${encodeURIComponent(path)}&mode=${mode}`),
+  chats: () => repoRequest<ChatsResponse>('GET', '/api/chats'),
+  chat: (id: string) => repoRequest<ChatDetail>('GET', `/api/chats/${encodeURIComponent(id)}`),
   createChat: (message: string, images: ImageData[] = []) =>
-    request<{ id: string }>('POST', '/api/chats', {
+    repoRequest<{ id: string }>('POST', '/api/chats', {
       message,
       ...(images.length > 0 ? { images } : {}),
     }),
   sendMessage: (id: string, text: string, images: ImageData[] = []) =>
-    request<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/message`, {
+    repoRequest<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/message`, {
       text,
       ...(images.length > 0 ? { images } : {}),
     }),
   listCommands: (chatId?: string | null) =>
-    request<{ commands: ChatCommand[] }>(
+    repoRequest<{ commands: ChatCommand[] }>(
       'GET',
       `/api/chat/commands${chatId ? `?chat=${encodeURIComponent(chatId)}` : ''}`,
     ),
   getControls: (chatId?: string | null) =>
-    request<ChatControls>(
+    repoRequest<ChatControls>(
       'GET',
       `/api/chat/controls${chatId ? `?chat=${encodeURIComponent(chatId)}` : ''}`,
     ),
   setControls: (body: PickedControls & { chat?: string }) =>
-    request<SetControlsResponse>('POST', '/api/chat/controls', body),
+    repoRequest<SetControlsResponse>('POST', '/api/chat/controls', body),
   trustRepo: (path: string) =>
-    request<{ trusted: true; takesEffect: string }>('POST', '/api/trust', { path }),
+    repoRequest<{ trusted: true; takesEffect: string }>('POST', '/api/trust', { path }),
   startShell: (id: string, command: string) =>
-    request<{ runId: string }>('POST', `/api/chats/${encodeURIComponent(id)}/shell`, { command }),
+    repoRequest<{ runId: string }>('POST', `/api/chats/${encodeURIComponent(id)}/shell`, {
+      command,
+    }),
   stopShell: (id: string, runId: string) =>
-    request<{ stopped: true }>(
+    repoRequest<{ stopped: true }>(
       'POST',
       `/api/chats/${encodeURIComponent(id)}/shell/${encodeURIComponent(runId)}/stop`,
     ),
   stopChat: (id: string) =>
-    request<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/stop`),
+    repoRequest<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/stop`),
   interruptChat: (id: string) =>
-    request<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/interrupt`),
+    repoRequest<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/interrupt`),
   killChat: (id: string) =>
-    request<{ killed: true }>('POST', `/api/chats/${encodeURIComponent(id)}/kill`),
+    repoRequest<{ killed: true }>('POST', `/api/chats/${encodeURIComponent(id)}/kill`),
   continueChat: (id: string) =>
-    request<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/continue`),
+    repoRequest<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/continue`),
   answerPrompt: (id: string, answer: PromptAnswer) =>
-    request<{ ok: true }>('POST', `/api/prompts/${encodeURIComponent(id)}`, answer),
+    repoRequest<{ ok: true }>('POST', `/api/prompts/${encodeURIComponent(id)}`, answer),
 };

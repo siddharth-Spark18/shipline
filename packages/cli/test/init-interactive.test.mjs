@@ -269,7 +269,7 @@ describe('selection logic (prompts stubbed)', () => {
     const r = await initWith(dir, selection());
     assert.equal(r.code, 0, r.stderr);
     const [info] = r.calls;
-    assert.deepEqual(info.workflows.map((w) => w.id), ALL_WORKFLOWS);
+    assert.deepEqual(info.workflows.map((w) => w.id), [...ALL_WORKFLOWS, 'deps', 'docs', 'refactor', 'release', 'spike']);
     assert.equal(info.workflows.find((w) => w.id === 'small').name, 'Small change');
     assert.deepEqual(info.agents, ALL_AGENTS);
     assert.deepEqual(info.repoAgents, ['mine', 'planner']);
@@ -284,7 +284,7 @@ describe('selection logic (prompts stubbed)', () => {
     assert.deepEqual(list(dir, '.shipline/workflows'), ['bugfix.yml']);
     assert.deepEqual(list(dir, '.shipline/rules'), ['fix.md', 'pr.md', 'reproduce.md', 'root_cause.md', 'ticket.md', 'verify.md']);
     assert.deepEqual(list(dir, '.claude/agents'), ['builder.md', 'qa-bug-hunter.md', 'researcher.md']);
-    assert.deepEqual(list(dir, '.claude/skills'), ['shipline-setup', 'shipline-workflow']);
+    assert.deepEqual(list(dir, '.claude/skills'), ['shipline-setup', 'shipline-workflow', 'shipline-workflow-designer']);
     const v = versionOf(dir);
     assert.deepEqual(v.excluded, [AGENT('planner'), AGENT('reviewer'), AGENT('wireframe-proposer')]);
     for (const n of ['planner', 'reviewer', 'wireframe-proposer']) assert.ok(!(AGENT(n) in v.files), n);

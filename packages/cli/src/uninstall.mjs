@@ -8,6 +8,7 @@ import {
   CI_WORKFLOW, CLAUDE_MD_KEY, SETTINGS_KEY, VERSION_FILE, ownedTemplateFiles, removeClaudeMdBlock, removeShiplineFromSettings, sha256,
 } from './hashes.mjs';
 import { parseSettings } from './init.mjs';
+import { unregisterQuietly } from './registry.mjs';
 import { encodePath, isInside, shiplineHome } from './store.mjs';
 import { pidAlive, readLock } from './ui/sessions.mjs';
 
@@ -248,6 +249,8 @@ export async function runUninstall({ target, yes = false, dryRun = false, purge 
     console.error(`shipline: uninstall failed (${e.message}). Some files may already be removed; run uninstall again to finish.`);
     return 1;
   }
+
+  unregisterQuietly(root);
 
   console.log(`\nRemoved. Commit the deletion so teammates no longer get Shipline.${store && !deleteStore ? `\nTask data was kept at ${store}.` : ''}
 Any Claude Code session already open in this repo will show hook warnings until it is restarted.`);

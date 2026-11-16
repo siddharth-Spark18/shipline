@@ -152,7 +152,7 @@ describe('fixtures (item 14)', () => {
   test('inline comments inside a workflow are dropped; the header comes from feature.yml', () => {
     const out = reEmit('workflow-inline-comments.yml', fx('workflow-inline-comments.yml'));
     assert.ok(out.startsWith(headerFor('feature')));
-    assert.ok(headerFor('spike') === headerFor('feature'));
+    assert.ok(headerFor('no-such-template') === headerFor('feature'));
     for (const gone of ['time-boxed', 'try things out', 'only a reminder', 'hand-edited header']) assert.ok(!out.includes(gone), gone);
   });
 

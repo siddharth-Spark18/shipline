@@ -20,6 +20,17 @@ Open Claude Code in the repo and describe the work. Claude follows the `shipline
    | Hotfix | Ticket (optional), Fix, Verify, Commit and PR |
    | Small change | Ticket (optional), Implement, Verify, Commit and PR |
 
+   Five more workflows ship but are not installed by default; add them in **Setup → Add shipped workflow** (or tick
+   them in the install wizard or `init`):
+
+   | Workflow | Stages |
+   | --- | --- |
+   | Spike / Research (`spike`) | Question, Research (no PR or merge until it is done) |
+   | Refactor (`refactor`) | Ticket (optional), Plan, Implement, Verify, Commit and PR |
+   | Docs (`docs`) | Ticket (optional), Outline, Write (source edits blocked, docs edits allowed), Review, Commit and PR |
+   | Dependency bump (`deps`) | Ticket (optional), Assess, Upgrade, Verify, Commit and PR |
+   | Release (`release`) | Prepare, Verify (no release or deploy until it is done), Publish |
+
 3. **Asks you at the gates.** Stages with `confirm_to_advance: true` need your OK before Claude moves on.
 
 **Enforcement.** Each stage sets `enforcement`:
@@ -55,10 +66,49 @@ Outside a Claude Code session (no session id), `status` lists the unfinished tas
 npx @forgeyard/shipline ui [--dir <path>] [--port <n>] [--no-open] [--remote]
 ```
 
-It starts a server on `127.0.0.1` (a random port unless `--port`) for the repo you run it in and opens
-`http://127.0.0.1:<port>/?t=<token>`. Ctrl+C stops it. The token is swapped for a cookie on first load, and
-requests with a foreign `Host` or `Origin` are refused. The UI is optional: the hooks enforce the workflow
-with or without it. It runs your own installed `claude` and never sees your Claude credentials.
+It starts a server on `127.0.0.1` (a random port unless `--port`) and opens
+`http://127.0.0.1:<port>/?t=<token>#/new/<repo id>` (the new-chat screen, preset to the repo you run it in; the setup wizard for a folder without Shipline). Ctrl+C stops it. The token is
+swapped for a cookie on first load, and requests with a foreign `Host` or `Origin` are refused. The UI is optional: the
+hooks enforce the workflow with or without it. It runs your own installed `claude` and never sees your Claude
+credentials.
+
+**One server for every repo.** There is one UI server per machine. Run `shipline ui` in a second repo (or a
+worktree) and it opens that repo in the server that is already running, prints the link, and exits: no second
+terminal, port or browser tab per repo.
+
+- The running server is found through `~/.shipline/server.json` (or `$SHIPLINE_HOME`). It lives as long as the terminal
+  that started it; stopping it stops every chat it runs.
+- `--port <n>` and a different Shipline version don't start a second server: you get a note ("already running on port
+  X; stop it to change the port", "<v> is already running; stop it to use <v>") and the folder is handed over anyway.
+- `--remote` on a later run turns on phone access in the running server.
+- A folder without Shipline opens the setup wizard in the running server, listed as "Not set up" until you press
+  Install.
+- Repos are listed in `~/.shipline/projects.json`. `init`, `ui` and `upgrade` add a repo, `uninstall` removes it, and
+  the first run fills the list from the repos that already have task data. A repo whose folder is gone is greyed out
+  as "Folder not found" and can be removed from the list.
+- **Chat-first navigation.** The sidebar (the tab bar on a phone) has the same items in every view: **New chat**,
+  **All projects** (with the number of chats waiting for you across projects), **Setup** and **Health** (a dot for the
+  worst health state), then one flat list of every chat in every project, newest first. Each row shows the title, the
+  project (plus the worktree folder when it isn't the main worktree), the workflow, stage dots and a dot when the chat
+  waits for you. There is no project switcher: projects are reached through All projects, the project dropdown on New
+  chat and the one on Setup, and the chat header names the chat's project (click it to open that project's Setup).
+  **Remove from list** (on a project card) only forgets the project; the folder and its task data stay.
+- **All projects** (`#/all`): *Needs you* (chats waiting on a permission prompt, a question or confirmation, or that
+  stopped with an error you haven't opened), one card per project (worktrees grouped under their repo, with branch,
+  state, waiting count, unfinished tasks and a health dot, and **New chat here**, **Setup** and **Remove from list**),
+  the unfinished tasks per project, and a one-line health summary. It never opens a repo, so it stays fast with many.
+- **Health** (`#/health`) replaces the old Status row and Diagnostics sheet. *This machine*: the server and CLI
+  versions, Claude (path, signed in, version), Node, port, phone access and the last 50 lines of the server log. *Projects*:
+  one row each with its state, whether setup is done, a `config.yml` error, who holds the chat lock and the warning
+  count; expand a row for that project's diagnostics (redacted, safe to paste into a bug report). The dot is red when
+  Claude is missing or signed out, the project needs a reinstall or a newer Shipline, or `config.yml` can't be read;
+  amber when the folder is missing, setup isn't done or there are warnings; green otherwise.
+- A repo set up with a newer Shipline (or before 1.0) shows a card instead of its pages, and only that repo is
+  affected: the others keep working. For a newer one, stop the server and run
+  `npx @forgeyard/shipline@<version> ui`.
+- Chats can run in two repos at once; each repo still runs one chat at a time.
+
+To update every repo at once: `npx @forgeyard/shipline upgrade --all` (see [Upgrade and uninstall](install.md#upgrade-and-uninstall)).
 
 - **Chat:** talk to Claude in the repo. While Claude works, a row at the end of the messages shows what it is
   doing and for how long. On desktop, **Esc** stops the current turn and the chat stays active; **Stop** in the
@@ -72,8 +122,17 @@ with or without it. It runs your own installed `claude` and never sees your Clau
 
   ![Setup: workflows](images/setup.png)
 
+  **Describe a workflow** (next to New workflow and Add shipped workflow) opens a chat that runs
+  `/shipline-workflow-designer`. You describe your process in plain words; Claude proposes the stages, gates and rules,
+  checks them, and leaves a draft. A **Draft ready** banner on Setup (and a notice in the chat) has **Review**, which
+  opens the same diff dialog as a Setup save, and **Discard**. Nothing is written to the repo until you save. **Change
+  with Claude**, on a workflow's page, does the same for an existing workflow. If the workflow was edited after the
+  draft was made, Save asks you to **Overwrite** or Cancel. Repos installed before this version show "Upgrade this repo
+  to use Describe a workflow" until you run `upgrade`. In a terminal, run `/shipline-workflow-designer` in Claude Code
+  and it writes the files after you approve a summary.
+
   The **Agents & skills** tab chooses which Shipline agents and repo skills are installed.
 
   ![Setup: Agents & skills](images/agents-skills.png)
 
-A repo set up by a newer Shipline is read-only in the UI and shows the `npx @forgeyard/shipline@<version> ui` command to run.
+A repo set up by a newer Shipline shows a card with the `npx @forgeyard/shipline@<version> ui` command to run (stop this server first).

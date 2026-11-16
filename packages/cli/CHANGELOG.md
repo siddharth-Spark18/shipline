@@ -4,6 +4,67 @@ All notable changes to `@forgeyard/shipline` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.0] - 2026-11-16
+
+One UI server for every repo on the machine, and a way to design your own workflows by describing them. The hook
+contract (INTERFACE) is unchanged; `upgrade` adds the new skill and scripts (see Added).
+
+### Changed (breaking)
+
+- **`shipline ui` is one server per machine.** Running it in a second repo, or a worktree, opens that repo in the
+  server that is already running and exits, instead of starting another server on another port. The running server is
+  found through `~/.shipline/server.json`; it lives as long as the terminal that started it. `--port` and a different
+  Shipline version don't start a second server (you get a note and the folder is handed over), and `--remote` on a later
+  run turns on phone access in the running one.
+- **The UI's API paths moved.** Per-repo routes are now `/api/repos/<repoId>/...` (for example
+  `/api/repos/<repoId>/chats`); `/api/remote`, `/api/events` and `/pair` are unchanged. Every SSE event a repo sends
+  carries a `repoId`. Browser addresses are `#/chat/<chatId>`, `#/new`, `#/all`,
+  `#/setup/<repoId>` and `#/health`; the old `#chat`, `#setup` and `#/r/<repoId>/...` redirect.
+- **A repo set up before 1.0, or with a newer Shipline, is no longer served in read-only mode.** It is listed with a
+  card (uninstall then `init`, or restart with the version it names) and its routes answer 409; other repos keep
+  working.
+- **One phone URL, one pairing, every repo.** Phone access is one `tailscale serve` mapping for the whole server. A
+  paired phone reaches every registered repo.
+- **The logs.** Server events (start, handoff, registry changes, phone access on or off, shutdown) go to
+  `~/.shipline/ui.log`; each repo keeps its own `ui.log` in its task store.
+
+### Added
+
+- **`/shipline-workflow-designer`**, a skill that creates or changes a workflow from a plain-words description of your
+  process: it reads the repo, interviews you, drafts the stages, gates and a rules file for each new stage, and
+  validates them. In Setup, **Describe a workflow** and **Change with Claude** (on each workflow) start it in a chat and
+  it leaves a draft; a **Draft ready** banner (and a notice in the chat) opens it in the usual diff dialog, where you
+  Save or Discard. If the workflow changed since the draft, Save asks you to Overwrite. In a terminal it writes the
+  files after you approve a summary. It only uses today's stage fields and agents already in the repo, and never changes
+  `config.yml`. Repos installed earlier show "Upgrade this repo to use Describe a workflow" until `upgrade` runs.
+- **New `stage.mjs` commands:** `validate <path>` (checks a workflow folder, a `.yml` file or `.shipline`), `draft --tmp`,
+  `draft <id> --from <folder>` and `workflows --shipped`. The workflow validator moved into the vendored
+  `.shipline/bin/workflow-check.mjs`, shared with the Setup screen. `upgrade` adds it and `.shipline/bin/shipped/*.yml`
+  (read-only copies of the shipped workflows).
+- **Five more shipped workflows:** Spike / Research, Refactor, Docs (source edits blocked while docs edits stay
+  allowed), Dependency bump and Release, with rules files for their new stages. They are offered but not ticked in the
+  install wizard and `init` (`init --yes` still installs the four defaults), and listed under **Setup → Add shipped
+  workflow**.
+- **A machine-wide project list**, `~/.shipline/projects.json`. `init`, `ui` and `upgrade` add a repo, `uninstall`
+  removes it, and the first run fills it from the repos that already have task data. A write failure is a warning,
+  never a failed command.
+- **Chat-first navigation.** One flat chat list across every project (newest first, each row with its project, workflow,
+  stage dots and a waiting dot), under items that are always shown: New chat, All projects (with the number of chats
+  waiting for you), Setup and Health. The phone's tab bar has the same items. There is no project switcher: New chat and
+  Setup have a project dropdown, and a chat's header names its project. Remove from list forgets a project without
+  touching its folder or task data; a repo whose folder is gone shows "Folder not found".
+- **All projects** (`#/all`, and the **All** tab on a phone): what needs you, one card per project (worktrees grouped
+  under their repo, with a health dot, New chat here, Setup and Remove from list), unfinished tasks per project and a
+  health summary. It never opens a repo, so it stays fast with many.
+- **Health** (`#/health`) replaces the Status row and the Diagnostics sheet: the machine (server and CLI versions,
+  Claude, Node, port, phone access, server log) and one row per project (state, setup, config error, chat lock,
+  warnings, expandable diagnostics).
+- **`upgrade --all`** upgrades every registered repo (each with its own preview and confirmation, or `--yes` /
+  `--dry-run` / `--force`), reports a failure and goes on, prints a summary, and exits 1 if any repo failed. It can't be
+  combined with `--dir`.
+- **The setup wizard inside the running server.** `shipline ui` in a folder without Shipline opens the wizard in the
+  server that is running; the folder is listed as "Not set up" until you press Install.
+
 ## [1.3.0] - 2026-11-13
 
 Better coverage of stacks beyond Node, and a full setup stepper in the browser. The hook contract (INTERFACE) is

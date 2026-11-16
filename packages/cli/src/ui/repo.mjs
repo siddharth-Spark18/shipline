@@ -1,7 +1,7 @@
 // Finds the repo the UI serves and loads its own vendored lib.mjs, so parsing always uses the code the
 // hooks run. Node 20+, no dependencies.
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
@@ -15,7 +15,7 @@ import { HttpError } from './http.mjs';
 
 // Walks up from `dir` to the first folder with .shipline/config.yml. Unlike findRoot in lib.mjs it
 // ignores CLAUDE_PROJECT_DIR.
-function findRepoRoot(dir) {
+export function findRepoRoot(dir) {
   let cur = path.resolve(dir || process.cwd());
   for (;;) {
     if (existsSync(path.join(cur, '.shipline', 'config.yml'))) return cur;
@@ -42,9 +42,85 @@ export function gitRootOf(dir) {
   }
 }
 
+// The realpath of git's common dir for `dir` (`git rev-parse --git-common-dir`), or null outside git. Every worktree
+// of one repository has the same value, which is how the project switcher groups them.
+export function gitCommonDir(dir) {
+  try {
+    const out = execFileSync('git', ['rev-parse', '--git-common-dir'], {
+      cwd: dir,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .toString()
+      .trim();
+    if (!out) return null;
+    const abs = path.resolve(dir, out);
+    try {
+      return realpathSync(abs);
+    } catch {
+      return abs;
+    }
+  } catch {
+    return null;
+  }
+}
+
+// The checked-out branch of `root`, read from HEAD without running git (so listing many repos spawns nothing).
+// A linked worktree has `.git` as a file pointing at its own git dir. null for a detached HEAD or outside git.
+export function gitBranch(root) {
+  try {
+    const dotGit = path.join(root, '.git');
+    if (statSync(dotGit).isDirectory()) return branchFromHead(dotGit);
+    const m = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, 'utf8'));
+    return m ? branchFromHead(path.resolve(root, m[1].trim())) : null;
+  } catch {
+    return null;
+  }
+}
+
+function branchFromHead(gitDir) {
+  try {
+    const head = readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
+    const m = /^ref:\s*refs\/heads\/(.+)$/.exec(head);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
 // Where the install wizard installs: the git root of `dir`, or `dir` itself outside git.
 export function installRootFor(dir) {
   return gitRootOf(dir) || path.resolve(dir);
+}
+
+// The repo's own vendored lib.mjs (loaded once per path by Node). Used for parseYaml, loadConfig and loadWorkflow.
+export function loadRepoLib(root) {
+  return import(pathToFileURL(path.join(root, '.shipline', 'bin', 'lib.mjs')).href);
+}
+
+// 'pre-1.0' (set up before 1.0: uninstall, then init), or how the repo's interface compares with this UI's.
+function versionStateOf(version) {
+  return isPreOne(version) ? 'pre-1.0' : compareInterface(version, INTERFACE);
+}
+
+// What the UI does with a registered repo, from small files only (no context, no lib import):
+// 'ok' (served), 'pre-1.0', 'repo-newer' or 'missing' (the folder or its .shipline/config.yml is gone).
+// `message` is the card text for the states that aren't 'ok'.
+export function probeRepo(root) {
+  if (!existsSync(path.join(root, '.shipline', 'config.yml'))) {
+    return { state: 'missing', version: null, message: 'Folder not found' };
+  }
+  const version = readRepoVersion(root);
+  const vs = versionStateOf(version);
+  if (vs === 'pre-1.0') return { state: 'pre-1.0', version, message: preOneMessage(version) };
+  if (vs === 'repo-newer') {
+    const v = version.package || 'latest';
+    return {
+      state: 'repo-newer',
+      version,
+      message: `This repo uses Shipline ${v}. Stop this server (Ctrl+C) and run \`npx @forgeyard/shipline@${v} ui\`.`,
+    };
+  }
+  return { state: 'ok', version, message: null };
 }
 
 export async function resolveRepo(dir) {
@@ -55,10 +131,9 @@ export async function resolveRepo(dir) {
     throw e;
   }
   // Used only for parseYaml and loadConfig.
-  const lib = await import(pathToFileURL(path.join(root, '.shipline', 'bin', 'lib.mjs')).href);
+  const lib = await loadRepoLib(root);
   const version = readRepoVersion(root);
-  // 'pre-1.0' (set up before 1.0: uninstall, then init), or how the repo's interface compares with this UI's.
-  const state = isPreOne(version) ? 'pre-1.0' : compareInterface(version, INTERFACE);
+  const state = versionStateOf(version);
   const versionMessage = state === 'pre-1.0' ? preOneMessage(version) : null;
 
   let current = null;

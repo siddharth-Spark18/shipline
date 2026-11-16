@@ -1,4 +1,4 @@
-// Phone access API: GET/POST /api/remote, /api/remote/pair, /api/remote/claim, /api/remote/devices/:id/revoke.
+// Phone access API (server-wide: one mapping, one pairing for every repo): GET/POST /api/remote, /api/remote/pair, /api/remote/claim, /api/remote/devices/:id/revoke.
 // Node 20+, no dependencies.
 import { DEVICE_COOKIE, DEVICE_COOKIE_MAX_AGE } from './auth.mjs';
 import { HttpError, sendJson } from './http.mjs';

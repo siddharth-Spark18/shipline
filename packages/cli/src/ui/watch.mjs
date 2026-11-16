@@ -2,9 +2,10 @@
 // changed to report errors and to fall back to polling. Node 20+, no dependencies.
 import { existsSync, mkdirSync, readdirSync, statSync, watch } from 'node:fs';
 import path from 'node:path';
-import { stateDir } from '../store.mjs';
+import { draftsDir, stateDir } from '../store.mjs';
 import { git } from './git.mjs';
 import { log } from './log.mjs';
+import { listDrafts } from './setup.mjs';
 import { collectTasks, tasksBase } from './tasks.mjs';
 
 const DEBOUNCE_MS = 300;
@@ -150,7 +151,8 @@ export async function watchRepo(root, onChange, opts = {}) {
 
 // Starts the watch for the Tasks panel on `app`. Every change recomputes the tasks once (single-flight: a
 // change during a run schedules exactly one more run) and sends an SSE `tasks` event. A change to config.yml
-// reloads the config.
+// reloads the config. The store's drafts/ folder (workflow drafts for Setup) is watched too; when the drafts change
+// a `drafts` event carries the new list.
 export async function startTaskWatch(app) {
   let handle = null;
   let running = false;
@@ -158,8 +160,18 @@ export async function startTaskWatch(app) {
   let closed = false;
   let configChanged = false;
 
-  // The store's tasks/ folder.
-  const taskBases = () => [tasksBase(app.repo.root)];
+  // The store's tasks/ and drafts/ folders.
+  const taskBases = () => [tasksBase(app.repo.root), draftsDir(app.repo.root)];
+
+  const draftsJson = () => {
+    try {
+      return JSON.stringify(listDrafts(app));
+    } catch (e) {
+      log('drafts-error', { message: e && e.message });
+      return null;
+    }
+  };
+  let lastDrafts = draftsJson();
 
   const onFallback = (reason) => {
     app.addBanner({
@@ -195,6 +207,11 @@ export async function startTaskWatch(app) {
           app.repo.reloadConfig();
         }
         app.hub.send('tasks', await collectTasks(app));
+        const drafts = draftsJson();
+        if (drafts !== null && drafts !== lastDrafts) {
+          lastDrafts = drafts;
+          app.hub.send('drafts', { drafts: JSON.parse(drafts) }); // wrapped: the hub adds repoId to the payload
+        }
       } while (again && !closed);
     } catch (e) {
       log('refresh-error', { message: e.message });

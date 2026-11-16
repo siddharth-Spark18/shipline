@@ -67,6 +67,7 @@ const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer.types).includes('Fi
 export function Composer({
   disabled,
   busy = false,
+  ended = false,
   chatId = null,
   allowImages = true,
   placeholder,
@@ -76,6 +77,8 @@ export function Composer({
 }: {
   disabled: boolean;
   busy?: boolean;
+  /** The chat has ended: sending resumes it, and the model / effort picks are kept for that. */
+  ended?: boolean;
   /** The chat `!` commands run in. Null on the new-chat screen, where `!` is off. */
   chatId?: string | null;
   allowImages?: boolean;
@@ -356,6 +359,7 @@ export function Composer({
             <ChatControls
               stacked
               chatId={chatId}
+              ended={ended}
               busy={busy}
               disabled={disabled}
               onCompact={() => {
@@ -368,6 +372,7 @@ export function Composer({
       ) : (
         <ChatControls
           chatId={chatId}
+          ended={ended}
           busy={busy}
           disabled={disabled}
           onCompact={() => void compact()}

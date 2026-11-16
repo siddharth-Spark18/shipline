@@ -1,0 +1,21 @@
+# Spike workflow: research before building (offered at install; edit freely or via /shipline-setup). See feature.yml for field docs.
+id: spike
+name: Spike / Research
+description: find out whether or how something can be done; no code is shipped
+stages:
+  - id: question
+    name: Question
+    artifact: question.md
+    sections: [Question, Success criteria]
+    enforcement: guide
+    confirm_to_advance: true
+  - id: research
+    name: Research
+    artifact: findings.md
+    agent: researcher
+    sections: [Findings, Recommendation]
+    enforcement: block
+    confirm_to_advance: true
+    checkpoint: true
+    blocks:
+      - actions: [pr, merge]

@@ -18,7 +18,8 @@ import { CLI_ROOT, TEMPLATES, homeFor, removeDir, runInit, storeOf, tmpDir } fro
 
 const sha = (data) => createHash('sha256').update(data).digest('hex');
 const AGENT = (n) => `.claude/agents/${n}.md`;
-const ALL_WORKFLOWS = ['bugfix', 'feature', 'hotfix', 'small'];
+const ALL_WORKFLOWS = ['bugfix', 'feature', 'hotfix', 'small']; // the ticked-by-default ones
+const SHIPPED_WORKFLOWS = [...ALL_WORKFLOWS, 'deps', 'docs', 'refactor', 'release', 'spike']; // the four first, then the offered ones
 const ALL_AGENTS = ['planner', 'builder', 'reviewer', 'qa-bug-hunter', 'wireframe-proposer', 'researcher'];
 const wfTemplate = (id) => readFileSync(path.join(TEMPLATES, 'workflows', `${id}.yml`), 'utf8');
 
@@ -93,7 +94,8 @@ describe('installState and installInfo', () => {
   test('installInfo: what ships, what the repo has, which stages use each agent, and the detected UI', () => {
     const dir = repo({ [AGENT('mine')]: 'x\n', '.claude/skills/deploy/SKILL.md': 'x\n', 'web/index.html': 'x' });
     const info = installInfo(dir);
-    assert.deepEqual(info.workflows.map((w) => w.id), ALL_WORKFLOWS);
+    assert.deepEqual(info.workflows.map((w) => w.id), SHIPPED_WORKFLOWS);
+    assert.deepEqual(info.workflows.filter((w) => w.default).map((w) => w.id), ALL_WORKFLOWS);
     assert.deepEqual(info.workflows.find((w) => w.id === 'feature').stages.find((s) => s.id === 'wireframes'), {
       id: 'wireframes',
       name: 'Wireframes',
@@ -107,7 +109,7 @@ describe('installState and installInfo', () => {
     assert.equal(info.state, 'clean');
     assert.deepEqual(info.agentUse.reviewer, [], 'reviewer is standalone');
     assert.deepEqual(info.agentUse['wireframe-proposer'], ['feature.wireframes']);
-    assert.deepEqual(info.agentUse.planner, ['feature.plan']);
+    assert.deepEqual(info.agentUse.planner, ['feature.plan', 'refactor.refactor_plan']);
     assert.ok(info.agentUse.builder.includes('bugfix.fix') && info.agentUse.builder.includes('feature.implement'));
     assert.equal(installInfo(repo()).uiDetected, false);
   });

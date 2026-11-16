@@ -126,7 +126,11 @@ export function listNames(dir, { dirs = false } = {}) {
     .sort();
 }
 
-// The workflows Shipline ships: [{ id, name, description, stages: [{ id, name, agent, condition }] }], from the templates.
+// The workflows that are ticked by default (`init --yes`, the wizard); the other shipped ones are offered, not ticked.
+export const DEFAULT_WORKFLOW_IDS = ['feature', 'bugfix', 'hotfix', 'small'];
+
+// The workflows Shipline ships: [{ id, name, description, default, stages: [{ id, name, agent, condition }] }], from
+// the templates. The default four come first, then the others by id.
 export function shippedWorkflows() {
   const dir = path.join(TEMPLATES, 'shipline', 'workflows');
   return readdirSync(dir)
@@ -138,9 +142,11 @@ export function shippedWorkflows() {
         id: wf.id,
         name: wf.name || wf.id,
         description: wf.description || '',
+        default: DEFAULT_WORKFLOW_IDS.includes(wf.id),
         stages: wf.stages.map((st) => ({ id: st.id, name: st.name || st.id, agent: st.agent || null, condition: st.condition || null })),
       };
-    });
+    })
+    .sort((a, b) => Number(b.default) - Number(a.default)); // stable: alphabetical within each group
 }
 
 // The default order of Shipline's agents.
@@ -226,10 +232,10 @@ export function installInfo(root) {
   };
 }
 
-// What an answer-less install does (`init --yes`): every workflow, the UI stages when a UI is detected, the agents
+// What an answer-less install does (`init --yes`): the four default workflows, the UI stages when a UI is detected, the agents
 // those stages use, "keep yours" on every clash, stage agents left alone, no repo skills.
 export function defaultSelection(info) {
-  const workflows = info.workflows.map((w) => w.id);
+  const workflows = info.workflows.filter((w) => w.default).map((w) => w.id);
   const agents = defaultAgents(info, workflows, info.uiDetected);
   return {
     workflows,

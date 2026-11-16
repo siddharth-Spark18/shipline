@@ -8,6 +8,8 @@ import {
   storeDir,
   tasksDir,
   stateDir,
+  draftsDir,
+  draftsTmpDir,
   safeId,
   isInside,
   sameRoot,
@@ -15,7 +17,7 @@ import {
   toEol,
 } from '../templates/shipline/bin/lib.mjs';
 
-export { encodePath, shiplineHome, storeDir, tasksDir, stateDir, safeId, isInside, sameRoot, detectEol, toEol };
+export { encodePath, shiplineHome, storeDir, tasksDir, stateDir, draftsDir, draftsTmpDir, safeId, isInside, sameRoot, detectEol, toEol };
 
 // <store>/ui/: sessions.json, lock.json, mcp-<id>.json, ui.log and tmp/.
 export const uiDir = (root) => path.join(storeDir(root), 'ui');

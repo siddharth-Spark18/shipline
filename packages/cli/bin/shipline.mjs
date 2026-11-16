@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { runInit } from '../src/init.mjs';
 import { runUninstall } from '../src/uninstall.mjs';
-import { runUpgrade } from '../src/upgrade.mjs';
+import { runUpgrade, runUpgradeAll } from '../src/upgrade.mjs';
 
 const major = Number(process.versions.node.split('.')[0]);
 if (major < 22) {
@@ -22,7 +22,7 @@ Commands:
   init        Vendor .shipline/, .claude/ files, hooks and a CLAUDE.md section into a repo
   upgrade     Update an installed repo's Shipline files to this version
   uninstall   Remove everything init installed from a repo
-  ui          Local web UI for setup and tasks
+  ui          Local web UI for setup and tasks (one server for every repo on this machine)
 
 Options:
   -h, --help      Show help (also per command: ${NPX} <command> --help)
@@ -50,14 +50,16 @@ here, shows a review of what it will write, and asks before writing. It aborts w
 other file name collides.`,
   },
   upgrade: {
-    flags: { '--yes': 'yes', '-y': 'yes', '--dry-run': 'dryRun', '--force': 'force' },
-    help: `Usage: ${NPX} upgrade [--dir <path>] [--yes] [--dry-run] [--force]
+    flags: { '--yes': 'yes', '-y': 'yes', '--dry-run': 'dryRun', '--force': 'force', '--all': 'all' },
+    help: `Usage: ${NPX} upgrade [--dir <path> | --all] [--yes] [--dry-run] [--force]
 
 Updates an installed repo's Shipline files to this version. It shows a preview first; files your team edited are
 skipped unless --force.
 
 Options:
 ${DIR}
+  --all          Upgrade every repo in the machine-wide project list (not with --dir). Each repo gets its own
+                 preview and confirmation; a failure in one is reported and the rest still run. Exits 1 if any failed.
   -y, --yes      Apply without asking
   --dry-run      Show the preview and stop
   --force        Replace files your team edited
@@ -81,13 +83,14 @@ ${DIR}
     flags: {},
     help: `Usage: ${NPX} ui [--dir <path>] [--port <n>] [--no-open] [--remote]
 
-Local web UI for setup and tasks.
+Local web UI for setup and tasks. One server serves every repo on this machine: when one is already running,
+this opens the folder in it instead of starting another.
 
 Options:
 ${DIR}
-  --port <n>     Port to listen on (default: a free one)
+  --port <n>     Port to listen on (default: a free one; ignored when a server is already running)
   --no-open      Don't open the browser
-  --remote       Also serve the UI to your paired phone over Tailscale (installed repos only)
+  --remote       Also serve the UI to your paired phone over Tailscale (turns it on in a running server too)
   -h, --help     Show this help`,
   },
 };
@@ -107,6 +110,7 @@ function parseArgs(cmd, args) {
       const value = a === '--dir' ? args[++i] : a.slice('--dir='.length);
       if (!value) usageError(`--dir needs a path (see shipline ${cmd} --help)`);
       out.target = value;
+      out.dirGiven = true;
     } else if (Object.prototype.hasOwnProperty.call(spec, a)) out[spec[a]] = true;
     else if (a.startsWith('-')) usageError(`unknown option ${a} (see shipline ${cmd} --help)`);
     else usageError(`unexpected argument ${a} (use --dir)`);
@@ -124,12 +128,17 @@ if (wants('-h', '--help') && (known || cmd === undefined || cmd.startsWith('-') 
   console.log(VERSION);
 } else if (cmd === 'ui') {
   // Loaded only here, so the other commands never load the UI server.
-  const { parseUiArgs, startServer } = await import('../src/ui/server.mjs');
-  await startServer(parseUiArgs(rest));
+  // A running server takes the folder over (see launchUi); otherwise this process becomes the server.
+  const { parseUiArgs } = await import('../src/ui/server.mjs');
+  const { launchUi } = await import('../src/ui/server-record.mjs');
+  await launchUi(parseUiArgs(rest), VERSION);
 } else if (known) {
   const o = parseArgs(cmd, rest);
   if (cmd === 'init') process.exitCode = await runInit({ target: o.target, dryRun: Boolean(o.dryRun), yes: Boolean(o.yes), terminal: Boolean(o.terminal) });
-  else if (cmd === 'upgrade') {
+  else if (cmd === 'upgrade' && o.all) {
+    if (o.dirGiven) usageError('--all cannot be used with --dir (see shipline upgrade --help)');
+    process.exitCode = await runUpgradeAll({ yes: Boolean(o.yes), dryRun: Boolean(o.dryRun), force: Boolean(o.force) });
+  } else if (cmd === 'upgrade') {
     process.exitCode = await runUpgrade({ target: o.target, yes: Boolean(o.yes), dryRun: Boolean(o.dryRun), force: Boolean(o.force) });
   } else {
     process.exitCode = await runUninstall({ target: o.target, yes: Boolean(o.yes), dryRun: Boolean(o.dryRun), purge: Boolean(o.purge) });

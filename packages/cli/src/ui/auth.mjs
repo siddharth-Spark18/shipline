@@ -11,6 +11,17 @@ export function safeEqual(a, b) {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
+// The permission relay (a Node process spawned by claude) and the CLI's handoff calls: no cookie, never an Origin.
+// Both are per repo or per machine, and laptop-only.
+export const isRelayPath = (pathname) => /^\/api\/repos\/[^/]+\/relay$/.test(pathname);
+export const isHandoffPath = (pathname) =>
+  pathname === '/api/handoff' || pathname === '/api/handoff/ping';
+
+// Everything but GET and HEAD carries an Origin that must be this page's.
+const changesState = (method) => method !== 'GET' && method !== 'HEAD';
+
+const LOGIN_TOKEN_TTL_MS = 5 * 60_000;
+
 export const DEVICE_COOKIE = 'shipline_device';
 // 400 days, the browser maximum. A pairing never expires; scanning again restores the cookie.
 export const DEVICE_COOKIE_MAX_AGE = 34560000;
@@ -23,6 +34,9 @@ export function createAuth(port, app = {}) {
   const host = `127.0.0.1:${port}`;
   const origin = `http://127.0.0.1:${port}`;
   const devOrigin = process.env.SHIPLINE_UI_DEV_ORIGIN || null;
+  // One-time login tokens (token -> expiry), minted for a handoff link: the running server's session token is never
+  // printed by a second `shipline ui` run.
+  const loginTokens = new Map();
 
   function cookieValue(req, name) {
     for (const part of String(req.headers.cookie || '').split(';')) {
@@ -47,10 +61,9 @@ export function createAuth(port, app = {}) {
   }
 
   function checkLaptop(req, route) {
-    const relay = route.pathname === '/api/relay';
-    if (relay) {
-      // Its caller is relay.mjs, a Node process: no cookie, never an Origin. The per-spawn secret
-      // is checked by the handler (prompts.mjs, Phase 2).
+    if (isRelayPath(route.pathname) || isHandoffPath(route.pathname)) {
+      // The relay's caller is relay.mjs, a Node process, and the handoff's is the CLI: no cookie, never an Origin.
+      // The per-spawn secret (prompts.mjs) or the server key (projects.mjs) is checked by the handler.
       if (req.headers.origin !== undefined)
         throw new HttpError(403, 'bad-origin', 'Origin not allowed');
       return { kind: 'laptop' };
@@ -60,7 +73,7 @@ export function createAuth(port, app = {}) {
       if (c === null || !safeEqual(c, token))
         throw new HttpError(401, 'no-session', 'No valid session cookie');
     }
-    if (route.method === 'POST') {
+    if (changesState(route.method)) {
       const o = req.headers.origin;
       if (
         o === undefined ||
@@ -84,8 +97,9 @@ export function createAuth(port, app = {}) {
       !safeEqual(login.toLowerCase(), String(r.loginName).toLowerCase())
     )
       throw new HttpError(403, 'wrong-tailscale-user', 'Not the Tailscale user of this machine');
-    // 3. The permission relay is laptop-only.
-    if (route.pathname === '/api/relay') throw new HttpError(403, 'bad-host', 'Host not allowed');
+    // 3. The permission relay and the CLI handoff are laptop-only.
+    if (isRelayPath(route.pathname) || isHandoffPath(route.pathname))
+      throw new HttpError(403, 'bad-host', 'Host not allowed');
     let who = { kind: 'device', deviceId: null, name: null };
     if (!route.isStatic) {
       if (route.method === 'POST' && route.pathname === '/api/remote/claim') {
@@ -98,8 +112,8 @@ export function createAuth(port, app = {}) {
         who = { kind: 'device', deviceId: device.id, name: device.name };
       }
     }
-    // 6. A POST must come from this very page.
-    if (route.method === 'POST') {
+    // 6. A POST (or DELETE) must come from this very page.
+    if (changesState(route.method)) {
       const o = req.headers.origin;
       if (o === undefined || !safeEqual(o, r.url))
         throw new HttpError(403, 'bad-origin', 'Origin not allowed');
@@ -119,10 +133,30 @@ export function createAuth(port, app = {}) {
       return classify(req) === 'laptop' ? checkLaptop(req, route) : checkRemote(req, route);
     },
 
-    // GET /?t=<token>: swap the token for the cookie and drop it from the URL. Laptop host only.
+    // A login token for one handoff link: valid for 5 minutes and one use.
+    mintLoginToken() {
+      const now = Date.now();
+      for (const [t, exp] of loginTokens) if (exp <= now) loginTokens.delete(t);
+      const t = crypto.randomBytes(32).toString('hex');
+      loginTokens.set(t, now + LOGIN_TOKEN_TTL_MS);
+      return t;
+    },
+
+    // GET /?t=<token>: swap the token (the session token, or a one-time login token) for the cookie and drop it
+    // from the URL. The fragment, if any, survives the redirect. Laptop host only.
     exchange(req, res, supplied) {
       if (classify(req) !== 'laptop') throw new HttpError(403, 'bad-host', 'Host not allowed');
-      if (!safeEqual(supplied, token)) throw new HttpError(403, 'bad-token', 'Wrong token');
+      let ok = safeEqual(supplied, token);
+      if (!ok) {
+        for (const [t, exp] of loginTokens) {
+          if (safeEqual(supplied, t)) {
+            loginTokens.delete(t);
+            ok = exp > Date.now();
+            break;
+          }
+        }
+      }
+      if (!ok) throw new HttpError(403, 'bad-token', 'Wrong token');
       res.writeHead(302, {
         'Set-Cookie': `${cookieName}=${token}; HttpOnly; SameSite=Strict; Path=/`,
         Location: '/',

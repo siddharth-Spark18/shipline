@@ -20,7 +20,15 @@ import { HttpError } from './http.mjs';
 import { stateDir } from '../store.mjs';
 import { log } from './log.mjs';
 import { stopAll as stopShells } from './shell.mjs';
-import { acquireLock, addChat, addTaskDir, getChat, releaseLock, updateChat } from './sessions.mjs';
+import {
+  acquireLock,
+  addChat,
+  addTaskDir,
+  getChat,
+  lockHeldMessage,
+  releaseLock,
+  updateChat,
+} from './sessions.mjs';
 import {
   KNOWN_TYPES,
   classifyHookMessage,
@@ -98,6 +106,12 @@ export function createChats(app) {
   const root = app.repo.root;
   let active = null;
   const emit = (payload) => app.hub.send('chat', payload);
+  // Chats that stopped with an error nobody has looked at yet (in memory, so a restart clears it): they count as
+  // "waiting for you". Set when a chat ends with a fatal event, cleared when the chat is opened (markSeen).
+  const errorUnseen = new Set();
+  const changed = () => {
+    if (app.changed) app.changed();
+  };
   // chatId -> { pgid, poll }: processes left running in a stopped chat's group (POSIX), until killed or gone.
   const orphans = new Map();
   // chatId -> { mcpServers, slashCommands, terminalSlashCommands } from the chat's last system/init. Kept after the
@@ -456,6 +470,10 @@ export function createChats(app) {
     if (active === chat) active = null;
     setBusy(chat, false);
 
+    const failed = Boolean(spawnError) || (code !== null && code !== 0) || Boolean(signal);
+    if (!chat.stopping && (chat.fatal || failed || (chat.resume && !chat.sawInit)))
+      errorUnseen.add(chat.id);
+    changed();
     if (chat.fatal) emit({ chatId: chat.id, ...chat.fatal });
     else if (chat.stopping) emit({ chatId: chat.id, kind: 'ended' });
     else if (chat.resume && !chat.sawInit)
@@ -524,14 +542,9 @@ export function createChats(app) {
         throw new HttpError(409, 'chat-active', 'A chat is already active here.', {
           chatId: lock.sessionId,
         });
-      throw new HttpError(
-        409,
-        'lock-held',
-        lock.heldBy
-          ? `A chat is active in another Shipline UI on port ${lock.heldBy}; stop it there.`
-          : 'A chat is active in another Shipline UI; stop it there.',
-        { heldBy: lock.heldBy },
-      );
+      throw new HttpError(409, 'lock-held', lockHeldMessage(lock.heldBy), {
+        heldBy: lock.heldBy,
+      });
     }
     let child;
     const chat = {
@@ -599,6 +612,8 @@ export function createChats(app) {
     }
     chat.child = child;
     active = chat;
+    errorUnseen.delete(id);
+    changed();
 
     const now = new Date().toISOString();
     if (resume)
@@ -677,6 +692,14 @@ export function createChats(app) {
 
   return {
     activeId: () => (active ? active.id : null),
+
+    // [{ chatId, reason: 'error' }]: chats that stopped with an error that hasn't been looked at since.
+    unseenErrors: () => [...errorUnseen].map((chatId) => ({ chatId, reason: 'error' })),
+
+    // The chat was opened (GET /api/repos/:repoId/chats/:id): its error, if any, has been seen.
+    markSeen(id) {
+      if (errorUnseen.delete(id)) changed();
+    },
 
     // { mcpServers, slashCommands, terminalSlashCommands } from the chat's last system/init, or null.
     initInfo: (id) => inits.get(id) || null,

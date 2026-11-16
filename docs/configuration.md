@@ -37,6 +37,30 @@ scope_check: { enabled: true }          # Verify: flag edits to tests, lint and 
 | `checks: true` | The stage (Verify, by default) can't finish until `stage.mjs check` has run the test, lint and build commands on the current code and they passed, or you accepted the failures |
 | `blocks` | What is held back until this stage is done: `{ tools: 'Edit\|Write', allow_paths: [globs] }`, `{ bash: 'regex' }` or `{ actions: [commit, pr] }` (see [Guardrails](guardrails.md)) |
 
+**Shipped workflows.** Four are installed by default: `feature`, `bugfix`, `hotfix` and `small`. Five more are offered
+but unticked in the install wizard and `init`, and listed under Setup → Add shipped workflow: `spike` (Question,
+Research), `refactor` (Plan, Implement, Verify), `docs` (Outline, Write, Review; the Write stage uses
+`allow_paths` so docs edits are allowed while source edits stay blocked), `deps` (Assess, Upgrade, Verify) and
+`release` (Prepare, Verify, Publish; no release or deploy before Verify is done). Each has rules files for its new
+stage ids (`question`, `research`, `outline`, `write`, `review`, `assess`, `upgrade`, `prepare`, `publish`). Copies of
+all nine are kept in `.shipline/bin/shipped/` (Shipline-owned, refreshed by `upgrade`) so Claude can offer the ones this
+repo doesn't have.
+
+**Workflow designer.** `/shipline-workflow-designer` creates or changes a workflow from a plain-words description: it
+reads the repo, interviews you, drafts `workflow.yml` plus a rules file for every new stage, and validates them. It uses
+only the fields above and only agents already in `.claude/agents/`; `config.yml` stays with `/shipline-setup`. With
+`--draft` (what Setup starts) it leaves a draft in the repo's task store (`<store>/drafts/<workflow id>/`) for review in
+Setup; without it, in a terminal, it writes `.shipline/workflows/<id>.yml` and the rules files after you approve a
+summary. `--edit <workflow-id>` changes an existing workflow. It uses these `stage.mjs` commands, which you can run
+yourself:
+
+| Command | What it does |
+| --- | --- |
+| `stage.mjs validate <path>` | Checks a folder with `workflow.yml` and `rules/`, a single `.yml` file, or `.shipline` (every workflow). Prints `ok` and exits 0, or one `<file>: <field>: <message>` line per error and exits 1. A stage with no rules file is a `warning:` line, not an error. |
+| `stage.mjs draft --tmp` | Prints a fresh scratch folder in the store (folders over 24 hours old are removed). |
+| `stage.mjs draft <id> --from <folder>` | Validates a scratch folder and stores it as the draft for that workflow, replacing an older one. Only folders inside the store's scratch area are accepted. |
+| `stage.mjs workflows --shipped` | Lists the shipped workflows this repo doesn't have yet. |
+
 **Checks and PR evidence.** `stage.mjs check` runs `commands.test`, `commands.lint` and `commands.build` itself, records each
 exit code, duration and output tail in the task, and fingerprints the code it ran on (a git tree id that includes
 uncommitted files; your real index is never touched). On a `checks: true` stage, `advance` refuses a missing run or a run

@@ -93,7 +93,7 @@ describe('Host check', () => {
   });
 
   test('the right Host (the real port) is accepted', async () => {
-    const r = await rawRequest(ui.port, { path: '/api/status', headers: { host: `127.0.0.1:${ui.port}`, cookie: ui.cookie } });
+    const r = await rawRequest(ui.port, { path: `/api/repos/${ui.repoId}/status`, headers: { host: `127.0.0.1:${ui.port}`, cookie: ui.cookie } });
     assert.equal(r.status, 200);
   });
 });
@@ -292,7 +292,8 @@ describe('safeEqual', () => {
 });
 
 describe('command line', () => {
-  const ui = (args, cwd) => spawnSync(process.execPath, [BIN, 'ui', ...args], { cwd, env: cleanEnv(), encoding: 'utf8', timeout: 20000 });
+  // Its own SHIPLINE_HOME: a `shipline ui` that finds a running server (the one above) hands the folder over instead of starting.
+  const ui = (args, cwd) => spawnSync(process.execPath, [BIN, 'ui', ...args], { cwd, env: cleanEnv({ SHIPLINE_HOME: homeFor(tmpDir()) }), encoding: 'utf8', timeout: 20000 });
 
   test('--port with a used port exits 1 with "Port <n> is in use"', async () => {
     const blocker = net.createServer();
@@ -308,14 +309,14 @@ describe('command line', () => {
   });
 
   test('prints the tokened URL, and SIGINT shuts down with exit 0', { skip: process.platform === 'win32' && 'Node cannot send SIGINT to a child on Windows (child.kill terminates it, so the exit code is never 0); no Windows test covers Ctrl+C on `shipline ui`' }, async () => {
-    const child = spawn(process.execPath, [BIN, 'ui', '--dir', dir, '--no-open'], { env: cleanEnv({ SHIPLINE_HOME: homeFor(dir) }), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [BIN, 'ui', '--dir', dir, '--no-open'], { env: cleanEnv({ SHIPLINE_HOME: homeFor(tmpDir()) }), stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     child.stdout.on('data', (c) => (out += c));
     const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
     try {
       const deadline = Date.now() + 10000;
       while (!/\/\?t=/.test(out) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
-      const m = /http:\/\/127\.0\.0\.1:(\d+)\/\?t=([0-9a-f]{64})\n/.exec(out);
+      const m = /http:\/\/127\.0\.0\.1:(\d+)\/\?t=([0-9a-f]{64})(?:#\S*)?\n/.exec(out);
       assert.ok(m, out);
       const r = await fetch(m[0].trim(), { redirect: 'manual' });
       assert.equal(r.status, 302);
@@ -350,16 +351,18 @@ describe('command line', () => {
       while (!/\/\?t=/.test(out) && Date.now() < deadline && child.exitCode === null) await new Promise((r) => setTimeout(r, 50));
       assert.match(out, new RegExp(`Shipline setup for ${empty.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}\\r?\\n`));
       assert.match(out, /Nothing is written until you press Install in the browser\./);
-      const m = /http:\/\/127\.0\.0\.1:(\d+)\/\?t=([0-9a-f]{64})/.exec(out);
+      const m = /http:\/\/127\.0\.0\.1:(\d+)\/\?t=([0-9a-f]{64})#\/setup\/([0-9a-f]{12})/.exec(out);
       assert.ok(m, out);
-      const r = await fetch(m[0], { redirect: 'manual' });
+      const r = await fetch(m[0].split('#')[0], { redirect: 'manual' });
       assert.equal(r.status, 302);
       const cookie = r.headers.get('set-cookie').split(';')[0];
-      const status = await (await fetch(`http://127.0.0.1:${m[1]}/api/status`, { headers: { cookie } })).json();
+      const status = await (await fetch(`http://127.0.0.1:${m[1]}/api/repos/${m[3]}/status`, { headers: { cookie } })).json();
       assert.equal(status.mode, 'install');
       assert.equal(status.state, 'clean');
       assert.deepEqual(readdirSync(empty), []);
-      assert.deepEqual(readdirSync(home), [], 'no store and no UI log in install mode');
+      // The server's own files (ui.log, server.json) live in the home; the repo's store and the project list do not exist yet.
+      assert.ok(!readdirSync(home).includes('projects'), 'no store in install mode');
+      assert.ok(!readdirSync(home).includes('projects.json'), 'nothing registered in install mode');
     } finally {
       child.kill('SIGKILL');
       await exited;
@@ -431,7 +434,7 @@ describe('command line', () => {
     try {
       const r = await fetch(handle.url, { redirect: 'manual' });
       const cookie = r.headers.get('set-cookie').split(';')[0];
-      const status = await (await fetch(`http://127.0.0.1:${handle.port}/api/status`, { headers: { cookie } })).json();
+      const status = await (await fetch(`http://127.0.0.1:${handle.port}/api/repos/${handle.repoId}/status`, { headers: { cookie } })).json();
       assert.equal(status.root, dir);
     } finally {
       await handle.close();

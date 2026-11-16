@@ -2,5 +2,6 @@
   "plansDir": "docs/plans",
   "wireframesDir": ".claude/wireframes",
   "researchDir": ".claude/research",
-  "researchReportsDir": ".claude/research"
+  "researchReportsDir": ".claude/research",
+  "qaReportsDir": ".claude/qa-reports"
 }

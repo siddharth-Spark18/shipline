@@ -18,10 +18,6 @@ import {
 } from '@/pages/chat/permission-card';
 import { QuestionCard, parseQuestions, type QuestionItem } from '@/pages/chat/question-card';
 
-/** A single-choice question with 2 to 4 options is answered by one tap on its option; anything else opens the sheet. */
-const isSimple = (qs: QuestionItem[]) =>
-  qs.length === 1 && !qs[0].multiSelect && qs[0].options.length >= 2 && qs[0].options.length <= 4;
-
 // The phone's big touch targets; the desktop dock uses normal buttons.
 const BIG = 'h-auto min-h-14 flex-1 py-2 text-base';
 const NORMAL = 'h-auto min-h-8 flex-1 py-1.5';
@@ -70,14 +66,7 @@ function QuestionDock({
   questions: QuestionItem[];
   counter: string | null;
 }) {
-  const { answer, pending } = useAnswerPrompt(prompt);
-  const mobile = useIsMobile();
-  // Phone: the details open in a bottom sheet. Desktop: they expand inside the dock.
-  const [open, setOpen] = useState(false);
   const first = questions[0];
-  const simple = isSimple(questions);
-  const optionClass = mobile ? BIG : NORMAL;
-  const expanded = !mobile && open;
 
   return (
     <>
@@ -90,75 +79,7 @@ function QuestionDock({
         {counter && <span className="text-xs font-normal text-muted-foreground">{counter}</span>}
         <Countdown expiresAt={prompt.expiresAt} />
       </div>
-      {expanded ? (
-        <>
-          <QuestionCard prompt={prompt} questions={questions} bare />
-          <Button
-            variant="ghost"
-            size="sm"
-            className="self-center text-xs text-muted-foreground"
-            onClick={() => setOpen(false)}
-          >
-            Hide details
-            <ChevronDownIcon />
-          </Button>
-        </>
-      ) : (
-        <p className="line-clamp-3 text-sm">{first.question}</p>
-      )}
-      {expanded ? null : simple ? (
-        <>
-          <div className={first.options.length === 2 ? 'flex gap-2' : 'flex flex-col gap-2'}>
-            {first.options.map((o) => (
-              <Button
-                key={o.label}
-                variant="outline"
-                size={mobile ? 'lg' : 'default'}
-                className={`${optionClass} flex-col gap-0.5 whitespace-normal`}
-                disabled={pending}
-                onClick={() =>
-                  void answer({ decision: 'allow', answers: { [first.question]: o.label } })
-                }
-              >
-                <span>{o.label}</span>
-                {o.description && (
-                  <span className="text-xs font-normal text-muted-foreground">{o.description}</span>
-                )}
-              </Button>
-            ))}
-          </div>
-          <Button
-            variant="ghost"
-            className={`${mobile ? 'h-11' : 'h-8'} self-center text-xs text-muted-foreground`}
-            onClick={() => setOpen(true)}
-          >
-            Details, other answer or skip
-            <ChevronUpIcon />
-          </Button>
-        </>
-      ) : (
-        <Button
-          size={mobile ? 'lg' : 'default'}
-          className={mobile ? 'h-14 w-full text-base' : 'w-full'}
-          onClick={() => setOpen(true)}
-        >
-          Answer
-        </Button>
-      )}
-      <Sheet open={mobile && open} onOpenChange={setOpen}>
-        <SheetContent
-          side="bottom"
-          className="max-h-[88svh] gap-0 overflow-y-auto p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
-        >
-          <SheetHeader className="p-0 pb-3 pr-10">
-            <SheetTitle>
-              {questions.length > 1 ? 'Claude has some questions' : 'Claude has a question'}
-            </SheetTitle>
-            <SheetDescription className="sr-only">Answer the question for Claude.</SheetDescription>
-          </SheetHeader>
-          <QuestionCard prompt={prompt} questions={questions} bare />
-        </SheetContent>
-      </Sheet>
+      <QuestionCard prompt={prompt} questions={questions} bare />
     </>
   );
 }
@@ -232,7 +153,7 @@ export function DecisionDock({ prompts }: { prompts: PromptEvent[] }) {
     <div
       role="region"
       aria-label="Waiting for your answer"
-      className="flex shrink-0 flex-col gap-2 rounded-xl border bg-card p-3 shadow-sm ring-2 ring-primary/40"
+      className="flex max-h-[60svh] shrink-0 flex-col gap-2 overflow-y-auto rounded-xl border bg-card p-3 shadow-sm ring-2 ring-primary/40"
     >
       {questions ? (
         <QuestionDock key={current.id} prompt={current} questions={questions} counter={counter} />

@@ -3,13 +3,6 @@ import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
 import type { VersionInfo } from '@/lib/types';
@@ -18,31 +11,6 @@ function versionText(v: string | VersionInfo | undefined): string {
   if (v === undefined) return 'unknown';
   if (typeof v === 'string') return v;
   return `${v.package ?? 'legacy'} (interface ${v.interface})`;
-}
-
-/** The same diagnostics as before, in a right-hand Sheet opened from the sidebar status row. */
-export function DiagnosticsSheet({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-md">
-        <SheetHeader>
-          <SheetTitle>Diagnostics</SheetTitle>
-          <SheetDescription>
-            Redacted by the server. Safe to paste into a bug report.
-          </SheetDescription>
-        </SheetHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-          {open && <DiagnosticsBody />}
-        </div>
-      </SheetContent>
-    </Sheet>
-  );
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -56,10 +24,14 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function DiagnosticsBody() {
+/**
+ * One project's diagnostics (summary, last log lines, raw redacted data), loaded when its Health row is expanded.
+ * Redacted by the server, so it is safe to paste into a bug report.
+ */
+export function DiagnosticsBody({ repoId }: { repoId: string }) {
   const { data, error, isPending, refetch, isFetching } = useQuery({
-    queryKey: queryKeys.diagnostics,
-    queryFn: api.diagnostics,
+    queryKey: queryKeys.diagnostics(repoId),
+    queryFn: () => api.diagnosticsOf(repoId),
   });
 
   if (isPending) return <p className="text-sm text-muted-foreground">Loading...</p>;

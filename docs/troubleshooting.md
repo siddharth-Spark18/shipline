@@ -15,6 +15,19 @@ Common problems and what to do.
 - **`upgrade` says "pre-1.0 Shipline".** See [Upgrade and uninstall](install.md#upgrade-and-uninstall): uninstall, then `init`.
 - **"Repo newer".** The repo was set up by a newer Shipline than the one you ran. Run the newer version, for
   example `npx @forgeyard/shipline@<version> ui`, or `upgrade` with the latest.
+- **`shipline ui` says "already running", or a second terminal opens the same server.** That is intended: there is one
+  UI server per machine, and a later `shipline ui` hands its folder over to it. To start fresh, stop the running one
+  (Ctrl+C in its terminal).
+- **`shipline ui` can't find the running server, or opens a new one every time.** The running server is recorded in
+  `~/.shipline/server.json` (or `$SHIPLINE_HOME`). After a crash or reboot that file is stale: a new `shipline ui` notices
+  (the pid is gone or the server doesn't answer) and replaces it, so nothing needs deleting. A server from before 2.0
+  writes no such file and isn't detected: stop it, or its per-repo chat lock will refuse a second chat in that repo
+  ("A chat is active in another Shipline UI process").
+- **A repo shows "Folder not found".** The folder (or its `.shipline/config.yml`) is gone: it was moved, renamed or
+  uninstalled. It is never removed automatically; use **Remove from list** on its card in All projects (or in Health), then run
+  `shipline ui` in the new location.
+- **A repo shows "Newer Shipline" or "Needs reinstall".** That repo isn't served by this server; the others are. For a
+  newer one, stop the server and run the version it names, for example `npx @forgeyard/shipline@<version> ui`.
 - **A task seems lost.** Tasks are stored per repo path under `~/.shipline/projects/`. If you moved or renamed
   the repo folder, the store key changed and the old folder is still on disk; move it to the new key or work
   from the old path. Also check you are on the same machine and `SHIPLINE_HOME` is unchanged.

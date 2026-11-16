@@ -20,12 +20,13 @@ import { ChatTasksPanel } from '@/components/task-panel';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { ApiError, api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
-import { useMediaQuery, usePrompts, useTasks } from '@/lib/queries';
+import { useDrafts, useMediaQuery, usePrompts, useTasks } from '@/lib/queries';
 import { sameStage } from '@/lib/stages';
 import type {
   ChatSummary,
   ChatsResponse,
   ImageData,
+  Project,
   PromptEvent,
   Task,
   VersionState,
@@ -37,11 +38,11 @@ import { DecisionDock } from '@/pages/chat/decision-dock';
 import { MessageList } from '@/pages/chat/message-list';
 import {
   ClaudeMissingNotice,
+  DraftReadyNotice,
   FatalNotice,
   LockHeldNotice,
   OrphansNotice,
   ResultLine,
-  ResumeCommand,
   TicketNotice,
 } from '@/pages/chat/notices';
 import { mergeHistory, normalizeHistory } from '@/pages/chat/timeline';
@@ -120,12 +121,17 @@ function MobileHeader({
   onBack,
   title,
   subtitle,
+  projectLine,
+  onProject,
   trail,
   children,
 }: {
   onBack?: () => void;
   title: string;
   subtitle?: string;
+  /** The chat's project and branch; tapping it opens that project's Setup. */
+  projectLine?: string;
+  onProject?: () => void;
   trail?: ReactNode;
   children?: ReactNode;
 }) {
@@ -142,9 +148,18 @@ function MobileHeader({
       </Button>
       <div className="min-w-0 flex-1 leading-tight">
         <h2 className="truncate text-sm font-semibold">{title}</h2>
-        {subtitle && (
+        {(subtitle || projectLine) && (
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="truncate">{subtitle}</span>
+            {projectLine && (
+              <button
+                type="button"
+                className="min-w-0 shrink truncate underline-offset-2 active:underline"
+                onClick={onProject}
+              >
+                {projectLine}
+              </button>
+            )}
+            {subtitle && <span className="truncate">{subtitle}</span>}
             {trail}
           </div>
         )}
@@ -184,6 +199,9 @@ export default function ChatPage({
   selectedId,
   onSelect,
   onBack,
+  project = null,
+  onOpenProject,
+  newChatTop,
 }: {
   versionState?: VersionState;
   /** The pre-1.0 guidance from /api/status, shown instead of the generic text. */
@@ -193,6 +211,12 @@ export default function ChatPage({
   onSelect: (id: string | null) => void;
   /** Phone only: the chat header's back arrow, which goes to the Chats tab. */
   onBack?: () => void;
+  /** The project this chat (or the new chat) belongs to: shown next to the title. */
+  project?: Project | null;
+  /** The project name in the header: opens that project's Setup. */
+  onOpenProject?: (repoId: string) => void;
+  /** The new-chat screen's project dropdown. */
+  newChatTop?: ReactNode;
 }) {
   const queryClient = useQueryClient();
   const mobile = useIsMobile();
@@ -318,6 +342,8 @@ export default function ChatPage({
           key={selectedId}
           id={selectedId}
           summary={selected}
+          project={project}
+          onOpenProject={onOpenProject}
           prompts={prompts.filter((p) => p.chatId === selectedId)}
           readOnly={readOnly}
           blocker={blocker}
@@ -345,7 +371,8 @@ export default function ChatPage({
                 : 'flex flex-1 flex-col gap-4 overflow-y-auto'
             }
           >
-            <div>
+            <div className="flex flex-col gap-2">
+              {newChatTop}
               <h2 className="text-base font-medium">New chat</h2>
               <p className="text-sm text-muted-foreground">
                 Describe the work. This runs your own installed <code>claude</code> in this
@@ -419,6 +446,8 @@ export default function ChatPage({
 function ChatView({
   id,
   summary,
+  project,
+  onOpenProject,
   prompts,
   readOnly,
   blocker,
@@ -431,6 +460,8 @@ function ChatView({
 }: {
   id: string;
   summary: ChatSummary | null;
+  project?: Project | null;
+  onOpenProject?: (repoId: string) => void;
   prompts: PromptEvent[];
   readOnly: boolean;
   blocker: Blocker | null;
@@ -445,6 +476,7 @@ function ChatView({
   const mobile = useIsMobile();
   const live = useChatLive(id);
   const detail = useChatDetail(id);
+  const drafts = useDrafts();
 
   const chat = detail.data?.chat ?? summary;
   const history = useMemo(() => normalizeHistory(detail.data?.history), [detail.data]);
@@ -464,8 +496,12 @@ function ChatView({
     currentStage && sameStage(currentStage.id, 'ticket') && ticket && ticket.status !== 'connected'
       ? ticket
       : null;
-  const resumeCommand = live.fatal?.resumeCommand ?? `claude --resume ${id}`;
   const missing = blocker?.code.startsWith('claude-') ? blocker : null;
+  // Workflow drafts made after this chat started (the chat that wrote one is the usual one that shows it).
+  const startedMs = chat?.created === undefined ? NaN : new Date(chat.created).getTime();
+  const newDrafts = (drafts.data ?? []).filter(
+    (d) => !Number.isNaN(startedMs) && new Date(d.createdAt).getTime() >= startedMs,
+  );
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.chats });
@@ -473,6 +509,17 @@ function ChatView({
   };
 
   const send = async (text: string, images: ImageData[] = []): Promise<boolean> => {
+    // An ended chat is continued first (with the model / effort picked in the composer), then the message goes out.
+    if (ended) {
+      try {
+        await api.continueChat(id);
+        chatStore.resumed(id);
+        refresh();
+      } catch (e) {
+        onError(e);
+        return false;
+      }
+    }
     const itemId = chatStore.addUser(id, text, false, images);
     try {
       await api.sendMessage(id, text, images);
@@ -531,17 +578,6 @@ function ChatView({
     }
   };
 
-  const resume = async () => {
-    try {
-      await api.continueChat(id);
-      chatStore.resumed(id);
-      onOk();
-      refresh();
-    } catch (e) {
-      onError(e);
-    }
-  };
-
   if (detail.error && !chat) {
     return (
       <Alert variant="destructive">
@@ -556,6 +592,12 @@ function ChatView({
     chatTask && currentStage && stageIndex >= 0
       ? `Stage ${stageIndex + 1} of ${chatTask.stages.length} · ${currentStage.name}`
       : undefined;
+  const projectLine = project
+    ? project.branch
+      ? `${project.name} · ${project.branch}`
+      : project.name
+    : undefined;
+
   const panelButton = (
     <Button
       variant="ghost"
@@ -577,6 +619,8 @@ function ChatView({
           onBack={onBack}
           title={chat?.title || 'Chat'}
           subtitle={stageLine}
+          projectLine={projectLine}
+          onProject={project ? () => onOpenProject?.(project.id) : undefined}
           trail={chatTask && stageLine ? <StageTrail stages={chatTask.stages} /> : undefined}
         >
           <Badge variant={ended ? 'secondary' : 'default'}>{ended ? 'Ended' : 'Active'}</Badge>
@@ -595,7 +639,18 @@ function ChatView({
         </MobileHeader>
       ) : (
         <div className="flex items-center gap-2">
-          <h2 className="min-w-0 flex-1 truncate text-base font-medium">{chat?.title || 'Chat'}</h2>
+          <h2 className="min-w-0 truncate text-base font-medium">{chat?.title || 'Chat'}</h2>
+          {project && (
+            <button
+              type="button"
+              className="min-w-0 shrink-[2] truncate text-xs text-muted-foreground underline-offset-2 hover:underline"
+              title={`Open Setup for ${project.name}`}
+              onClick={() => onOpenProject?.(project.id)}
+            >
+              {projectLine}
+            </button>
+          )}
+          <span className="flex-1" />
           <Badge variant={ended ? 'secondary' : 'default'}>{ended ? 'Ended' : 'Active'}</Badge>
           {!ended && (
             <Button variant="outline" size="xs" onClick={() => void stop()}>
@@ -626,6 +681,7 @@ function ChatView({
       {live.fatal && <FatalNotice chatId={id} fatal={live.fatal} onNewChat={onNewChat} />}
       {live.orphans && <OrphansNotice onKill={() => void killOrphans()} killing={killing} />}
       {live.result && <ResultLine result={live.result} />}
+      {project && <DraftReadyNotice repoId={project.id} drafts={newDrafts} />}
       {ticketProblem && !ended && ticketProblem.status !== 'connected' && (
         <TicketNotice tracker={ticketProblem.tracker} status={ticketProblem.status} />
       )}
@@ -634,30 +690,11 @@ function ChatView({
 
       {missing ? (
         <ClaudeMissingNotice code={missing.code} message={missing.message} />
-      ) : ended ? (
-        <div className="flex flex-col gap-2 rounded-md border p-3">
-          <p className="text-sm">
-            This chat has ended and is read-only.
-            {live.fatal?.reason === 'resume-failed'
-              ? ''
-              : ' You can continue it here or in a terminal.'}
-          </p>
-          {!live.fatal && <ResumeCommand command={resumeCommand} />}
-          {live.fatal?.reason !== 'resume-failed' && (
-            <ChatControls chatId={id} ended disabled={readOnly} />
-          )}
-          {live.fatal?.reason !== 'resume-failed' && (
-            <div>
-              <Button size="sm" disabled={readOnly} onClick={() => void resume()}>
-                Continue
-              </Button>
-            </div>
-          )}
-        </div>
-      ) : (
+      ) : live.fatal?.reason === 'resume-failed' ? null : (
         <Composer
           disabled={readOnly}
           busy={busy}
+          ended={Boolean(ended)}
           chatId={id}
           onShellError={(e) => {
             if (e instanceof ApiError && e.code === 'chat-ended') refresh();

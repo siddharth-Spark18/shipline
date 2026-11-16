@@ -34,6 +34,126 @@ export interface Status {
   versionMessage: string | null;
 }
 
+// --- Projects (one server, every repo on the machine) ---
+
+/**
+ * What the server does with a project: `ok` is served; `pre-1.0` and `repo-newer` are listed with a card and answer
+ * 409; `missing` is a folder or `.shipline/config.yml` that is gone; `install` is a folder without Shipline ("Not set up").
+ */
+export type ProjectState = 'ok' | 'pre-1.0' | 'repo-newer' | 'missing' | 'install';
+
+/** One entry of GET /api/projects (also the SSE `projects` event's data). */
+export interface Project {
+  id: string;
+  root: string;
+  /** The folder name. */
+  name: string;
+  /** The git common dir: worktrees of one repo share it. null outside git. */
+  group: string | null;
+  /** The main worktree's folder name. */
+  groupName: string | null;
+  branch: string | null;
+  state: ProjectState;
+  version: { package: string | null; interface: number } | null;
+  setupDone: boolean;
+  /** True once the server has opened this repo (a chat could be running). */
+  loaded: boolean;
+  /** Chats waiting for you: an unanswered prompt, question or confirmation, or an error you haven't looked at. */
+  waiting: number;
+  chatRunning: boolean;
+  /** The card text for a state other than `ok`. */
+  message: string | null;
+}
+
+export type WaitingReason = 'permission' | 'question' | 'error';
+
+export type HealthDot = 'green' | 'amber' | 'red';
+
+/** One entry of the flat chat list (GET /api/chats, and the SSE `chats` event): every chat of every project. */
+export interface ChatListItem {
+  id: string;
+  repoId: string;
+  title: string;
+  updatedAt: string | null;
+  /** The task the chat is bound to: its workflow, the current stage id and every stage. */
+  task: {
+    workflow: string;
+    stage: string | null;
+    stages: { id: string; name: string; status: StageStatus }[];
+  } | null;
+  waiting: WaitingReason | null;
+}
+
+/** GET /api/overview: the All projects view. Every item carries the repo it belongs to. */
+export interface Overview {
+  needsYou: {
+    repoId: string;
+    repoName: string;
+    chatId: string;
+    title: string;
+    reason: WaitingReason;
+  }[];
+  /** One card per project: the Project fields plus its health dot. */
+  projects: (Project & {
+    uiVersion: string;
+    upgradeAvailable: boolean;
+    dot: HealthDot;
+    /** Unfinished tasks. */
+    unfinished: number;
+  })[];
+  tasks: {
+    repoId: string;
+    repoName: string;
+    dir: string;
+    slug: string;
+    title: string;
+    workflow: string;
+    branch: string | null;
+    stages: { id: string; name: string; status: StageStatus }[];
+  }[];
+  /** Projects whose health dot isn't green. */
+  attention: number;
+}
+
+/** GET /api/health: the machine, and one row per project. */
+export interface HealthData {
+  machine: {
+    uiVersion: string;
+    cliVersion: string;
+    claude: {
+      path: string | null;
+      installed: boolean;
+      version: string | null;
+      signedIn: boolean;
+      meetsMinVersion: boolean;
+      minVersion: string;
+      error?: string;
+    };
+    node: string;
+    port: number;
+    phone: {
+      enabled: boolean;
+      url: string | null;
+      tailscale: { state: string; message: string };
+    } | null;
+    logTail: string[];
+  };
+  projects: ProjectHealthRow[];
+}
+
+export interface ProjectHealthRow {
+  id: string;
+  state: ProjectState;
+  setupDone: boolean;
+  configError: string | null;
+  lock: { pid: number | null; port: number | null } | null;
+  warnings: number;
+  message: string | null;
+  version: { package: string | null; interface: number } | null;
+  upgradeAvailable: boolean;
+  dot: HealthDot;
+}
+
 // --- Diff ---
 
 export interface DiffLine {
@@ -203,6 +323,23 @@ export interface SetupData {
   addableWorkflows: { id: string; name: string; description: string }[];
   /** Whether the repo looks like it has a UI (the default of "Add shipped workflow"'s switch). */
   uiDetected: boolean;
+  /** Whether the repo's scripts and skill support workflow drafts ("Describe a workflow"). False: upgrade the repo. */
+  designer: { supported: boolean };
+}
+
+/** One workflow draft left by /shipline-workflow-designer (GET setup/drafts, and the `drafts` event's list). */
+export interface WorkflowDraftInfo {
+  workflowId: string;
+  name: string;
+  createdAt: string;
+  /** The draft creates a workflow (false: it changes an existing one). */
+  isNew: boolean;
+  /** The workflow file changed since the draft was made. */
+  stale: boolean;
+  /** Stage ids whose rules file changed since the draft was made. */
+  staleRules: string[];
+  errors: ValidationIssue[];
+  warnings: ValidationIssue[];
 }
 
 /** POST /api/setup/add-workflow. New files only, so `baseHashes` is normally empty; the version hash must match. */
@@ -293,6 +430,8 @@ export interface PreviewFile {
 export interface PreviewResponse {
   files: PreviewFile[];
   impact: ImpactEntry[];
+  /** Only for a draft's preview: what the draft is based on. */
+  draft?: { workflowId: string; isNew: boolean; stale: boolean; staleRules: string[] };
 }
 
 export interface SaveResponse {
@@ -405,7 +544,12 @@ export interface Diagnostics {
 
 export type BannerKind = 'version' | 'fail-open' | 'lost-task' | 'usage-limit' | 'watch' | 'trust';
 
-export interface BannerEvent {
+/** Every event a repo sends over SSE carries the id of the repo it is about (see "One server" in the CLI docs). */
+export interface RepoTagged {
+  repoId: string;
+}
+
+export interface BannerEvent extends Partial<RepoTagged> {
   id: string;
   kind: BannerKind;
   text: string;
@@ -413,7 +557,7 @@ export interface BannerEvent {
   path?: string;
 }
 
-export interface ChatEvent {
+export interface ChatEvent extends Partial<RepoTagged> {
   chatId: string;
   kind:
     | 'event'
@@ -504,7 +648,7 @@ export interface ChatCommand {
 }
 
 /** SSE `shell` event: one step of a `!` command run. */
-export interface ShellEvent {
+export interface ShellEvent extends Partial<RepoTagged> {
   chatId: string;
   runId: string;
   kind: 'start' | 'output' | 'truncated' | 'exit';
@@ -570,7 +714,7 @@ export interface PromptAnswer {
   answers?: Record<string, string>;
 }
 
-export interface PromptEvent {
+export interface PromptEvent extends Partial<RepoTagged> {
   id: string;
   chatId: string;
   tool: string;
@@ -578,7 +722,7 @@ export interface PromptEvent {
   expiresAt: number | string;
 }
 
-export interface PromptResolvedEvent {
+export interface PromptResolvedEvent extends Partial<RepoTagged> {
   id: string;
   outcome: 'allow' | 'deny' | 'timeout';
 }
@@ -591,6 +735,8 @@ export interface InstallWorkflow {
   id: string;
   name: string;
   description: string;
+  /** Ticked by default; the other shipped workflows are offered unticked. */
+  default?: boolean;
   stages: { id: string; name: string; agent: string | null; condition: string | null }[];
 }
 

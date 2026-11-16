@@ -6,8 +6,11 @@ Answer a waiting gate or permission prompt from your phone while you are away fr
 
 A chat that stops at a gate or a permission prompt waits for you. With phone access you open the same UI on your own
 phone, over your own [Tailscale](https://tailscale.com) network, and answer it from there. A paired phone can do
-everything the laptop page can. It works only while your computer is awake and `shipline ui` is running, and only
-for an installed repo (not in the install wizard).
+everything the laptop page can. It works only while your computer is awake and `shipline ui` is running.
+
+There is one UI server per machine, so there is one phone URL: **a paired phone reaches every repo registered on the
+computer**, opening them from the flat chat list, the **All** tab or the project dropdown on New chat and Setup. Pairing once is enough, and there is
+no per-repo setting.
 
 1. Install Tailscale on the computer and the phone, and sign in to the same account on both.
 2. In the Tailscale admin console, turn on **HTTPS certificates** (DNS page).
@@ -21,7 +24,7 @@ for an installed repo (not in the install wizard).
    code and the QR link are one pairing: using either uses up both, and after 5 wrong codes in a row the pairing is
    cancelled and you make a new one.
 
-On a phone the UI switches to a phone layout (narrower than 768 px): a tab bar with Chats, New and Setup, and a chat
+On a phone the UI switches to a phone layout (narrower than 768 px): a tab bar with All, Chats, New and Setup, and a chat
 that waits for you shows its question or tool approval in a bar above the message box, answered with one large tap.
 
 Paired devices are kept in `~/.shipline/devices.json` (or `$SHIPLINE_HOME`), for every repo, and stay paired until you
@@ -33,8 +36,12 @@ Security notes:
 - A request must come from the same Tailscale user that is signed in on the computer, and from a paired device
   (a secret cookie; only its hash is stored). Another person on your tailnet cannot use it, even on a shared machine.
 - The phone can do what you can do in the UI, so treat a paired phone like a logged-in terminal. Revoke a lost phone.
-- Device actions are written to the repo's `ui.log` (who, method, path, status; never message text).
-- If port 443 is taken on your tailnet name, Shipline uses 8443 or 10000 and never changes a mapping it didn't make.
+- Device actions are written to the log of the repo they touched (`ui.log` in its task store), or to the server's own
+  `~/.shipline/ui.log` for server-wide calls (who, method, path, status; never message text).
+- A paired device can reach every repo in `~/.shipline/projects.json`, not only the one you paired from. Revoke a phone
+  you no longer trust.
+- Shipline makes one `tailscale serve` mapping for the whole server. If port 443 is taken on your tailnet name, it uses
+  8443 or 10000 and never changes a mapping it didn't make.
 
 ## If the phone can't open the page
 

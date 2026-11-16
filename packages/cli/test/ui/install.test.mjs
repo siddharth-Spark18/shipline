@@ -70,7 +70,8 @@ const preview = (u, selection) => api(u, 'POST', '/api/install/preview', { body:
 const install = (u, selection, base) => api(u, 'POST', '/api/install', { body: { selection, base } });
 
 // Everything Install could touch: the repo's files and the repo's SHIPLINE_HOME.
-const snapshot = (dir) => ({ files: tree(dir), home: tree(homeFor(dir)) });
+// home: the task stores (<home>/projects). The server's own files in the home (ui.log, server.json) change on their own.
+const snapshot = (dir) => ({ files: tree(dir), home: tree(path.join(homeFor(dir), 'projects')) || {} });
 
 // runInit in this process with the questions answered by `selection` (console output dropped).
 async function initWith(dir, selection, extra = {}) {
@@ -100,7 +101,7 @@ describe('install mode', () => {
     assert.match(s.json.uiVersion, /^\d+\.\d+\.\d+$/);
     assert.equal((await info(u)).isGit, true);
     assert.deepEqual(snapshot(dir), before, 'starting install mode writes nothing (no store, no UI log)');
-    assert.deepEqual(before.home, {}, 'the repo\'s SHIPLINE_HOME is empty');
+    assert.deepEqual(before.home, {}, 'the repo\'s SHIPLINE_HOME has no store');
   });
 
   test('a folder outside git installs at the folder itself, with isGit false', async () => {
@@ -126,7 +127,6 @@ describe('install mode', () => {
       ['GET', '/api/setup'],
       ['GET', '/api/tasks'],
       ['GET', '/api/diagnostics'],
-      ['GET', '/api/events'],
       ['GET', '/api/nope'],
       ['POST', '/api/setup/save'],
       ['POST', '/api/setup/add-workflow'],
@@ -155,9 +155,11 @@ describe('GET /api/install/info and POST /api/install/preview', () => {
     assert.equal(i.root, dir);
     assert.equal(i.state, 'clean');
     assert.deepEqual(i.found, []);
-    assert.deepEqual(i.workflows.map((w) => w.id), ['bugfix', 'feature', 'hotfix', 'small']);
+    assert.deepEqual(i.workflows.map((w) => w.id), ['bugfix', 'feature', 'hotfix', 'small', 'deps', 'docs', 'refactor', 'release', 'spike']);
+    assert.deepEqual(i.workflows.filter((w) => w.default).map((w) => w.id), ['bugfix', 'feature', 'hotfix', 'small']);
+    assert.deepEqual(i.defaults.workflows, ['bugfix', 'feature', 'hotfix', 'small'], 'the five offered ones are not ticked');
     for (const w of i.workflows) {
-      assert.deepEqual(Object.keys(w).sort(), ['description', 'id', 'name', 'stages']);
+      assert.deepEqual(Object.keys(w).sort(), ['default', 'description', 'id', 'name', 'stages']);
       for (const st of w.stages) assert.deepEqual(Object.keys(st).sort(), ['agent', 'condition', 'id', 'name']);
     }
     assert.deepEqual(i.agents.map((a) => a.name), ['planner', 'builder', 'reviewer', 'qa-bug-hunter', 'wireframe-proposer', 'researcher']);
@@ -173,7 +175,8 @@ describe('GET /api/install/info and POST /api/install/preview', () => {
     assert.equal(i.detected.test, 'npm test');
     assert.equal(i.defaults.ui, true);
     assert.ok(!i.defaults.agents.includes('reviewer'));
-    assert.ok(JSON.stringify(i).length < 20000, 'no template texts');
+    // The shipped workflow models and rules texts (`templates`, for the stepper) are in the payload: nine workflows now.
+    assert.ok(JSON.stringify(i).length < 40000, 'no other file contents');
   });
 
   test('preview: files to create with their text, merge diffs for settings.json and CLAUDE.md, excluded, base; nothing written', async () => {

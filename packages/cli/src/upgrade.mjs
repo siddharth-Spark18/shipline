@@ -13,6 +13,7 @@ import {
 import { INTERFACE, compareInterface, isPreOne, preOneMessage, readRepoVersion, semverGt } from './interface.mjs';
 import { mergeSettingsObject, parseSettings } from './init.mjs';
 import { KNOWN_STUB_RULES } from './known-stub-rules.mjs';
+import { listProjects, probeStateOf, registerQuietly } from './registry.mjs';
 
 const require = createRequire(import.meta.url);
 const KNOWN = require('./known-hashes.json');
@@ -258,9 +259,11 @@ function sortKeys(o) {
 
 // ---------- entry point ----------
 
-// Returns a process exit code.
-export async function runUpgrade({ target, yes = false, dryRun = false, force = false } = {}) {
+// Returns a process exit code. `report` (optional) gets `outcome` for `upgrade --all`: 'upgraded', 'current',
+// 'dry-run', 'declined' or 'failed'.
+export async function runUpgrade({ target, yes = false, dryRun = false, force = false, report = {} } = {}) {
   const root = path.resolve(target || process.cwd());
+  report.outcome = 'failed';
   if (!existsSync(root) || !lstatSync(root).isDirectory()) {
     console.error(`shipline: ${root} is not a directory.`);
     return 1;
@@ -269,6 +272,8 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     console.error('shipline: no .shipline/ found here. Run `npx @forgeyard/shipline init` first.');
     return 1;
   }
+  // The repo has Shipline: it belongs in the machine-wide project list (a dry run changes nothing).
+  if (!dryRun) registerQuietly(root);
 
   const version = readRepoVersion(root);
   // 1.0 is the first version with an upgrade path. Older repos (including ones with no VERSION file) start over.
@@ -307,6 +312,7 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
   if (nothingToDo) {
     console.log('Already up to date.');
     if (skipped.length) console.log(`Skipped (edited by your team; use --force to replace): ${skipped.map((s) => s.to).join(', ')}`);
+    report.outcome = 'current';
     return 0;
   }
 
@@ -339,6 +345,7 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
 
   if (dryRun) {
     console.log('\nDry run, nothing written.');
+    report.outcome = 'dry-run';
     return 0;
   }
 
@@ -352,6 +359,7 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     rl.close();
     if (answer !== 'y' && answer !== 'yes') {
       console.log('Cancelled, nothing was changed.');
+      report.outcome = 'declined';
       return 1;
     }
   }
@@ -368,5 +376,48 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
 Next:
   - review and commit the changes;
   - restart any running Claude Code sessions so they pick up the new hooks.`);
+  report.outcome = 'upgraded';
   return 0;
+}
+
+// `upgrade --all`: runUpgrade once per registered repo (sorted by path, skipping the ones whose folder is gone), each
+// with its own preview and confirmation (or --yes / --dry-run). One repo failing is reported and the run goes on.
+// Prints a summary; returns 1 when any repo failed.
+export async function runUpgradeAll({ yes = false, dryRun = false, force = false } = {}) {
+  const projects = listProjects()
+    .filter((p) => typeof p.root === 'string')
+    .sort((a, b) => a.root.localeCompare(b.root));
+  if (projects.length === 0) {
+    console.log('No registered repos. `init`, `ui` or `upgrade` in a repo adds it to the list.');
+    return 0;
+  }
+  const tally = { upgraded: [], current: [], dryRun: [], declined: [], missing: [], failed: [] };
+  for (const p of projects) {
+    if (probeStateOf(p.root) === 'missing') {
+      tally.missing.push(p.root);
+      continue;
+    }
+    console.log(`\n=== ${p.root} ===`);
+    const report = {};
+    try {
+      await runUpgrade({ target: p.root, yes, dryRun, force, report });
+    } catch (e) {
+      console.error(`shipline: ${e && e.message ? e.message : e}`);
+      report.outcome = 'failed';
+    }
+    const key = { upgraded: 'upgraded', current: 'current', 'dry-run': 'dryRun', declined: 'declined' }[report.outcome] || 'failed';
+    tally[key].push(p.root);
+  }
+  const line = (label, list) => (list.length ? `  ${label}: ${list.length}\n${list.map((r) => `    ${r}`).join('\n')}` : `  ${label}: 0`);
+  console.log(`\nSummary (${projects.length} repo${projects.length === 1 ? '' : 's'})`);
+  console.log(
+    [
+      dryRun ? line('previewed (dry run)', tally.dryRun) : line('upgraded', tally.upgraded),
+      line('already current', tally.current),
+      line('declined', tally.declined),
+      line('skipped (folder not found)', tally.missing),
+      line('failed', tally.failed),
+    ].join('\n'),
+  );
+  return tally.failed.length > 0 ? 1 : 0;
 }

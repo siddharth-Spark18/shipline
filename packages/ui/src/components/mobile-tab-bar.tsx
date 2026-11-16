@@ -1,28 +1,41 @@
-import { MessageSquareIcon, PlusIcon, SettingsIcon } from 'lucide-react';
+import {
+  HeartPulseIcon,
+  LayoutDashboardIcon,
+  MessageSquareIcon,
+  PlusIcon,
+  SettingsIcon,
+} from 'lucide-react';
 import { cn } from 'cn';
+import { DOT_CLASS, DOT_LABEL } from '@/components/app-sidebar';
+import type { HealthDot } from '@/lib/types';
 
-export type MobileTab = 'chats' | 'new' | 'setup';
+export type MobileTab = 'all' | 'chats' | 'new' | 'setup' | 'health';
 
 const TABS: { tab: MobileTab; label: string; icon: typeof MessageSquareIcon }[] = [
+  { tab: 'all', label: 'All', icon: LayoutDashboardIcon },
   { tab: 'chats', label: 'Chats', icon: MessageSquareIcon },
   { tab: 'new', label: 'New', icon: PlusIcon },
   { tab: 'setup', label: 'Setup', icon: SettingsIcon },
+  { tab: 'health', label: 'Health', icon: HeartPulseIcon },
 ];
 
 /**
- * The phone's navigation: Chats / New / Setup. The Chats tab shows how many chats wait for an answer.
- * Hidden while the on-screen keyboard is open; the bottom padding keeps it clear of the home indicator.
+ * The phone's navigation: All / Chats / New / Setup / Health, the same items as the laptop's sidebar. All shows how many
+ * chats wait for you across projects, Health the worst health state. Hidden while the on-screen keyboard is open; the
+ * bottom padding keeps it clear of the home indicator.
  */
 export function MobileTabBar({
   active,
-  waitingChats,
+  waitingTotal,
+  healthDot,
   hidden,
   onSelect,
 }: {
   /** The highlighted tab, or null when none applies. */
   active: MobileTab | null;
-  /** Chats with a pending prompt. */
-  waitingChats: number;
+  /** Chats waiting for you, across all projects. */
+  waitingTotal: number;
+  healthDot: HealthDot | null;
   hidden: boolean;
   onSelect: (tab: MobileTab) => void;
 }) {
@@ -45,13 +58,23 @@ export function MobileTabBar({
         >
           <span className="relative">
             <Icon className="size-5" aria-hidden />
-            {tab === 'chats' && waitingChats > 0 && (
+            {tab === 'all' && waitingTotal > 0 && (
               <span
                 className="absolute -top-1.5 -right-2.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none font-semibold text-primary-foreground"
-                aria-label={`${waitingChats} waiting for an answer`}
+                aria-label={`${waitingTotal} waiting for you`}
               >
-                {waitingChats}
+                {waitingTotal}
               </span>
+            )}
+            {tab === 'health' && healthDot && (
+              <span
+                role="img"
+                aria-label={DOT_LABEL[healthDot]}
+                className={cn(
+                  'absolute -top-1 -right-2 size-2.5 rounded-full ring-2 ring-background',
+                  DOT_CLASS[healthDot],
+                )}
+              />
             )}
           </span>
           {label}

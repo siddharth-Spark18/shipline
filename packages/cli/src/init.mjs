@@ -2,11 +2,12 @@ import { existsSync, lstatSync } from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { toolOnPath } from './detect-commands.mjs';
-import { CI_WORKFLOW, VERSION_FILE } from './hashes.mjs';
+import { CI_WORKFLOW, PACKAGE_VERSION, VERSION_FILE } from './hashes.mjs';
 import {
   COMMAND_KEYS, applyInstall, checkSelection, clashOf, defaultAgents, defaultSelection, fillSelection, installInfo,
   missingStageAgents, nextSteps, planInstall,
 } from './install.mjs';
+import { registerQuietly } from './registry.mjs';
 
 // Other modules (upgrade, uninstall) still import these from here.
 export { mergeSettingsObject, parseSettings, shippedAgents, shippedWorkflows } from './install.mjs';
@@ -119,7 +120,8 @@ export async function runInit({
   if (!useDefaults && !dryRun && !terminal) {
     if (nodeMajor < 20) console.log('The setup wizard needs Node 20+; asking here instead.');
     else if (!prompts) {
-      const start = startUi || (async () => (await import('./ui/server.mjs')).startServer({ dir: root, port: 0, open: true }));
+      // Hands the folder to the UI server that is already running, if there is one (see launchUi).
+      const start = startUi || (async () => (await import('./ui/server-record.mjs')).launchUi({ dir: root, port: 0, open: true }, PACKAGE_VERSION));
       await start(root);
       return 0; // the server keeps the process alive until it is stopped
     }
@@ -187,6 +189,8 @@ export async function runInit({
     else console.error(`shipline: init failed while writing (${e.message}); changes were rolled back.`);
     return 1;
   }
+
+  registerQuietly(root);
 
   const kept = info.agents.filter((a) => selection.agents.includes(a) && clashOf(info, selection, a) === 'keep');
   let trimmed = '';

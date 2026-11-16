@@ -44,7 +44,8 @@ Claude picks a workflow (Feature, Bugfix, Hotfix or Small change), says which, a
 It stops to ask you at the gates ("Advance?" / "Not yet"), can't edit source until the plan is done, runs your
 test, lint and build commands at Verify, and ends the PR description with a summary of the stages and checks.
 
-**3. Tailor it.** Run `/shipline-setup` in Claude Code to fit the default rules to your repo.
+**3. Tailor it.** Run `/shipline-setup` in Claude Code to fit the default rules to your repo. To add or change a
+workflow, describe your process to `/shipline-workflow-designer` (or use **Describe a workflow** in Setup).
 
 ## What it stops
 
@@ -67,6 +68,10 @@ A local page (only on `127.0.0.1`) to chat with Claude in the repo, answer its g
 each task's stages and changed files, and edit the setup (workflows, rules, guardrails, agents and skills). In a repo
 without Shipline it opens the setup wizard instead. It runs your own `claude` and never sees your credentials.
 
+There is one UI server for every repo on the machine: run `ui` in a second repo and it opens there instead of starting
+another. The sidebar lists every chat across your repos, shows when one is waiting for you, **All projects**
+gives a combined view and **Health** shows what needs attention. See [Daily use](docs/usage.md#the-browser-ui).
+
 ![Setup: workflows](docs/images/setup.png)
 
 ## Use it from your phone
@@ -88,7 +93,8 @@ your own [Tailscale](https://tailscale.com) network: nothing is public and there
    **Enter pairing code** and type the `XXXX-XXXX` code shown under the QR code.
 
 It works while your computer is awake and `shipline ui` is running. The phone stays paired until you **Revoke** it.
-Only your own Tailscale user on a paired device can get in. Setup, security notes and fixes for "site can't be
+Only your own Tailscale user on a paired device can get in, and one paired phone reaches every repo registered on the
+computer. Setup, security notes and fixes for "site can't be
 reached" are in [Phone access](docs/phone-access.md).
 
 ## Commands
@@ -96,8 +102,8 @@ reached" are in [Phone access](docs/phone-access.md).
 | Command | What it does |
 | --- | --- |
 | `init` | Sets Shipline up in a repo. `--terminal`, `--yes`, `--dry-run`, `--dir <path>` |
-| `ui` | Opens the local web UI. `--remote` (phone access), `--port <n>`, `--no-open`, `--dir <path>` |
-| `upgrade` | Updates the installed files to this version. `--yes`, `--dry-run`, `--force` |
+| `ui` | Opens the local web UI, one server for every repo (a second run hands over to it). `--remote` (phone access), `--port <n>`, `--no-open`, `--dir <path>` |
+| `upgrade` | Updates the installed files to this version. `--yes`, `--dry-run`, `--force`; `--all` for every registered repo |
 | `uninstall` | Removes what `init` installed. `--yes`, `--dry-run`, `--purge` |
 
 Run `npx @forgeyard/shipline <command> --help` for details. Task data lives in `~/.shipline`, not in your repo.

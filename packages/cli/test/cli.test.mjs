@@ -51,7 +51,8 @@ describe('help and version', () => {
       for (const h of ['--help', '-h']) {
         const r = cli([c, h], dir);
         assert.equal(r.code, 0, `${c} ${h}`);
-        assert.ok(r.stdout.startsWith(`Usage: npx @forgeyard/shipline ${c} [--dir <path>]`), r.stdout);
+        const dirArg = c === 'upgrade' ? '[--dir <path> | --all]' : '[--dir <path>]';
+        assert.ok(r.stdout.startsWith(`Usage: npx @forgeyard/shipline ${c} ${dirArg}`), r.stdout);
         assert.match(r.stdout, /--dir <path> {3}Target folder/);
       }
     }
@@ -70,7 +71,7 @@ describe('help and version', () => {
       assert.equal(r.code, 0, args.join(' '));
       assert.equal(r.stdout, `${VERSION}\n`, args.join(' '));
     }
-    assert.equal(VERSION, '1.3.0');
+    assert.equal(VERSION, '2.0.0');
   });
 });
 

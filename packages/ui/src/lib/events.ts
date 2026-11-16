@@ -1,26 +1,69 @@
 import type { QueryClient } from '@tanstack/react-query';
-import { reportAccessIssue } from '@/lib/api';
+import { getCurrentRepo, reportAccessIssue } from '@/lib/api';
 import type {
   AccessEndedEvent,
   BannerEvent,
   ChatEvent,
+  ChatListItem,
   PromptEvent,
   PromptResolvedEvent,
+  Project,
   ShellEvent,
   TasksData,
+  WorkflowDraftInfo,
 } from '@/lib/types';
 
+/** The query keys of one repo's data. Events carry a repoId and write to these, whichever repo is on screen. */
+export const keysFor = (repoId: string) => ({
+  status: ['status', repoId] as const,
+  setup: ['setup', repoId] as const,
+  tasks: ['tasks', repoId] as const,
+  drafts: ['drafts', repoId] as const,
+  banners: ['banners', repoId] as const,
+  chats: ['chats', repoId] as const,
+  chat: (id: string) => ['chat', repoId, id] as const,
+  file: (path: string, mode: string) => ['file', repoId, path, mode] as const,
+});
+
+const cur = () => keysFor(getCurrentRepo() ?? '');
+
+/**
+ * The keys components use: the repo's own ones are for the repo on screen (the app is keyed by it, so they never mix);
+ * prompts, remote, projects and overview are server-wide.
+ */
 export const queryKeys = {
-  status: ['status'] as const,
-  setup: ['setup'] as const,
-  tasks: ['tasks'] as const,
-  banners: ['banners'] as const,
+  get status() {
+    return cur().status;
+  },
+  get setup() {
+    return cur().setup;
+  },
+  get tasks() {
+    return cur().tasks;
+  },
+  get drafts() {
+    return cur().drafts;
+  },
+  get banners() {
+    return cur().banners;
+  },
+  get chats() {
+    return cur().chats;
+  },
+  chat: (id: string) => cur().chat(id),
+  file: (path: string, mode: string) => cur().file(path, mode),
+  /** Pending prompts of every repo; each carries its repoId. */
   prompts: ['prompts'] as const,
-  chats: ['chats'] as const,
-  chat: (id: string) => ['chat', id] as const,
-  diagnostics: ['diagnostics'] as const,
   remote: ['remote'] as const,
-  file: (path: string, mode: string) => ['file', path, mode] as const,
+  projects: ['projects'] as const,
+  overview: ['overview'] as const,
+  /** The flat chat list across every project. (`chats` above is one project's own list.) */
+  allChats: ['all-chats'] as const,
+  health: ['health'] as const,
+  /** One project's diagnostics, for its Health row. */
+  diagnostics: (repoId: string) => ['diagnostics', repoId] as const,
+  /** One project's status, for its Health row. */
+  statusOf: (repoId: string) => ['status-of', repoId] as const,
 };
 
 type ChatListener = (event: ChatEvent) => void;
@@ -45,7 +88,7 @@ const MIN_DELAY = 1000;
 const MAX_DELAY = 15000;
 
 /**
- * Opens GET /api/events and routes events into the query cache. Reconnects with backoff when the
+ * Opens GET /api/events (one stream for every repo) and routes events into the query cache by their repoId. Reconnects with backoff when the
  * connection is closed for good (EventSource retries by itself only while it is still CONNECTING).
  * Returns a function that closes the stream.
  */
@@ -74,25 +117,52 @@ export function connectEvents(queryClient: QueryClient): () => void {
       queryClient.setQueryData<PromptEvent[]>(queryKeys.prompts, []);
       // After a reconnect, anything missed in between is picked up by refetching.
       if (delay !== MIN_DELAY) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.tasks });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.status });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.chats });
+        for (const key of ['tasks', 'drafts', 'status', 'chats', 'chat', 'banners'])
+          void queryClient.invalidateQueries({ queryKey: [key] });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.overview });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.allChats });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.health });
       }
       delay = MIN_DELAY;
     };
 
-    es.addEventListener('tasks', (e) => {
-      const data = parse<TasksData>(e as MessageEvent);
+    // The projects list (registration, state, waiting count, chat running).
+    es.addEventListener('projects', (e) => {
+      const data = parse<Project[]>(e as MessageEvent);
       if (!data) return;
-      queryClient.setQueryData(queryKeys.tasks, data);
-      // A chat's task list is part of GET /api/chats/<id>; refresh the chats being shown.
-      void queryClient.invalidateQueries({ queryKey: ['chat'] });
+      queryClient.setQueryData(queryKeys.projects, data);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.overview });
+      // The health dot follows registration, state and waiting changes.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.health });
+    });
+
+    // The flat chat list: a chat was added, a task's stage or a waiting state changed.
+    es.addEventListener('chats', (e) => {
+      const data = parse<ChatListItem[]>(e as MessageEvent);
+      if (data) queryClient.setQueryData(queryKeys.allChats, data);
+    });
+
+    es.addEventListener('tasks', (e) => {
+      const data = parse<TasksData & { repoId?: string }>(e as MessageEvent);
+      if (!data || !data.repoId) return;
+      queryClient.setQueryData(keysFor(data.repoId).tasks, data);
+      // A chat's task list is part of GET /api/repos/<id>/chats/<id>; refresh the chats being shown.
+      void queryClient.invalidateQueries({ queryKey: ['chat', data.repoId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.overview });
+    });
+
+    // Workflow drafts: one was made, replaced, saved or discarded.
+    es.addEventListener('drafts', (e) => {
+      const data = parse<{ repoId?: string; drafts: WorkflowDraftInfo[] }>(e as MessageEvent);
+      if (!data || !data.repoId || !Array.isArray(data.drafts)) return;
+      queryClient.setQueryData(keysFor(data.repoId).drafts, data.drafts);
     });
 
     es.addEventListener('banner', (e) => {
       const data = parse<BannerEvent>(e as MessageEvent);
-      if (!data) return;
-      queryClient.setQueryData<BannerEvent[]>(queryKeys.banners, (old = []) => [
+      if (!data || !data.repoId) return;
+      queryClient.setQueryData<BannerEvent[]>(keysFor(data.repoId).banners, (old = []) => [
         ...old.filter((b) => b.id !== data.id),
         data,
       ]);
@@ -102,6 +172,8 @@ export function connectEvents(queryClient: QueryClient): () => void {
       const data = parse<ChatEvent>(e as MessageEvent);
       if (!data) return;
       chatListeners.forEach((fn) => fn(data));
+      const keys = data.repoId ? keysFor(data.repoId) : null;
+      if (!keys) return;
       // The list shows status and last activity; refresh it when a chat ends or a turn finishes.
       const type = (data.event as { type?: unknown } | undefined)?.type;
       const subtype = (data.event as { subtype?: unknown } | undefined)?.subtype;
@@ -109,11 +181,13 @@ export function connectEvents(queryClient: QueryClient): () => void {
       if (data.kind === 'controls' || data.kind === 'context' || data.kind === 'busy') return;
       // system/init carries the connector list, which GET /api/chats/<id> reports as `jira`.
       if (type === 'system' && subtype === 'init')
-        void queryClient.invalidateQueries({ queryKey: queryKeys.chat(data.chatId) });
+        void queryClient.invalidateQueries({ queryKey: keys.chat(data.chatId) });
       if (data.kind !== 'event' || type === 'result') {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.chats });
+        void queryClient.invalidateQueries({ queryKey: keys.chats });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.overview });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.allChats });
         if (data.kind !== 'event') {
-          void queryClient.invalidateQueries({ queryKey: queryKeys.chat(data.chatId) });
+          void queryClient.invalidateQueries({ queryKey: keys.chat(data.chatId) });
         }
       }
     });

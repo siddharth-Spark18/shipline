@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { CopyIcon, Trash2Icon } from 'lucide-react';
+import { CopyIcon, SparklesIcon, Trash2Icon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -39,6 +39,8 @@ export interface WorkflowEditorProps {
   onRulesChange: (stageId: string, text: string) => void;
   /** Called after a copy or delete, with the id to show next. */
   onStructureChange: (selectId: string | null) => void;
+  /** Starts a chat that drafts a change to this workflow. Undefined: the repo can't (upgrade it) or a chat is starting. */
+  onChangeWithClaude?: () => void;
 }
 
 export function WorkflowEditor({
@@ -53,6 +55,7 @@ export function WorkflowEditor({
   onChange,
   onRulesChange,
   onStructureChange,
+  onChangeWithClaude,
 }: WorkflowEditorProps) {
   const queryClient = useQueryClient();
   const [copyOpen, setCopyOpen] = useState(false);
@@ -123,7 +126,19 @@ export function WorkflowEditor({
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-mono text-sm">workflows/{file.id}.yml</h2>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {onChangeWithClaude && (
+            <Button
+              variant="outline"
+              size="sm"
+              // The draft is made against the file on disk, so unsaved edits here would not be part of it.
+              disabled={readOnly || dirty}
+              title={dirty ? 'Save or discard your edits first' : undefined}
+              onClick={onChangeWithClaude}
+            >
+              <SparklesIcon /> Change with Claude
+            </Button>
+          )}
           <Button variant="outline" size="sm" disabled={readOnly} onClick={() => setCopyOpen(true)}>
             <CopyIcon /> Copy as new workflow
           </Button>

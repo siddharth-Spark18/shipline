@@ -22,7 +22,8 @@ import { ReviewStep, type IssueStep } from '@/pages/install/review-step';
 import { StagesStep, setupAgentsOf } from '@/pages/install/stages-step';
 import { GuardrailsSection } from '@/pages/setup/guardrails-section';
 import { ID_RE, clone, newKey, type WorkflowDraft } from '@/pages/setup/draft';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, getCurrentRepo } from '@/lib/api';
+import { chatHash, newHash } from '@/lib/routes';
 import { TRACKER_OPTIONS } from '@/lib/stages';
 import type {
   ConfigModel,
@@ -188,7 +189,7 @@ const toggle = (list: string[], value: string, on: boolean) =>
 
 export function InstallWizard() {
   const infoQuery = useQuery({
-    queryKey: ['install-info'],
+    queryKey: ['install-info', getCurrentRepo()],
     queryFn: api.installInfo,
     staleTime: Infinity,
   });
@@ -229,7 +230,7 @@ export function InstallWizard() {
 
 function Shell({ root, children }: { root?: string; children: React.ReactNode }) {
   return (
-    <div className="min-h-svh overflow-y-auto">
+    <div>
       <div className="mx-auto flex max-w-5xl flex-col gap-4 p-4">
         <header>
           <h1 className="text-lg font-semibold">Set up Shipline</h1>
@@ -259,7 +260,7 @@ function Wizard({ info }: { info: InstallInfo }) {
   // Only the Review step asks the server anything; the other steps recompute nothing there.
   const selectionJson = JSON.stringify(selection);
   const preview = useQuery({
-    queryKey: ['install-preview', selectionJson],
+    queryKey: ['install-preview', getCurrentRepo(), selectionJson],
     queryFn: () => api.installPreview(selection),
     enabled: route !== 'choose' && step === REVIEW && selection.workflows.length > 0,
     staleTime: 0,
@@ -271,18 +272,19 @@ function Wizard({ info }: { info: InstallInfo }) {
       const done = await api.install(selection, preview.data!.base);
       // The install has succeeded; a chat that can't start (Claude Code missing or signed out) doesn't undo it.
       let chatError: string | null = null;
+      let chatId: string | null = null;
       if (route === 'claude') {
         try {
-          await api.createChat(SETUP_MESSAGE);
+          chatId = (await api.createChat(SETUP_MESSAGE)).id;
         } catch (e) {
           chatError = e instanceof ApiError ? e.message : 'The chat could not be started.';
         }
       }
-      return { ...done, chatError };
+      return { ...done, chatError, chatId };
     },
     onSuccess: (done) => {
-      if (route === 'claude' && done.chatError === null) {
-        window.location.hash = 'chat';
+      if (route === 'claude' && done.chatError === null && done.chatId) {
+        window.location.hash = chatHash(done.chatId);
         window.location.reload();
       }
     },
@@ -885,7 +887,14 @@ function DoneScreen({ steps, chatError }: { steps: string[]; chatError: string |
           ))}
         </ol>
         <div>
-          <Button onClick={() => window.location.reload()}>Open Shipline</Button>
+          <Button
+            onClick={() => {
+              window.location.hash = newHash(getCurrentRepo());
+              window.location.reload();
+            }}
+          >
+            Open Shipline
+          </Button>
         </div>
       </CardContent>
     </Card>

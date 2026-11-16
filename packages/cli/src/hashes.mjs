@@ -30,13 +30,20 @@ function walk(dir, base = dir) {
   return out;
 }
 
-// templates/shipline/** -> .shipline/**, templates/claude/** -> .claude/**. [{ from, to }]
+export const SHIPPED_DIR = '.shipline/bin/shipped';
+
+// templates/shipline/** -> .shipline/**, templates/claude/** -> .claude/**, plus a copy of each shipped workflow in .shipline/bin/shipped/. [{ from, to }]
 export function templateFiles() {
   const files = [];
   for (const [src, dest] of [['shipline', '.shipline'], ['claude', '.claude']]) {
     for (const rel of walk(path.join(TEMPLATES, src))) {
       files.push({ from: path.join(TEMPLATES, src, rel), to: `${dest}/${rel}` });
     }
+  }
+  // Read-only copies of the shipped workflow definitions for `stage.mjs workflows --shipped` (the CLI's own
+  // templates/ folder isn't present in a repo). Unlike workflows/*.yml they are Shipline-owned and hash-tracked.
+  for (const rel of walk(path.join(TEMPLATES, 'shipline', 'workflows')).filter((r) => r.endsWith('.yml'))) {
+    files.push({ from: path.join(TEMPLATES, 'shipline', 'workflows', rel), to: `${SHIPPED_DIR}/${rel}` });
   }
   return files;
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // `shipline init` with the questions answered, through init's own code (the bin can only do --yes without a
 // terminal). The review's Install question is answered Yes.
-//   node test/fixtures/init-all.mjs <dir>                    everything: every shipped workflow with its UI stages
+//   node test/fixtures/init-all.mjs <dir>                    everything: the four default workflows with their UI stages
 //       and every agent (the standalone `reviewer` too), commands and tracker as --yes picks them. This is what
 //       `init --yes` installed before 0.12.0 trimmed it, and the full install most tests start from.
 //   node test/fixtures/init-all.mjs <dir> '<selection json>'  these answers (init fills what they leave out).
@@ -12,6 +12,6 @@ const target = path.resolve(process.argv[2] || process.cwd());
 const answer = process.argv[3] ? JSON.parse(process.argv[3]) : null;
 process.exitCode = await runInit({
   target,
-  prompts: async (info) => answer || { workflows: info.workflows.map((w) => w.id), ui: true, agents: [...info.agents] },
+  prompts: async (info) => answer || { workflows: info.workflows.filter((w) => w.default).map((w) => w.id), ui: true, agents: [...info.agents] },
   confirm: async () => true, // the review's "Install these files?"
 });

@@ -110,7 +110,11 @@ export function createProjects(app) {
         };
         if (ctx.prompts) add(ctx.prompts.waiting());
         if (ctx.chats) add(ctx.chats.unseenErrors());
-        return { count: items.length, items, chatRunning: Boolean(ctx.chats && ctx.chats.activeId()) };
+        return {
+          count: items.length,
+          items,
+          chatRunning: Boolean(ctx.chats && ctx.chats.activeId()),
+        };
       },
       // After a successful install: the same context, now with the repo's full routes. Requests that arrive
       // meanwhile share the one switch; a failed switch can be tried again.
@@ -175,7 +179,11 @@ export function createProjects(app) {
       await enterRepoMode(ctx, repo);
     } catch (e) {
       app.serverLogger.log('context-error', { id, root, message: e && e.message });
-      throw new HttpError(500, 'repo-load-failed', e && e.message ? e.message : 'Could not open this repo');
+      throw new HttpError(
+        500,
+        'repo-load-failed',
+        e && e.message ? e.message : 'Could not open this repo',
+      );
     }
     contexts.set(id, ctx);
     scheduleChange();
@@ -193,7 +201,8 @@ export function createProjects(app) {
     }
     let p = creating.get(id);
     if (!p) {
-      const entry = findProject(id) || (adopted.has(id) ? { id, root: adopted.get(id), group: null } : null);
+      const entry =
+        findProject(id) || (adopted.has(id) ? { id, root: adopted.get(id), group: null } : null);
       if (!entry) throw new HttpError(404, 'unknown-repo', 'No such project');
       const probe = probeRepo(entry.root);
       if (probe.state === 'missing') throw new HttpError(410, 'repo-missing', probe.message);
@@ -294,7 +303,8 @@ export function createProjects(app) {
     return info;
   }
 
-  const setupDoneOf = async (entry, ctx, state) => (await configInfoOf(entry, ctx, state)).setupDone;
+  const setupDoneOf = async (entry, ctx, state) =>
+    (await configInfoOf(entry, ctx, state)).setupDone;
 
   const versionOf = (v) => (v ? { package: v.package ?? null, interface: v.interface } : null);
 
@@ -364,7 +374,10 @@ export function createProjects(app) {
   // lib; files and checks are left out.
   async function openTasksOf(entry, ctx) {
     try {
-      const repo = ctx && ctx.mode === 'repo' ? ctx.repo : { root: entry.root, lib: await loadRepoLib(entry.root) };
+      const repo =
+        ctx && ctx.mode === 'repo'
+          ? ctx.repo
+          : { root: entry.root, lib: await loadRepoLib(entry.root) };
       const view = makeTaskView({ repo });
       return readOpenTasks(repo.root).map((t) => {
         const v = view(t);
@@ -526,7 +539,10 @@ export function createProjects(app) {
         message: p.message,
         version: p.version,
         upgradeAvailable: Boolean(
-          p.state === 'ok' && p.version && p.version.package && semverGt(app.uiVersion, p.version.package),
+          p.state === 'ok' &&
+          p.version &&
+          p.version.package &&
+          semverGt(app.uiVersion, p.version.package),
         ),
       };
       row.dot = dotOf(row, claude);
@@ -565,7 +581,13 @@ export function createProjects(app) {
     for (const p of list0) {
       const ctx = contexts.get(p.id);
       const h = healthRows.find((r) => r.id === p.id);
-      const card = { ...p, uiVersion: app.uiVersion, dot: h.dot, upgradeAvailable: h.upgradeAvailable, unfinished: 0 };
+      const card = {
+        ...p,
+        uiVersion: app.uiVersion,
+        dot: h.dot,
+        upgradeAvailable: h.upgradeAvailable,
+        unfinished: 0,
+      };
       projects.push(card);
       if (p.state === 'install' || p.state === 'missing') continue;
       const titles = new Map();
@@ -617,7 +639,11 @@ export function createProjects(app) {
     try {
       unregisterProject(id);
     } catch (e) {
-      throw new HttpError(500, 'registry-failed', `Could not update the project list (${e.message})`);
+      throw new HttpError(
+        500,
+        'registry-failed',
+        `Could not update the project list (${e.message})`,
+      );
     }
     app.serverLogger.log('unregistered', { id, root });
     scheduleChange();
@@ -637,7 +663,8 @@ export function createProjects(app) {
   async function handoff(body) {
     if (!body || typeof body.dir !== 'string' || !body.dir)
       throw new HttpError(400, 'bad-request', 'dir is required');
-    if (!path.isAbsolute(body.dir)) throw new HttpError(400, 'bad-dir', 'dir must be an absolute path.');
+    if (!path.isAbsolute(body.dir))
+      throw new HttpError(400, 'bad-dir', 'dir must be an absolute path.');
     const dir = path.resolve(body.dir);
     let isDir = false;
     try {
@@ -654,7 +681,9 @@ export function createProjects(app) {
     if (repoRoot) {
       root = repoRoot;
       id = projectId(repoRoot);
-      if (!registerQuietly(repoRoot, (m) => app.serverLogger.log('registry-warning', { message: m })))
+      if (
+        !registerQuietly(repoRoot, (m) => app.serverLogger.log('registry-warning', { message: m }))
+      )
         adopted.set(id, repoRoot);
     } else {
       const ctx = openInstall(dir);
@@ -668,7 +697,8 @@ export function createProjects(app) {
         phone = {
           enabled: false,
           url: null,
-          message: 'Phone access needs an installed repo, so it is off. Install Shipline here first.',
+          message:
+            'Phone access needs an installed repo, so it is off. Install Shipline here first.',
         };
       } else {
         const status = await app.remote.start();
@@ -679,7 +709,11 @@ export function createProjects(app) {
         };
       }
     }
-    app.serverLogger.log('handoff', { id, root: root || installRoot, remote: body.remote === true });
+    app.serverLogger.log('handoff', {
+      id,
+      root: root || installRoot,
+      remote: body.remote === true,
+    });
     scheduleChange();
     const url = `http://127.0.0.1:${app.port}/?t=${app.auth.mintLoginToken()}#/${repoRoot ? 'new' : 'setup'}/${id}`;
     return { url, id, root, installRoot, version: app.uiVersion, ...(phone ? { phone } : {}) };
@@ -702,10 +736,18 @@ export function createProjects(app) {
     // The server-wide routes.
     routes: () => [
       { method: 'GET', path: '/api/projects', handler: () => list() },
-      { method: 'DELETE', path: '/api/projects/:repoId', handler: ({ params }) => remove(params.repoId) },
+      {
+        method: 'DELETE',
+        path: '/api/projects/:repoId',
+        handler: ({ params }) => remove(params.repoId),
+      },
       { method: 'GET', path: '/api/overview', handler: () => overview() },
       { method: 'GET', path: '/api/chats', handler: () => chatsList() },
-      { method: 'GET', path: '/api/chats/:chatId/repo', handler: ({ params }) => chatRepo(params.chatId) },
+      {
+        method: 'GET',
+        path: '/api/chats/:chatId/repo',
+        handler: ({ params }) => chatRepo(params.chatId),
+      },
       { method: 'GET', path: '/api/health', handler: () => health() },
       {
         method: 'GET',
@@ -737,7 +779,10 @@ export function createProjects(app) {
           try {
             await withLogger(ctx.logger, () => ctx.chats.close());
           } catch (e) {
-            app.serverLogger.log('close-error', { name: `chats:${ctx.id}`, message: e && e.message });
+            app.serverLogger.log('close-error', {
+              name: `chats:${ctx.id}`,
+              message: e && e.message,
+            });
           }
         }
       }

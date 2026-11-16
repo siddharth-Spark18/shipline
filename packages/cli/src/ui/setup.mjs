@@ -1065,7 +1065,8 @@ function draftState(app, draft) {
 }
 
 function draftIssues(app, draft, current) {
-  if (draft.parseError !== undefined) return [{ path: '', message: `does not parse: ${draft.parseError}` }];
+  if (draft.parseError !== undefined)
+    return [{ path: '', message: `does not parse: ${draft.parseError}` }];
   const disk = current !== null ? parseModel(app, current) : { model: null };
   return validateWorkflow(normalize(draft.model) ?? {}, {
     id: draft.id,
@@ -1085,8 +1086,15 @@ export function listDrafts(app) {
     const issues = draftIssues(app, draft, current);
     out.push({
       workflowId: draft.id,
-      name: draft.model && typeof draft.model.name === 'string' && draft.model.name ? draft.model.name : draft.id,
-      createdAt: draft.createdAt ?? new Date(mtimeOf(path.join(draftsDir(app.repo.root), draft.id, 'workflow.yml'))).toISOString(),
+      name:
+        draft.model && typeof draft.model.name === 'string' && draft.model.name
+          ? draft.model.name
+          : draft.id,
+      createdAt:
+        draft.createdAt ??
+        new Date(
+          mtimeOf(path.join(draftsDir(app.repo.root), draft.id, 'workflow.yml')),
+        ).toISOString(),
       isNew,
       stale,
       staleRules,

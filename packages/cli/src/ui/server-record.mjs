@@ -5,7 +5,15 @@
 //
 // `key` is 32 random bytes (hex); the handoff routes (loopback only) want it in X-Shipline-Key. The file is mode 0600
 // (not enforced on Windows: the user profile folder is the boundary, as for devices.json).
-import { chmodSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { shiplineHome } from '../store.mjs';
@@ -20,7 +28,10 @@ export const serverFile = () => path.join(shiplineHome(), 'server.json');
 export function readServerRecord() {
   try {
     const rec = JSON.parse(readFileSync(serverFile(), 'utf8'));
-    return rec && Number.isInteger(rec.pid) && Number.isInteger(rec.port) && typeof rec.key === 'string'
+    return rec &&
+      Number.isInteger(rec.pid) &&
+      Number.isInteger(rec.port) &&
+      typeof rec.key === 'string'
       ? rec
       : null;
   } catch {
@@ -47,7 +58,8 @@ export function writeServerRecord(rec) {
 export function removeServerRecord(file = serverFile(), port) {
   try {
     const rec = JSON.parse(readFileSync(file, 'utf8'));
-    if (rec && rec.pid === process.pid && (port === undefined || rec.port === port)) unlinkSync(file);
+    if (rec && rec.pid === process.pid && (port === undefined || rec.port === port))
+      unlinkSync(file);
   } catch {
     // Missing or not ours.
   }
@@ -121,11 +133,11 @@ export async function launchUi({ dir, port = 0, open = true, remote = false }, c
     }
     if (res && res.status === 200 && res.json && res.json.url) {
       if (port && port !== rec.port)
-        console.log(`Shipline UI is already running on port ${rec.port}; stop it to change the port.`);
-      if (rec.version !== cliVersion)
         console.log(
-          `Shipline UI ${rec.version} is already running; stop it to use ${cliVersion}.`,
+          `Shipline UI is already running on port ${rec.port}; stop it to change the port.`,
         );
+      if (rec.version !== cliVersion)
+        console.log(`Shipline UI ${rec.version} is already running; stop it to use ${cliVersion}.`);
       const j = res.json;
       console.log(
         j.installRoot

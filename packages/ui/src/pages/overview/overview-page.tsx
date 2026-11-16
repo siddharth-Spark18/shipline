@@ -100,9 +100,14 @@ function ProjectCard({
           className={cn('size-2.5 shrink-0 rounded-full', DOT_CLASS[p.dot])}
         />
         <span className="min-w-0 truncate font-medium">{p.name}</span>
-        {p.branch && <span className="min-w-0 truncate text-xs text-muted-foreground">{p.branch}</span>}
+        {p.branch && (
+          <span className="min-w-0 truncate text-xs text-muted-foreground">{p.branch}</span>
+        )}
         {p.waiting > 0 && (
-          <Badge className="ml-auto h-4 min-w-4 px-1.5 text-[10px]" aria-label={`${p.waiting} waiting for you`}>
+          <Badge
+            className="ml-auto h-4 min-w-4 px-1.5 text-[10px]"
+            aria-label={`${p.waiting} waiting for you`}
+          >
             {p.waiting}
           </Badge>
         )}
@@ -112,7 +117,9 @@ function ProjectCard({
       </div>
       <div className="flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
         {state && <span className={cn(p.state !== 'install' && 'text-destructive')}>{state}</span>}
-        {p.state === 'ok' && !p.setupDone && <span className="text-notice-reminder">Setup not done</span>}
+        {p.state === 'ok' && !p.setupDone && (
+          <span className="text-notice-reminder">Setup not done</span>
+        )}
         {p.state === 'ok' && (
           <span>
             {p.unfinished} unfinished {p.unfinished === 1 ? 'task' : 'tasks'}
@@ -218,7 +225,13 @@ export function OverviewPage({
                   {!lone && <h3 className="truncate text-xs text-muted-foreground">{g.label}</h3>}
                   <div className={cn('grid gap-2 sm:grid-cols-2', !lone && 'pl-3')}>
                     {g.items.map((p) => (
-                      <ProjectCard key={p.id} p={p} onNewChat={onNewChat} onSetup={onSetup} onRemove={setRemoving} />
+                      <ProjectCard
+                        key={p.id}
+                        p={p}
+                        onNewChat={onNewChat}
+                        onSetup={onSetup}
+                        onRemove={setRemoving}
+                      />
                     ))}
                   </div>
                 </div>
@@ -246,7 +259,11 @@ export function OverviewPage({
                       const stage = currentStage(t.stages);
                       return (
                         <li key={t.dir}>
-                          <button type="button" className={rowClass} onClick={() => onNewChat(t.repoId)}>
+                          <button
+                            type="button"
+                            className={rowClass}
+                            onClick={() => onNewChat(t.repoId)}
+                          >
                             <div className="flex min-w-0 flex-1 flex-col gap-1">
                               <span className="truncate font-medium">{t.title || t.slug}</span>
                               <span className="truncate text-xs text-muted-foreground">
@@ -280,16 +297,21 @@ export function OverviewPage({
         )}
       </Section>
 
-      <Dialog open={removing !== null} onOpenChange={(o) => !remove.isPending && !o && setRemoving(null)}>
+      <Dialog
+        open={removing !== null}
+        onOpenChange={(o) => !remove.isPending && !o && setRemoving(null)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Remove {removing?.name} from the list?</DialogTitle>
             <DialogDescription>
-              This only forgets the project here. The folder, its Shipline files and its task data stay where
-              they are, and `shipline init`, `ui` or `upgrade` in it adds it back.
+              This only forgets the project here. The folder, its Shipline files and its task data
+              stay where they are, and `shipline init`, `ui` or `upgrade` in it adds it back.
             </DialogDescription>
           </DialogHeader>
-          <code className="rounded bg-muted px-2 py-1 font-mono text-xs break-all">{removing?.root}</code>
+          <code className="rounded bg-muted px-2 py-1 font-mono text-xs break-all">
+            {removing?.root}
+          </code>
           <DialogFooter>
             <Button variant="outline" disabled={remove.isPending} onClick={() => setRemoving(null)}>
               Cancel

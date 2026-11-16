@@ -240,7 +240,10 @@ export async function startServer({ dir, port = 0, open = true, remote = false }
         logger = ctx.logger;
         // Installed meanwhile (a terminal `init`, or another tab's Install): serve the repo from now on, so the
         // wizard's reload opens the normal UI.
-        if (ctx.mode === 'install' && existsSync(path.join(ctx.install.root, '.shipline', 'config.yml')))
+        if (
+          ctx.mode === 'install' &&
+          existsSync(path.join(ctx.install.root, '.shipline', 'config.yml'))
+        )
           await withLogger(logger, () => ctx.switchToRepo());
         table = ctx.table;
         routePath = repoPath.rest;
@@ -268,7 +271,8 @@ export async function startServer({ dir, port = 0, open = true, remote = false }
       );
       if (!res.headersSent) sendJson(res, 200, result === undefined ? {} : result);
     } catch (e) {
-      if (!(e instanceof HttpError)) logger.log('error', { method: req.method, message: e && e.message });
+      if (!(e instanceof HttpError))
+        logger.log('error', { method: req.method, message: e && e.message });
       sendError(res, e);
     }
   });
@@ -320,13 +324,17 @@ export async function startServer({ dir, port = 0, open = true, remote = false }
     });
   } catch (e) {
     // The server works without it; a later `shipline ui` just can't find it to hand over.
-    console.error(`shipline: could not write ${recordFile} (${e.message}); other terminals will start their own UI.`);
+    console.error(
+      `shipline: could not write ${recordFile} (${e.message}); other terminals will start their own UI.`,
+    );
   }
   serverLogger.log('start', { port: app.port, version: UI_VERSION, node: process.version, dir });
 
   // Started modules, closed in reverse order. The first one pushed runs last: server.json goes only after
   // everything else has stopped (and only if it is still ours).
-  const closers = [{ name: 'server-record', close: () => removeServerRecord(recordFile, app.port) }];
+  const closers = [
+    { name: 'server-record', close: () => removeServerRecord(recordFile, app.port) },
+  ];
   closers.push({ name: 'hub', close: () => hub.close() });
   closers.push({ name: 'watch', close: () => app.projects.closeWatches() });
   closers.push({

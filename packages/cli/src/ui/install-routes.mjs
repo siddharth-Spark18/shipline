@@ -165,7 +165,12 @@ async function install(app, body) {
   // The folder joins the machine-wide project list; the switcher shows it as a normal repo from now on.
   registerQuietly(root, (m) => console.error(m));
   if (app.changed) app.changed();
-  app.log('installed', { root, workflows: selection.workflows, ui: selection.ui, ci: selection.ci });
+  app.log('installed', {
+    root,
+    workflows: selection.workflows,
+    ui: selection.ui,
+    ci: selection.ci,
+  });
   return { installed: true, nextSteps: nextSteps(selection) };
 }
 

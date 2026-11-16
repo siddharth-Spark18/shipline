@@ -39,7 +39,8 @@ function Facts({ rows }: { rows: [string, ReactNode][] }) {
 function phoneText(phone: HealthData['machine']['phone']): string {
   if (!phone) return 'unknown';
   if (phone.enabled) return `on, ${phone.url ?? ''}`;
-  if (phone.tailscale.state !== 'ok') return `off (${phone.tailscale.message || phone.tailscale.state})`;
+  if (phone.tailscale.state !== 'ok')
+    return `off (${phone.tailscale.message || phone.tailscale.state})`;
   return 'off';
 }
 
@@ -62,7 +63,9 @@ function MachineSection({ machine }: { machine: HealthData['machine'] }) {
         ]}
       />
       <details className="rounded-lg border bg-card p-3 text-sm">
-        <summary className="cursor-pointer">Server log (last {machine.logTail.length} lines)</summary>
+        <summary className="cursor-pointer">
+          Server log (last {machine.logTail.length} lines)
+        </summary>
         {machine.logTail.length === 0 ? (
           <p className="pt-2 text-muted-foreground">The log is empty.</p>
         ) : (
@@ -117,7 +120,10 @@ function ProjectRow({
             <span className="truncate text-xs text-muted-foreground">{facts.join(' · ')}</span>
           </div>
           <ChevronDownIcon
-            className={cn('size-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')}
+            className={cn(
+              'size-4 shrink-0 text-muted-foreground transition-transform',
+              open && 'rotate-180',
+            )}
             aria-hidden
           />
         </button>
@@ -147,7 +153,9 @@ function ProjectRow({
         {row.state === 'ok' ? (
           open && <DiagnosticsBody repoId={project.id} />
         ) : (
-          <p className="text-xs text-muted-foreground">Diagnostics are available once the project is served.</p>
+          <p className="text-xs text-muted-foreground">
+            Diagnostics are available once the project is served.
+          </p>
         )}
       </CollapsibleContent>
     </Collapsible>
@@ -173,7 +181,9 @@ export function HealthPage() {
   if (health.isPending) return <p className="p-4 text-sm text-muted-foreground">Loading...</p>;
   if (health.error || !health.data) {
     return (
-      <p className="p-4 text-sm text-destructive">{health.error?.message ?? 'Could not load Health.'}</p>
+      <p className="p-4 text-sm text-destructive">
+        {health.error?.message ?? 'Could not load Health.'}
+      </p>
     );
   }
   const { machine, projects: rows } = health.data;
@@ -182,8 +192,15 @@ export function HealthPage() {
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6 p-4">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">Redacted by the server. Safe to paste into a bug report.</p>
-        <Button variant="outline" size="sm" disabled={health.isFetching} onClick={() => void health.refetch()}>
+        <p className="text-sm text-muted-foreground">
+          Redacted by the server. Safe to paste into a bug report.
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={health.isFetching}
+          onClick={() => void health.refetch()}
+        >
           Refresh
         </Button>
       </div>

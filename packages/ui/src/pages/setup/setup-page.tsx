@@ -224,11 +224,7 @@ export default function SetupPage({
 
   return (
     <div className="flex flex-col gap-4">
-      <DraftBanner
-        drafts={workflowDrafts.data ?? []}
-        readOnly={readOnly}
-        onReview={onOpenDraft}
-      />
+      <DraftBanner drafts={workflowDrafts.data ?? []} readOnly={readOnly} onReview={onOpenDraft} />
       {usesDefaultRules && (
         <Alert>
           <AlertTitle>This repo uses Shipline&apos;s default rules</AlertTitle>

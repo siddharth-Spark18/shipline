@@ -84,10 +84,13 @@ function redirectFor(
       return { to: ALL_HASH };
     }
     case 'setup':
-      return known(route.repoId) ? null : { to: ALL_HASH, message: 'That project is not in the list.' };
+      return known(route.repoId)
+        ? null
+        : { to: ALL_HASH, message: 'That project is not in the list.' };
     case 'new':
       if (!route.repoId) return null;
-      if (!known(route.repoId)) return { to: ALL_HASH, message: 'That project is not in the list.' };
+      if (!known(route.repoId))
+        return { to: ALL_HASH, message: 'That project is not in the list.' };
       // A project that can't be served has nothing to chat in: its Setup page says why.
       return stateOf(route.repoId) === 'ok' ? null : { to: setupHash(route.repoId) };
     default:
@@ -167,7 +170,9 @@ function MainApp() {
   const current = repoId ? (projects.find((p) => p.id === repoId) ?? null) : null;
   // Only a served project (or one being set up) has routes to call: a missing, repo-newer or pre-1.0 one answers 410 or
   // 409, so nothing is requested for it.
-  setCurrentRepo(current && (current.state === 'ok' || current.state === 'install') ? current.id : null);
+  setCurrentRepo(
+    current && (current.state === 'ok' || current.state === 'install') ? current.id : null,
+  );
 
   const currentId = current?.id ?? null;
   useEffect(() => {
@@ -203,7 +208,8 @@ function MainApp() {
   // Setup's target: the last project used, else any project.
   const setupTarget = () => {
     const last = lastRepo();
-    const id = (last && projects.some((p) => p.id === last) ? last : null) ?? currentId ?? projects[0]?.id;
+    const id =
+      (last && projects.some((p) => p.id === last) ? last : null) ?? currentId ?? projects[0]?.id;
     return id ? setupHash(id) : ALL_HASH;
   };
   const newTarget = () => newHash(preset(null));
@@ -299,7 +305,8 @@ function MainApp() {
         content = (
           <Scroll>
             <p className="p-4 text-sm text-muted-foreground">
-              No project is set up for chats yet. Open Setup to set one up, or All projects to see them.
+              No project is set up for chats yet. Open Setup to set one up, or All projects to see
+              them.
             </p>
           </Scroll>
         );

@@ -15,7 +15,8 @@ interface ViewportState {
 const isTextField = (el: Element | null) =>
   !!el &&
   (el instanceof HTMLTextAreaElement ||
-    (el instanceof HTMLInputElement && !['button', 'checkbox', 'radio', 'submit', 'range', 'file'].includes(el.type)) ||
+    (el instanceof HTMLInputElement &&
+      !['button', 'checkbox', 'radio', 'submit', 'range', 'file'].includes(el.type)) ||
     (el instanceof HTMLElement && el.isContentEditable));
 
 // The tallest visible height seen while no text field had focus: the "no keyboard" height. Browsers differ on what
@@ -36,7 +37,8 @@ function read(): ViewportState {
     baseline = 0;
   }
   const zoomed = vv.scale > 1.01;
-  if (!isTextField(document.activeElement) && !zoomed) baseline = Math.max(baseline, height, window.innerHeight);
+  if (!isTextField(document.activeElement) && !zoomed)
+    baseline = Math.max(baseline, height, window.innerHeight);
   const keyboardOpen = !zoomed && baseline - height >= KEYBOARD_MIN;
   return {
     keyboardOpen,

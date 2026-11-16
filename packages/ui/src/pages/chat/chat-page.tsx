@@ -151,7 +151,11 @@ function MobileHeader({
         {(subtitle || projectLine) && (
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             {projectLine && (
-              <button type="button" className="min-w-0 shrink truncate underline-offset-2 active:underline" onClick={onProject}>
+              <button
+                type="button"
+                className="min-w-0 shrink truncate underline-offset-2 active:underline"
+                onClick={onProject}
+              >
                 {projectLine}
               </button>
             )}
@@ -588,7 +592,11 @@ function ChatView({
     chatTask && currentStage && stageIndex >= 0
       ? `Stage ${stageIndex + 1} of ${chatTask.stages.length} · ${currentStage.name}`
       : undefined;
-  const projectLine = project ? (project.branch ? `${project.name} · ${project.branch}` : project.name) : undefined;
+  const projectLine = project
+    ? project.branch
+      ? `${project.name} · ${project.branch}`
+      : project.name
+    : undefined;
 
   const panelButton = (
     <Button

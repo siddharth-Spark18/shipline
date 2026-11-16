@@ -126,7 +126,9 @@ export function DraftReview({
   const staleNow = saveError instanceof ApiError && saveError.code === 'draft-stale';
   const conflict = saveError instanceof ApiError && saveError.status === 409 && !staleNow;
   const issues: ValidationIssue[] =
-    saveError instanceof ApiError && saveError.code === 'invalid' && Array.isArray(saveError.details)
+    saveError instanceof ApiError &&
+    saveError.code === 'invalid' &&
+    Array.isArray(saveError.details)
       ? (saveError.details as ValidationIssue[])
       : [];
   const stale = Boolean(info?.stale || preview.data?.draft?.stale || staleNow);

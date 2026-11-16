@@ -119,11 +119,7 @@ function BannerItem({
         {onOpenHealth && (
           <>
             {' '}
-            <button
-              type="button"
-              className="underline underline-offset-2"
-              onClick={onOpenHealth}
-            >
+            <button type="button" className="underline underline-offset-2" onClick={onOpenHealth}>
               Open Health
             </button>
           </>
@@ -236,7 +232,12 @@ export interface HealthCardData {
 type Health = HealthCardData;
 
 /** The card a repo's state gets: why it isn't served, or how it differs from this UI. Null when there is nothing to say. */
-function healthText(h: Pick<Health, 'state' | 'message' | 'upgradeAvailable' | 'uiVersion' | 'version' | 'setupDone' | 'root'>) {
+function healthText(
+  h: Pick<
+    Health,
+    'state' | 'message' | 'upgradeAvailable' | 'uiVersion' | 'version' | 'setupDone' | 'root'
+  >,
+) {
   const current = h.version?.package ?? 'an unknown version';
   if (h.state === 'ok' && h.upgradeAvailable)
     return `This repo has Shipline ${current}; ${h.uiVersion} is available. Run \`npx @forgeyard/shipline upgrade --dir ${h.root}\`, or \`upgrade --all\` for every repo.`;
@@ -291,7 +292,12 @@ export function HealthCard({
       </div>
       {text && (
         <div className="flex items-start gap-2 text-xs">
-          <Icon className={cn('mt-0.5 size-3.5 shrink-0', bad ? 'text-destructive' : 'text-notice-reminder')} />
+          <Icon
+            className={cn(
+              'mt-0.5 size-3.5 shrink-0',
+              bad ? 'text-destructive' : 'text-notice-reminder',
+            )}
+          />
           <span className="min-w-0 break-words">{text}</span>
         </div>
       )}

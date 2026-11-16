@@ -165,7 +165,8 @@ export const api = {
     request<{ ok: true }>('POST', `/api/remote/devices/${encodeURIComponent(id)}/revoke`),
   status: () => repoRequest<Status>('GET', '/api/status'),
   setup: () => repoRequest<SetupData>('GET', '/api/setup'),
-  previewSetup: (req: SaveRequest) => repoRequest<PreviewResponse>('POST', '/api/setup/preview', req),
+  previewSetup: (req: SaveRequest) =>
+    repoRequest<PreviewResponse>('POST', '/api/setup/preview', req),
   saveSetup: (req: SaveRequest) => repoRequest<SaveResponse>('POST', '/api/setup/save', req),
   markSetupDone: () => repoRequest<{ ok: true }>('POST', '/api/setup/mark-done'),
   /** Workflow drafts left by /shipline-workflow-designer, awaiting review. */
@@ -181,7 +182,10 @@ export const api = {
       overwrite,
     }),
   discardDraft: (workflowId: string) =>
-    repoRequest<{ ok: true }>('POST', `/api/setup/drafts/${encodeURIComponent(workflowId)}/discard`),
+    repoRequest<{ ok: true }>(
+      'POST',
+      `/api/setup/drafts/${encodeURIComponent(workflowId)}/discard`,
+    ),
   workflowAction: (req: WorkflowAction) =>
     repoRequest<{ ok: true }>('POST', '/api/setup/workflows', req),
   createWorkflow: (id: string, name: string) =>
@@ -201,8 +205,12 @@ export const api = {
   installPreview: (selection: InstallSelection) =>
     repoRequest<InstallPreview>('POST', '/api/install/preview', { selection }),
   install: (selection: InstallSelection, base: InstallBase) =>
-    repoRequest<{ installed: true; nextSteps: string[] }>('POST', '/api/install', { selection, base }),
-  ciPreview: (req: CiChange) => repoRequest<CiPreviewResponse>('POST', '/api/setup/ci?preview=1', req),
+    repoRequest<{ installed: true; nextSteps: string[] }>('POST', '/api/install', {
+      selection,
+      base,
+    }),
+  ciPreview: (req: CiChange) =>
+    repoRequest<CiPreviewResponse>('POST', '/api/setup/ci?preview=1', req),
   ciApply: (req: CiChange) => repoRequest<unknown>('POST', '/api/setup/ci', req),
   tasks: () => repoRequest<TasksData>('GET', '/api/tasks'),
   file: (path: string, mode: FileMode) =>
@@ -234,7 +242,9 @@ export const api = {
   trustRepo: (path: string) =>
     repoRequest<{ trusted: true; takesEffect: string }>('POST', '/api/trust', { path }),
   startShell: (id: string, command: string) =>
-    repoRequest<{ runId: string }>('POST', `/api/chats/${encodeURIComponent(id)}/shell`, { command }),
+    repoRequest<{ runId: string }>('POST', `/api/chats/${encodeURIComponent(id)}/shell`, {
+      command,
+    }),
   stopShell: (id: string, runId: string) =>
     repoRequest<{ stopped: true }>(
       'POST',

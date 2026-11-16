@@ -103,7 +103,10 @@ export function AppSidebar({
   const sorted = useMemo(() => sortChats(chats), [chats]);
   const byId = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
   // Chats of a project that is gone from the list (or not served) are not listed.
-  const listed = useMemo(() => sorted.filter((c) => byId.get(c.repoId)?.state === 'ok'), [sorted, byId]);
+  const listed = useMemo(
+    () => sorted.filter((c) => byId.get(c.repoId)?.state === 'ok'),
+    [sorted, byId],
+  );
 
   // Close the mobile drawer after a navigation; no-op on desktop.
   const go = (target: Parameters<typeof onNavigate>[0]) => {

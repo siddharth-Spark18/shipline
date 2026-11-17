@@ -151,7 +151,8 @@ export function SaveDialog(props: SaveDialogProps) {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="sm:max-w-4xl">
+      {/* One column that may shrink below its content: long diff lines scroll inside the diff, not widen the dialog. */}
+      <DialogContent className="grid-cols-[minmax(0,1fr)] sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>{draft ? 'Review workflow draft' : 'Review changes'}</DialogTitle>
           <DialogDescription>
@@ -161,7 +162,7 @@ export function SaveDialog(props: SaveDialogProps) {
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[60vh]">
+        <ScrollArea className="max-h-[60vh] min-w-0">
           <div className="flex flex-col gap-4 pr-3">
             {readOnly && (
               <Alert variant="destructive">

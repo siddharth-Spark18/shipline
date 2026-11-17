@@ -34,8 +34,8 @@ scripts and the `/shipline-setup` skill.
   stage is edited on its own page in five steps (Basics, Enforcement, Blocks, Required sections, Rules). The install
   wizard reuses the same stage page. Unsaved edits are kept while moving between Setup pages, with one sticky bar to
   discard or review and save.
-- **Selectable palettes.** Classic (the previous indigo), Ultramarine (the new default), Ember and Harbor, each in light
-  and dark, with a coloured sidebar for the new three. Pick one on the Appearance card (with light, dark or system). The
+- **Selectable palettes.** Classic (the previous indigo), Graphite, Ink, Sage and Mocha (the new default), each in
+  light and dark: quiet neutral surfaces with one muted accent. Pick one on the Appearance card (with light, dark or system). The
   choice is per machine (`$SHIPLINE_HOME/ui-preferences.json`, `GET` and `POST /api/preferences`) and applies live to
   every open window and paired phone.
 

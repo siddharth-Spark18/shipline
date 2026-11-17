@@ -28,26 +28,32 @@ export const PALETTES: PaletteInfo[] = [
     dark: { background: '#000000', primary: '#9a92ff', sidebar: '#0a0a0a' },
   },
   {
-    id: 'ultramarine',
-    name: 'Ultramarine',
-    light: { background: '#f2f5ff', primary: '#2438d4', sidebar: '#16208a' },
-    dark: { background: '#0b1024', primary: '#8fa2ff', sidebar: '#070b1c' },
+    id: 'graphite',
+    name: 'Graphite',
+    light: { background: '#fafafa', primary: '#18181b', sidebar: '#f4f4f5' },
+    dark: { background: '#09090b', primary: '#fafafa', sidebar: '#0f0f11' },
   },
   {
-    id: 'ember',
-    name: 'Ember',
-    light: { background: '#fff7f0', primary: '#c2410c', sidebar: '#3b1708' },
-    dark: { background: '#14100e', primary: '#ff9a62', sidebar: '#0d0a08' },
+    id: 'ink',
+    name: 'Ink',
+    light: { background: '#f7f8fa', primary: '#1e3a5f', sidebar: '#eef1f5' },
+    dark: { background: '#0b1220', primary: '#8fb3e0', sidebar: '#080e19' },
   },
   {
-    id: 'harbor',
-    name: 'Harbor',
-    light: { background: '#f1f6f3', primary: '#0b7a62', sidebar: '#0a3d31' },
-    dark: { background: '#08130f', primary: '#4fd6b4', sidebar: '#050d0a' },
+    id: 'sage',
+    name: 'Sage',
+    light: { background: '#f7f7f4', primary: '#3f5f4a', sidebar: '#efefe9' },
+    dark: { background: '#0e110f', primary: '#9cc3a8', sidebar: '#0a0d0b' },
+  },
+  {
+    id: 'mocha',
+    name: 'Mocha',
+    light: { background: '#faf8f5', primary: '#5b4636', sidebar: '#f3efe9' },
+    dark: { background: '#12100e', primary: '#d6b89c', sidebar: '#0d0b0a' },
   },
 ];
 
-export const DEFAULT_PALETTE: PaletteId = 'ultramarine';
+export const DEFAULT_PALETTE: PaletteId = 'mocha';
 const CACHE_KEY = 'shipline.palette';
 
 export const isPaletteId = (v: unknown): v is PaletteId => PALETTES.some((p) => p.id === v);
@@ -64,7 +70,7 @@ function cachedPalette(): PaletteId | null {
 
 /** Sets data-palette on <html>, caches it for the next first paint and points the theme-color metas at it. */
 export function applyPalette(id: PaletteId) {
-  const info = PALETTES.find((p) => p.id === id) ?? PALETTES[1];
+  const info = PALETTES.find((p) => p.id === id) ?? PALETTES.find((p) => p.id === DEFAULT_PALETTE)!;
   document.documentElement.dataset.palette = info.id;
   try {
     window.localStorage.setItem(CACHE_KEY, info.id);

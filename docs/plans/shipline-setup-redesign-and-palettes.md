@@ -4,6 +4,15 @@
 **Release:** 2.1.0, together with `docs/plans/shipline-guardrails-2-1.md`, on one branch from `main` (e.g. `feat/2-1`). **This plan is built first**; guardrails 2.1 then adds its controls to the new Guardrails page. This plan does not bump the version or write the changelog entry (the guardrails plan's release step does both, and its changelog entry should mention this redesign).
 **Target layout:** `.claude/wireframes/setup-redesign/variant-3.html` (Variant 3, "task hub"). Palette tokens: `.claude/wireframes/setup-redesign/palettes.css`. Today's page for comparison: `baseline.html`.
 
+## Revision 1 (2026-11-17): new palette set
+
+After trying the built palettes, the user replaced Ultramarine, Ember and Harbor with simpler ones: **Graphite, Ink, Sage and Mocha**, plus Classic (kept). **Mocha is the default.**
+- They have quiet near-neutral surfaces, a light sidebar (no coloured sidebar) and one muted accent each. Preview: `.claude/wireframes/palettes-v2/palettes.html`.
+- Ids: `classic`, `graphite`, `ink`, `sage`, `mocha`. An unknown or old id (for example `ember` in an existing preferences file) reads as `mocha`.
+- Light blocks are scoped to `[data-palette=x]:not(.dark)`, so they never leak into dark mode.
+- Contrast: every text, sidebar, button and guide/warn/block colour is at least 4.5:1 in both modes. Light mode overrides `--stage-done`, `--change-added` (`#2a763c`) and `--stage-skipped` (`#6f6552`) in each new palette; Ink dark overrides `--stage-pending` (`#9e9e9e`).
+- The palette names, the coloured sidebar and the contrast table below describe the first set and are superseded by this revision.
+
 ## Problem & Goal
 
 Setup is one long page with a section nav, and every workflow stage expands inline into a big form. Users said it is **too long and cluttered**, **hard to find things in**, and **workflow editing is confusing**. The UI also looks generic; the user wants a **bold, branded** look, and wants users to **pick from a set of palettes** rather than one fixed colour.

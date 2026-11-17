@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   BanIcon,
   BellIcon,
@@ -15,9 +15,9 @@ import { cn } from 'cn';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { draftHash } from '@/lib/routes';
 import type { TicketStatus, WorkflowDraftInfo } from '@/lib/types';
 import type { FatalInfo } from '@/pages/chat/chat-store';
+import { DraftReview } from '@/pages/setup/draft-review';
 import type { ChatResult, NoticeLevel } from '@/pages/chat/timeline';
 
 // Each level with a tone gets a coloured left edge and title (--notice-* tokens).
@@ -253,17 +253,22 @@ export function TicketNotice({
   );
 }
 
-/** A workflow draft that /shipline-workflow-designer left while this chat was open; Review opens it in Setup. */
+/**
+ * A workflow draft that /shipline-workflow-designer left while this chat was open. Review opens the draft review
+ * over the chat (the chat's project is the current repo), so saving, discarding or closing stays in the chat.
+ */
 export function DraftReadyNotice({
-  repoId,
   drafts,
+  readOnly,
 }: {
-  repoId: string;
   drafts: WorkflowDraftInfo[];
+  readOnly: boolean;
 }) {
-  if (drafts.length === 0) return null;
+  const [open, setOpen] = useState<string | null>(null);
+  if (drafts.length === 0 && !open) return null;
   return (
     <>
+      {open && <DraftReview workflowId={open} readOnly={readOnly} onClose={() => setOpen(null)} />}
       {drafts.map((d) => (
         <Alert key={d.workflowId} className="border-l-4 border-l-notice-reminder py-2">
           <FilePenLineIcon />
@@ -273,8 +278,8 @@ export function DraftReadyNotice({
               {d.isNew ? 'A new workflow' : 'A change to this workflow'}, ready to review before
               anything is written to the repo.
             </span>
-            <Button asChild size="xs" variant="outline">
-              <a href={draftHash(repoId, d.workflowId)}>Review</a>
+            <Button size="xs" variant="outline" onClick={() => setOpen(d.workflowId)}>
+              Review
             </Button>
           </AlertDescription>
         </Alert>

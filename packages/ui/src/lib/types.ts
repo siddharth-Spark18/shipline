@@ -883,7 +883,7 @@ export interface AccessEndedEvent {
 export type AccessIssue = 'not-paired' | 'remote-off' | 'wrong-tailscale-user' | 'revoked';
 
 /** The palettes the UI offers (see lib/palette.ts and index.css). */
-export type PaletteId = 'classic' | 'ultramarine' | 'ember' | 'harbor';
+export type PaletteId = 'classic' | 'graphite' | 'ink' | 'sage' | 'mocha';
 
 /** GET /api/preferences: settings shared by every project and device on this machine. */
 export interface Preferences {

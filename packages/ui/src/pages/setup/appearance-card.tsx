@@ -38,7 +38,11 @@ export function AppearanceCard() {
       <h3 id="appearance-heading" className="text-sm font-semibold">
         Appearance
       </h3>
-      <div role="group" aria-label="Palette" className="grid grid-cols-2 gap-2">
+      <div
+        role="group"
+        aria-label="Palette"
+        className="grid grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))] gap-2"
+      >
         {PALETTES.map((p) => {
           const selected = current === p.id;
           return (

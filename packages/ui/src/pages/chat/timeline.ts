@@ -129,6 +129,19 @@ const interruptedNotice = (): Item => ({
 
 const LOCAL_COMMAND_OUTPUT = /^\s*<local-command-stdout>/;
 
+/**
+ * How Claude Code records a slash command in its transcript:
+ * `<command-message>name</command-message>\n<command-name>/name</command-name>\n<command-args>args</command-args>`.
+ * Shown as what the user typed (`/name args`); any other text is returned unchanged.
+ */
+export function userText(text: string): string {
+  const name = /<command-name>([^<]*)<\/command-name>/.exec(text);
+  if (!name) return text;
+  const args = /<command-args>([^]*?)<\/command-args>/.exec(text);
+  const cmd = name[1].trim();
+  return `${cmd.startsWith('/') ? cmd : `/${cmd}`} ${args ? args[1].trim() : ''}`.trim();
+}
+
 function firstText(content: unknown): string {
   if (typeof content === 'string') return content;
   return blockText(content);
@@ -234,7 +247,7 @@ function userEvent(out: Item[], ev: Rec, ctx: StreamCtx) {
   if (typeof msg.content === 'string') {
     // Live: the composer already added the message. History: this is the real thing.
     if (ctx.history && msg.content.trim())
-      out.push({ kind: 'user', id: nextId('u'), text: msg.content });
+      out.push({ kind: 'user', id: nextId('u'), text: userText(msg.content) });
     return;
   }
   if (!Array.isArray(msg.content)) return;
@@ -248,7 +261,7 @@ function userEvent(out: Item[], ev: Rec, ctx: StreamCtx) {
     }
     if (block.type === 'text' && ctx.history) {
       const text = asStr(block.text) ?? '';
-      if (text.trim()) out.push({ kind: 'user', id: nextId('u'), text });
+      if (text.trim()) out.push({ kind: 'user', id: nextId('u'), text: userText(text) });
       continue;
     }
     if (block.type !== 'tool_result') continue;
@@ -432,7 +445,7 @@ export function normalizeHistory(history: unknown[] | null | undefined): Item[] 
       if (!text.trim()) continue;
       items.push(
         entry.role === 'user'
-          ? { kind: 'user', id: nextId('u'), text }
+          ? { kind: 'user', id: nextId('u'), text: userText(text) }
           : { kind: 'text', id: nextId('a'), text },
       );
     } else if (entry.kind === 'user' || entry.kind === 'assistant') {
@@ -445,7 +458,7 @@ export function normalizeHistory(history: unknown[] | null | undefined): Item[] 
       }
       items.push(
         entry.kind === 'user'
-          ? { kind: 'user', id: nextId('u'), text }
+          ? { kind: 'user', id: nextId('u'), text: userText(text) }
           : { kind: 'text', id: nextId('a'), text },
       );
     } else if (entry.kind === 'image') {

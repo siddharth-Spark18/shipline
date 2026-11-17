@@ -6,8 +6,8 @@ import path from 'node:path';
 import { shiplineHome } from '../store.mjs';
 import { HttpError } from './http.mjs';
 
-export const PALETTES = ['classic', 'ultramarine', 'ember', 'harbor'];
-export const DEFAULT_PALETTE = 'ultramarine';
+export const PALETTES = ['classic', 'graphite', 'ink', 'sage', 'mocha'];
+export const DEFAULT_PALETTE = 'mocha';
 
 export const preferencesFile = () => path.join(shiplineHome(), 'ui-preferences.json');
 

@@ -681,7 +681,7 @@ function ChatView({
       {live.fatal && <FatalNotice chatId={id} fatal={live.fatal} onNewChat={onNewChat} />}
       {live.orphans && <OrphansNotice onKill={() => void killOrphans()} killing={killing} />}
       {live.result && <ResultLine result={live.result} />}
-      {project && <DraftReadyNotice repoId={project.id} drafts={newDrafts} />}
+      {project && <DraftReadyNotice drafts={newDrafts} readOnly={readOnly} />}
       {ticketProblem && !ended && ticketProblem.status !== 'connected' && (
         <TicketNotice tracker={ticketProblem.tracker} status={ticketProblem.status} />
       )}

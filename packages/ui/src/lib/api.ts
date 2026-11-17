@@ -31,6 +31,7 @@ import type {
   SetControlsResponse,
   SetupData,
   Overview,
+  Preferences,
   Project,
   Status,
   TasksData,
@@ -156,6 +157,8 @@ export const api = {
   /** Unregisters the project (or dismisses a "Not set up" one). The folder and its task data stay. */
   removeProject: (id: string) =>
     request<{ ok: true }>('DELETE', `/api/projects/${encodeURIComponent(id)}`),
+  preferences: () => request<Preferences>('GET', '/api/preferences'),
+  setPreferences: (body: Preferences) => request<Preferences>('POST', '/api/preferences', body),
   remote: () => request<RemoteInfo>('GET', '/api/remote'),
   setRemote: (enabled: boolean) => request<RemoteInfo>('POST', '/api/remote', { enabled }),
   createPairing: () => request<PairResponse>('POST', '/api/remote/pair'),

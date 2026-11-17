@@ -46,6 +46,7 @@ function reviewText(info, selection, plan) {
     `  Tracker:        ${selection.tracker}`,
     `  Confirmations:  ${selection.confirmations === 'light' ? 'light (asks only at plan approval)' : 'standard'}`,
     `  Guardrails:     ${selection.guardrails === 'off' ? 'off (every rail off, no protected paths)' : 'on'}`,
+    `  Fail-first:     ${selection.failFirst && selection.failFirst !== 'off' ? `${selection.failFirst} (bugfix)` : 'off'}`,
     `  Branch pattern: ${selection.branchPattern}`,
     `  Agents:         ${list(selection.agents)}${clashes.length ? ` (name clashes: ${clashes.join('; ')})` : ''}`,
     ...(stageAgents.length ? [`  Stage agents:   ${stageAgents.join('; ')}`] : []),

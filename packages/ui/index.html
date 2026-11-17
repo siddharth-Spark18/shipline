@@ -11,6 +11,16 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Shipline" />
     <title>Shipline</title>
+    <script>
+      // The first paint uses the palette cached by the last visit (see src/lib/palette.ts).
+      (function () {
+        var id = 'mocha';
+        try {
+          id = window.localStorage.getItem('shipline.palette') || id;
+        } catch (e) {}
+        document.documentElement.dataset.palette = id;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

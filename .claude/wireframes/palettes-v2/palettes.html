@@ -1,0 +1,151 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Palette options</title>
+<style>
+body{margin:0;padding:24px 16px;font:14px/1.4 Inter,system-ui,sans-serif;background:#fff;color:#111}
+h1{font-size:20px;margin:0 0 4px} .lead{color:#555;margin:0 0 24px;max-width:760px}
+section{margin:0 0 36px} h2{margin:0;font-size:17px} h2 small{font-weight:400;color:#666} section>p{margin:2px 0 8px;color:#555}
+.sw{display:flex;gap:4px;margin-bottom:10px} .sw span{width:22px;height:22px;border-radius:6px;border:1px solid #0002}
+.pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:14px} .lbl{font-size:12px;color:#666;margin-bottom:4px}
+.app{display:flex;border-radius:12px;overflow:hidden;border:1px solid var(--bd);background:var(--bg);color:var(--fg);min-height:250px;font-size:13px}
+aside{width:150px;flex-shrink:0;background:var(--sb);color:var(--sfg);padding:10px 8px;border-right:1px solid var(--bd);display:flex;flex-direction:column;gap:2px}
+.brand{font-weight:700;display:flex;gap:6px;align-items:center;padding:2px 6px 10px} .brand i{font-style:normal;width:20px;height:20px;border-radius:6px;background:var(--p);color:var(--pfg);display:inline-flex;align-items:center;justify-content:center;font-size:11px}
+.it{padding:5px 8px;border-radius:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .it.on{background:var(--sact);color:var(--sactfg);font-weight:600} .grp{font-size:11px;opacity:.7;padding:8px 8px 2px}
+main{flex:1;min-width:0;padding:12px;display:flex;flex-direction:column;gap:10px}
+.hdr{display:flex;align-items:center;gap:8px;flex-wrap:wrap} .sp{flex:1} .mut{color:var(--mfg)}
+button{font:inherit;border-radius:8px;padding:5px 10px;cursor:pointer} .pr{background:var(--p);color:var(--pfg);border:0;font-weight:600} .o{background:var(--card);color:var(--fg);border:1px solid var(--bd)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px} .card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:3px}
+.n{font-size:22px;font-weight:800;color:var(--p)} .chip{align-self:flex-start;background:var(--acc);color:var(--accfg);border-radius:20px;padding:1px 8px;font-size:11px;margin-top:4px}
+.row{display:flex;gap:4px;margin-top:4px;flex-wrap:wrap} .bdg{border:1px solid;border-radius:6px;padding:0 6px;font-size:11px;font-weight:600}
+.inp{background:var(--muted);border:1px solid var(--bd);border-radius:7px;padding:5px 8px;font-family:ui-monospace,Menlo,monospace;margin-top:3px}
+</style></head><body><h1>Palette options</h1><p class="lead">Classic stays. The five new palettes have quiet near-neutral backgrounds, a light sidebar (not a coloured one) and one muted accent. Each mock shows the sidebar with its selected item, the Setup header buttons, summary cards, guide/warn/block badges and an input. Every text and badge colour here is at least 4.5:1 contrast, in light and dark.</p><section><h2>Classic <small>(kept)</small></h2><p>Today's indigo (kept)</p>
+<div class="sw"><span style="background:#f5f3ee" title="light bg"></span><span style="background:#fbfaf7" title="light sidebar"></span><span style="background:#4b3fd6" title="light primary"></span><span style="background:#e9e7f6" title="light accent"></span><span style="background:#000000" title="dark bg"></span><span style="background:#0a0a0a" title="dark sidebar"></span><span style="background:#9a92ff" title="dark primary"></span><span style="background:#1e1b36" title="dark accent"></span></div>
+<div class="pair"><div><div class="lbl">Light</div><div class="app" style="--bg:#f5f3ee;--fg:#16191f;--card:#ffffff;--muted:#ece9e1;--mfg:#5e6672;--bd:#ddd9cf;--p:#4b3fd6;--pfg:#ffffff;--acc:#e9e7f6;--accfg:#2c2488;--sb:#fbfaf7;--sfg:#16191f;--sact:#e9e7f6;--sactfg:#2c2488;--g:#3f6590;--w:#8f5700;--b:#b3261e">
+ <aside><div class="brand"><i>S</i>Shipline</div>
+  <div class="it">＋ New chat</div><div class="it">All projects</div><div class="it on">Setup</div><div class="it">Health</div>
+  <div class="grp">Chats</div><div class="it">Fix login redirect</div><div class="it">Add due dates</div></aside>
+ <main><div class="hdr"><b>Setup</b><span class="mut">todo-app</span><span class="sp"></span><button class="o">Discard</button><button class="pr">Review and save</button></div>
+  <div class="grid">
+   <div class="card"><div class="n">9</div><b>Workflows</b><div class="mut">bugfix, feature, hotfix…</div><span class="chip">1 unsaved</span></div>
+   <div class="card"><div class="n">3/2</div><b>Guardrails</b><div class="mut">deny / ask</div><div class="row"><span class="bdg" style="color:var(--g);border-color:var(--g)">guide</span><span class="bdg" style="color:var(--w);border-color:var(--w)">warn</span><span class="bdg" style="color:var(--b);border-color:var(--b)">block</span></div></div>
+  </div>
+  <div class="card in"><span class="mut">Branch pattern</span><div class="inp">{type}/{key}-{slug}</div></div>
+ </main></div></div><div><div class="lbl">Dark</div><div class="app" style="--bg:#000000;--fg:#f2f2f2;--card:#121212;--muted:#171717;--mfg:#8e8e8e;--bd:#262626;--p:#9a92ff;--pfg:#0e0b26;--acc:#1e1b36;--accfg:#d9d5ff;--sb:#0a0a0a;--sfg:#f2f2f2;--sact:#1e1b36;--sactfg:#d9d5ff;--g:#8db4e2;--w:#f0b452;--b:#ff867b">
+ <aside><div class="brand"><i>S</i>Shipline</div>
+  <div class="it">＋ New chat</div><div class="it">All projects</div><div class="it on">Setup</div><div class="it">Health</div>
+  <div class="grp">Chats</div><div class="it">Fix login redirect</div><div class="it">Add due dates</div></aside>
+ <main><div class="hdr"><b>Setup</b><span class="mut">todo-app</span><span class="sp"></span><button class="o">Discard</button><button class="pr">Review and save</button></div>
+  <div class="grid">
+   <div class="card"><div class="n">9</div><b>Workflows</b><div class="mut">bugfix, feature, hotfix…</div><span class="chip">1 unsaved</span></div>
+   <div class="card"><div class="n">3/2</div><b>Guardrails</b><div class="mut">deny / ask</div><div class="row"><span class="bdg" style="color:var(--g);border-color:var(--g)">guide</span><span class="bdg" style="color:var(--w);border-color:var(--w)">warn</span><span class="bdg" style="color:var(--b);border-color:var(--b)">block</span></div></div>
+  </div>
+  <div class="card in"><span class="mut">Branch pattern</span><div class="inp">{type}/{key}-{slug}</div></div>
+ </main></div></div></div></section><section><h2>Graphite</h2><p>Neutral greys, near-black accent. Quiet and editorial.</p>
+<div class="sw"><span style="background:#fafafa" title="light bg"></span><span style="background:#f4f4f5" title="light sidebar"></span><span style="background:#18181b" title="light primary"></span><span style="background:#f1f1f3" title="light accent"></span><span style="background:#09090b" title="dark bg"></span><span style="background:#0f0f11" title="dark sidebar"></span><span style="background:#fafafa" title="dark primary"></span><span style="background:#232326" title="dark accent"></span></div>
+<div class="pair"><div><div class="lbl">Light</div><div class="app" style="--bg:#fafafa;--fg:#18181b;--card:#ffffff;--muted:#f4f4f5;--mfg:#52525b;--bd:#e4e4e7;--p:#18181b;--pfg:#fafafa;--acc:#f1f1f3;--accfg:#18181b;--sb:#f4f4f5;--sfg:#27272a;--sact:#e4e4e7;--sactfg:#09090b;--g:#3f6590;--w:#8f5700;--b:#b3261e">
+ <aside><div class="brand"><i>S</i>Shipline</div>
+  <div class="it">＋ New chat</div><div class="it">All projects</div><div class="it on">Setup</div><div class="it">Health</div>
+  <div class="grp">Chats</div><div class="it">Fix login redirect</div><div class="it">Add due dates</div></aside>
+ <main><div class="hdr"><b>Setup</b><span class="mut">todo-app</span><span class="sp"></span><button class="o">Discard</button><button class="pr">Review and save</button></div>
+  <div class="grid">
+   <div class="card"><div class="n">9</div><b>Workflows</b><div class="mut">bugfix, feature, hotfix…</div><span class="chip">1 unsaved</span></div>
+   <div class="card"><div class="n">3/2</div><b>Guardrails</b><div class="mut">deny / ask</div><div class="row"><span class="bdg" style="color:var(--g);border-color:var(--g)">guide</span><span class="bdg" style="color:var(--w);border-color:var(--w)">warn</span><span class="bdg" style="color:var(--b);border-color:var(--b)">block</span></div></div>
+  </div>
+  <div class="card in"><span class="mut">Branch pattern</span><div class="inp">{type}/{key}-{slug}</div></div>
+ </main></div></div><div><div class="lbl">Dark</div><div class="app" style="--bg:#09090b;--fg:#fafafa;--card:#141416;--muted:#232326;--mfg:#a1a1aa;--bd:#27272a;--p:#fafafa;--pfg:#18181b;--acc:#232326;--accfg:#fafafa;--sb:#0f0f11;--sfg:#e4e4e7;--sact:#27272a;--sactfg:#fafafa;--g:#8db4e2;--w:#f0b452;--b:#ff867b">
+ <aside><div class="brand"><i>S</i>Shipline</div>
+  <div class="it">＋ New chat</div><div class="it">All projects</div><div class="it on">Setup</div><div class="it">Health</div>
+  <div class="grp">Chats</div><div class="it">Fix login redirect</div><div class="it">Add due dates</div></aside>
+ <main><div class="hdr"><b>Setup</b><span class="mut">todo-app</span><span class="sp"></span><button class="o">Discard</button><button class="pr">Review and save</button></div>
+  <div class="grid">
+   <div class="card"><div class="n">9</div><b>Workflows</b><div class="mut">bugfix, feature, hotfix…</div><span class="chip">1 unsaved</span></div>
+   <div class="card"><div class="n">3/2</div><b>Guardrails</b><div class="mut">deny / ask</div><div class="row"><span class="bdg" style="color:var(--g);border-color:var(--g)">guide</span><span class="bdg" style="color:var(--w);border-color:var(--w)">warn</span><span class="bdg" style="color:var(--b);border-color:var(--b)">block</span></div></div>
+  </div>
+  <div class="card in"><span class="mut">Branch pattern</span><div class="inp">{type}/{key}-{slug}</div></div>
+ </main></div></div></div></section><section><h2>Ink</h2><p>Cool paper white, deep navy accent.</p>
+<div class="sw"><span style="background:#f7f8fa" title="light bg"></span><span style="background:#eef1f5" title="light sidebar"></span><span style="background:#1e3a5f" title="light primary"></span><span style="background:#e8eef6" title="light accent"></span><span style="background:#0b1220" title="dark bg"></span><span style="background:#080e19" title="dark sidebar"></span><span style="background:#8fb3e0" title="dark primary"></span><span style="background:#1a2a42" title="dark accent"></span></div>
+<div class="pair"><div><div class="lbl">Light</div><div class="app" style="--bg:#f7f8fa;--fg:#111827;--card:#ffffff;--muted:#eef1f5;--mfg:#4b5563;--bd:#e2e6ec;--p:#1e3a5f;--pfg:#ffffff;--acc:#e8eef6;--accfg:#1e3a5f;--sb:#eef1f5;--sfg:#1f2937;--sact:#dde5ef;--sactfg:#1e3a5f;--g:#3f6590;--w:#8f5700;--b:#b3261e">
+ <aside><div class="brand"><i>S</i>Shipline</div>
+  <div class="it">＋ New chat</div><div class="it">All projects</div><div class="it on">Setup</div><div class="it">Health</div>
+  <div class="grp">Chats</div><div class="it">Fix login redirect</div><div class="it">Add due dates</div></aside>
+ <main><div class="hdr"><b>Setup</b><span class="mut">todo-app</span><span class="sp"></span><button class="o">Discard</button><button class="pr">Review and save</button></div>
+  <div class="grid">
+   <div class="card"><div class="n">9</div><b>Workflows</b><div class="mut">bugfix, feature, hotfix…</div><span class="chip">1 unsaved</span></div>
+   <div class="card"><div class="n">3/2</div><b>Guardrails</b><div class="mut">deny / ask</div><div class="row"><span class="bdg" style="color:var(--g);border-color:var(--g)">guide</span><span class="bdg" style="color:var(--w);border-color:var(--w)">warn</span><span class="bdg" style="color:var(--b);border-color:var(--b)">block</span></div></div>
+  </div>
+  <div class="card in"><span class="mut">Branch pattern</span><div class="inp">{type}/{key}-{slug}</div></div>
+ </main></div></div><div><div class="lbl">Dark</div><div class="app" style="--bg:#0b1220;--fg:#e5e9f0;--card:#111a2b;--muted:#1a2436;--mfg:#9aa5b8;--bd:#1f2a3d;--p:#8fb3e0;--pfg:#0b1220;--acc:#1a2a42;--accfg:#cfe0f5;--sb:#080e19;--sfg:#d6dde8;--sact:#1a2a42;--sactfg:#e5eef9;--g:#8db4e2;--w:#f0b452;--b:#ff867b">
+ <aside><div class="brand"><i>S</i>Shipline</div>
+  <div class="it">＋ New chat</div><div class="it">All projects</div><div class="it on">Setup</div><div class="it">Health</div>
+  <div class="grp">Chats</div><div class="it">Fix login redirect</div><div class="it">Add due dates</div></aside>
+ <main><div class="hdr"><b>Setup</b><span class="mut">todo-app</span><span class="sp"></span><button class="o">Discard</button><button class="pr">Review and save</button></div>
+  <div class="grid">
+   <div class="card"><div class="n">9</div><b>Workflows</b><div class="mut">bugfix, feature, hotfix…</div><span class="chip">1 unsaved</span></div>
+   <div class="card"><div class="n">3/2</div><b>Guardrails</b><div class="mut">deny / ask</div><div class="row"><span class="bdg" style="color:var(--g);border-color:var(--g)">guide</span><span class="bdg" style="color:var(--w);border-color:var(--w)">warn</span><span class="bdg" style="color:var(--b);border-color:var(--b)">block</span></div></div>
+  </div>
+  <div class="card in"><span class="mut">Branch pattern</span><div class="inp">{type}/{key}-{slug}</div></div>
+ </main></div></div></div></section><section><h2>Sage</h2><p>Soft stone neutrals, muted green accent.</p>
+<div class="sw"><span style="background:#f7f7f4" title="light bg"></span><span style="background:#efefe9" title="light sidebar"></span><span style="background:#3f5f4a" title="light primary"></span><span style="background:#e7eee8" title="light accent"></span><span style="background:#0e110f" title="dark bg"></span><span style="background:#0a0d0b" title="dark sidebar"></span><span style="background:#9cc3a8" title="dark primary"></span><span style="background:#1d2a21" title="dark accent"></span></div>
+<div class="pair"><div><div class="lbl">Light</div><div class="app" style="--bg:#f7f7f4;--fg:#1c1f1b;--card:#ffffff;--muted:#eeefe9;--mfg:#565c53;--bd:#e1e3db;--p:#3f5f4a;--pfg:#ffffff;--acc:#e7eee8;--accfg:#2f4a39;--sb:#efefe9;--sfg:#262a25;--sact:#e0e7e1;--sactfg:#2f4a39;--g:#3f6590;--w:#8f5700;--b:#b3261e">
+ <aside><div class="brand"><i>S</i>Shipline</div>
+  <div class="it">＋ New chat</div><div class="it">All projects</div><div class="it on">Setup</div><div class="it">Health</div>
+  <div class="grp">Chats</div><div class="it">Fix login redirect</div><div class="it">Add due dates</div></aside>
+ <main><div class="hdr"><b>Setup</b><span class="mut">todo-app</span><span class="sp"></span><button class="o">Discard</button><button class="pr">Review and save</button></div>
+  <div class="grid">
+   <div class="card"><div class="n">9</div><b>Workflows</b><div class="mut">bugfix, feature, hotfix…</div><span class="chip">1 unsaved</span></div>
+   <div class="card"><div class="n">3/2</div><b>Guardrails</b><div class="mut">deny / ask</div><div class="row"><span class="bdg" style="color:var(--g);border-color:var(--g)">guide</span><span class="bdg" style="color:var(--w);border-color:var(--w)">warn</span><span class="bdg" style="color:var(--b);border-color:var(--b)">block</span></div></div>
+  </div>
+  <div class="card in"><span class="mut">Branch pattern</span><div class="inp">{type}/{key}-{slug}</div></div>
+ </main></div></div><div><div class="lbl">Dark</div><div class="app" style="--bg:#0e110f;--fg:#e8ebe6;--card:#161a17;--muted:#1f2420;--mfg:#a0a89d;--bd:#252b26;--p:#9cc3a8;--pfg:#0e1a12;--acc:#1d2a21;--accfg:#cfe5d6;--sb:#0a0d0b;--sfg:#dde2da;--sact:#1d2a21;--sactfg:#e3f0e7;--g:#8db4e2;--w:#f0b452;--b:#ff867b">
+ <aside><div class="brand"><i>S</i>Shipline</div>
+  <div class="it">＋ New chat</div><div class="it">All projects</div><div class="it on">Setup</div><div class="it">Health</div>
+  <div class="grp">Chats</div><div class="it">Fix login redirect</div><div class="it">Add due dates</div></aside>
+ <main><div class="hdr"><b>Setup</b><span class="mut">todo-app</span><span class="sp"></span><button class="o">Discard</button><button class="pr">Review and save</button></div>
+  <div class="grid">
+   <div class="card"><div class="n">9</div><b>Workflows</b><div class="mut">bugfix, feature, hotfix…</div><span class="chip">1 unsaved</span></div>
+   <div class="card"><div class="n">3/2</div><b>Guardrails</b><div class="mut">deny / ask</div><div class="row"><span class="bdg" style="color:var(--g);border-color:var(--g)">guide</span><span class="bdg" style="color:var(--w);border-color:var(--w)">warn</span><span class="bdg" style="color:var(--b);border-color:var(--b)">block</span></div></div>
+  </div>
+  <div class="card in"><span class="mut">Branch pattern</span><div class="inp">{type}/{key}-{slug}</div></div>
+ </main></div></div></div></section><section><h2>Mocha</h2><p>Warm cream, espresso-brown accent.</p>
+<div class="sw"><span style="background:#faf8f5" title="light bg"></span><span style="background:#f3efe9" title="light sidebar"></span><span style="background:#5b4636" title="light primary"></span><span style="background:#f1e9e0" title="light accent"></span><span style="background:#12100e" title="dark bg"></span><span style="background:#0d0b0a" title="dark sidebar"></span><span style="background:#d6b89c" title="dark primary"></span><span style="background:#2c241d" title="dark accent"></span></div>
+<div class="pair"><div><div class="lbl">Light</div><div class="app" style="--bg:#faf8f5;--fg:#1f1a17;--card:#ffffff;--muted:#f1ede7;--mfg:#5f564e;--bd:#e6e0d7;--p:#5b4636;--pfg:#ffffff;--acc:#f1e9e0;--accfg:#4a3829;--sb:#f3efe9;--sfg:#2a231e;--sact:#e8dfd4;--sactfg:#3f2f22;--g:#3f6590;--w:#8f5700;--b:#b3261e">
+ <aside><div class="brand"><i>S</i>Shipline</div>
+  <div class="it">＋ New chat</div><div class="it">All projects</div><div class="it on">Setup</div><div class="it">Health</div>
+  <div class="grp">Chats</div><div class="it">Fix login redirect</div><div class="it">Add due dates</div></aside>
+ <main><div class="hdr"><b>Setup</b><span class="mut">todo-app</span><span class="sp"></span><button class="o">Discard</button><button class="pr">Review and save</button></div>
+  <div class="grid">
+   <div class="card"><div class="n">9</div><b>Workflows</b><div class="mut">bugfix, feature, hotfix…</div><span class="chip">1 unsaved</span></div>
+   <div class="card"><div class="n">3/2</div><b>Guardrails</b><div class="mut">deny / ask</div><div class="row"><span class="bdg" style="color:var(--g);border-color:var(--g)">guide</span><span class="bdg" style="color:var(--w);border-color:var(--w)">warn</span><span class="bdg" style="color:var(--b);border-color:var(--b)">block</span></div></div>
+  </div>
+  <div class="card in"><span class="mut">Branch pattern</span><div class="inp">{type}/{key}-{slug}</div></div>
+ </main></div></div><div><div class="lbl">Dark</div><div class="app" style="--bg:#12100e;--fg:#ede8e3;--card:#1b1815;--muted:#25211d;--mfg:#ab9f94;--bd:#2c2722;--p:#d6b89c;--pfg:#1f150c;--acc:#2c241d;--accfg:#ecd9c6;--sb:#0d0b0a;--sfg:#e3ddd6;--sact:#2c241d;--sactfg:#f1e4d6;--g:#8db4e2;--w:#f0b452;--b:#ff867b">
+ <aside><div class="brand"><i>S</i>Shipline</div>
+  <div class="it">＋ New chat</div><div class="it">All projects</div><div class="it on">Setup</div><div class="it">Health</div>
+  <div class="grp">Chats</div><div class="it">Fix login redirect</div><div class="it">Add due dates</div></aside>
+ <main><div class="hdr"><b>Setup</b><span class="mut">todo-app</span><span class="sp"></span><button class="o">Discard</button><button class="pr">Review and save</button></div>
+  <div class="grid">
+   <div class="card"><div class="n">9</div><b>Workflows</b><div class="mut">bugfix, feature, hotfix…</div><span class="chip">1 unsaved</span></div>
+   <div class="card"><div class="n">3/2</div><b>Guardrails</b><div class="mut">deny / ask</div><div class="row"><span class="bdg" style="color:var(--g);border-color:var(--g)">guide</span><span class="bdg" style="color:var(--w);border-color:var(--w)">warn</span><span class="bdg" style="color:var(--b);border-color:var(--b)">block</span></div></div>
+  </div>
+  <div class="card in"><span class="mut">Branch pattern</span><div class="inp">{type}/{key}-{slug}</div></div>
+ </main></div></div></div></section><section><h2>Plum</h2><p>Soft neutrals, muted aubergine accent.</p>
+<div class="sw"><span style="background:#faf8fa" title="light bg"></span><span style="background:#f2eef3" title="light sidebar"></span><span style="background:#5e3a63" title="light primary"></span><span style="background:#f1e8f2" title="light accent"></span><span style="background:#110e12" title="dark bg"></span><span style="background:#0c0a0d" title="dark sidebar"></span><span style="background:#d0a8d6" title="dark primary"></span><span style="background:#2b2030" title="dark accent"></span></div>
+<div class="pair"><div><div class="lbl">Light</div><div class="app" style="--bg:#faf8fa;--fg:#1e1a1f;--card:#ffffff;--muted:#f1edf2;--mfg:#5c5460;--bd:#e5dfe7;--p:#5e3a63;--pfg:#ffffff;--acc:#f1e8f2;--accfg:#4b2b50;--sb:#f2eef3;--sfg:#29232b;--sact:#e7dcea;--sactfg:#4b2b50;--g:#3f6590;--w:#8f5700;--b:#b3261e">
+ <aside><div class="brand"><i>S</i>Shipline</div>
+  <div class="it">＋ New chat</div><div class="it">All projects</div><div class="it on">Setup</div><div class="it">Health</div>
+  <div class="grp">Chats</div><div class="it">Fix login redirect</div><div class="it">Add due dates</div></aside>
+ <main><div class="hdr"><b>Setup</b><span class="mut">todo-app</span><span class="sp"></span><button class="o">Discard</button><button class="pr">Review and save</button></div>
+  <div class="grid">
+   <div class="card"><div class="n">9</div><b>Workflows</b><div class="mut">bugfix, feature, hotfix…</div><span class="chip">1 unsaved</span></div>
+   <div class="card"><div class="n">3/2</div><b>Guardrails</b><div class="mut">deny / ask</div><div class="row"><span class="bdg" style="color:var(--g);border-color:var(--g)">guide</span><span class="bdg" style="color:var(--w);border-color:var(--w)">warn</span><span class="bdg" style="color:var(--b);border-color:var(--b)">block</span></div></div>
+  </div>
+  <div class="card in"><span class="mut">Branch pattern</span><div class="inp">{type}/{key}-{slug}</div></div>
+ </main></div></div><div><div class="lbl">Dark</div><div class="app" style="--bg:#110e12;--fg:#ece6ee;--card:#1a161b;--muted:#241f26;--mfg:#a99fad;--bd:#2b252d;--p:#d0a8d6;--pfg:#1d0f20;--acc:#2b2030;--accfg:#ecd6f0;--sb:#0c0a0d;--sfg:#e2dbe4;--sact:#2b2030;--sactfg:#f1e2f4;--g:#8db4e2;--w:#f0b452;--b:#ff867b">
+ <aside><div class="brand"><i>S</i>Shipline</div>
+  <div class="it">＋ New chat</div><div class="it">All projects</div><div class="it on">Setup</div><div class="it">Health</div>
+  <div class="grp">Chats</div><div class="it">Fix login redirect</div><div class="it">Add due dates</div></aside>
+ <main><div class="hdr"><b>Setup</b><span class="mut">todo-app</span><span class="sp"></span><button class="o">Discard</button><button class="pr">Review and save</button></div>
+  <div class="grid">
+   <div class="card"><div class="n">9</div><b>Workflows</b><div class="mut">bugfix, feature, hotfix…</div><span class="chip">1 unsaved</span></div>
+   <div class="card"><div class="n">3/2</div><b>Guardrails</b><div class="mut">deny / ask</div><div class="row"><span class="bdg" style="color:var(--g);border-color:var(--g)">guide</span><span class="bdg" style="color:var(--w);border-color:var(--w)">warn</span><span class="bdg" style="color:var(--b);border-color:var(--b)">block</span></div></div>
+  </div>
+  <div class="card in"><span class="mut">Branch pattern</span><div class="inp">{type}/{key}-{slug}</div></div>
+ </main></div></div></div></section></body></html>

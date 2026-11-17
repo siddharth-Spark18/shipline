@@ -12,7 +12,7 @@ import {
 import { detectCommands } from './detect-commands.mjs';
 import { detectUi } from './detect-ui.mjs';
 import {
-  CONFIRMATIONS, RAIL_IDS, TRACKERS, branchPatternError, configLayout, headerFor, validateConfig, validateWorkflow,
+  CONFIRMATIONS, FAIL_FIRST_LEVELS, RAIL_IDS, TRACKERS, branchPatternError, configLayout, headerFor, validateConfig, validateWorkflow,
 } from './setup-schema.mjs';
 import { storeDir } from './store.mjs';
 import { emitConfig, emitWorkflow } from './yaml-emit.mjs';
@@ -98,7 +98,7 @@ function hasShiplineHooks(settingsText) {
 const AGENT_PATH = (name) => `.claude/agents/${name}.md`;
 const ID_RE = /^[A-Za-z0-9_-]+$/;
 const COMMAND_KEYS = ['test', 'lint', 'build'];
-const GUARDRAIL_KEYS = ['rails', 'rails_commands', 'protected_paths', 'scope_check'];
+const GUARDRAIL_KEYS = ['rails', 'rails_commands', 'protected_paths', 'scope_check', 'fail_first'];
 const CONFIG_TEMPLATE = path.join(TEMPLATES, 'shipline', 'config.yml');
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -248,6 +248,7 @@ export function defaultSelection(info) {
     tracker: 'none',
     confirmations: 'standard',
     guardrails: 'on',
+    failFirst: 'off',
     branchPattern: DEFAULT_BRANCH_PATTERN,
     ci: false,
   };
@@ -255,7 +256,7 @@ export function defaultSelection(info) {
 
 // Terminal init: fills what an answer left out (the API requires every field instead).
 export function fillSelection(info, sel) {
-  const out = { ui: info.uiDetected, clashes: {}, stageAgents: {}, skills: [], tracker: 'none', confirmations: 'standard', guardrails: 'on', branchPattern: DEFAULT_BRANCH_PATTERN, ci: false, ...sel };
+  const out = { ui: info.uiDetected, clashes: {}, stageAgents: {}, skills: [], tracker: 'none', confirmations: 'standard', guardrails: 'on', failFirst: 'off', branchPattern: DEFAULT_BRANCH_PATTERN, ci: false, ...sel };
   out.commands = sel.commands === undefined ? pickCommands(info.detected) : { ...pickCommands(null), ...sel.commands };
   return out;
 }
@@ -294,9 +295,10 @@ export function checkSelection(info, sel, { partial = false } = {}) {
     }
     if (!partial && COMMAND_KEYS.some((k) => typeof c[k] !== 'string')) fail('commands must have test, lint and build text');
   }
-  // These three are optional everywhere: a missing field means the default (older API callers keep working).
+  // These are optional everywhere: a missing field means the default (older API callers keep working).
   if (sel.confirmations !== undefined && !CONFIRMATIONS.includes(sel.confirmations)) fail(`confirmations must be ${CONFIRMATIONS.join(' or ')}`);
   if (sel.guardrails !== undefined && !['on', 'off'].includes(sel.guardrails)) fail('guardrails must be on or off');
+  if (sel.failFirst !== undefined && !FAIL_FIRST_LEVELS.includes(sel.failFirst)) fail(`failFirst must be ${FAIL_FIRST_LEVELS.join(', ')}`);
   if (sel.branchPattern !== undefined) {
     if (typeof sel.branchPattern !== 'string') fail('branchPattern must be text');
     const bad = branchPatternError(sel.branchPattern.trim());
@@ -348,7 +350,11 @@ export function checkSelection(info, sel, { partial = false } = {}) {
   }
   if (sel.workflowModels !== undefined || sel.guardrailConfig !== undefined || sel.setupDone !== undefined) {
     const { model } = buildConfigModel(CONFIG_TEMPLATE, sel);
-    for (const i of validateConfig(model, { skills: info.repoSkills })) {
+    const workflows = sel.workflows.map((id) => ({
+      id,
+      stages: (isObj(sel.workflowModels && sel.workflowModels[id]) && Array.isArray(sel.workflowModels[id].stages) ? sel.workflowModels[id].stages : (info.workflows.find((w) => w.id === id) || { stages: [] }).stages) || [],
+    }));
+    for (const i of validateConfig(model, { skills: info.repoSkills, workflows })) {
       if (i.severity !== 'warning') issues.push({ file: '.shipline/config.yml', path: i.path, message: i.message });
     }
   }
@@ -465,6 +471,11 @@ function buildConfigModel(from, selection) {
   } else if (guardrailsOff) {
     model.rails = Object.fromEntries(RAIL_IDS.map((id) => [id, 'off']));
     model.protected_paths = [];
+    changed = true;
+  }
+  // failFirst (terminal) applies unless guardrailConfig sets fail_first itself.
+  if (selection.failFirst && selection.failFirst !== 'off' && !(selection.guardrailConfig && selection.guardrailConfig.fail_first !== undefined)) {
+    model.fail_first = { level: selection.failFirst, workflows: ['bugfix'] };
     changed = true;
   }
   if (selection.setupDone === true) {

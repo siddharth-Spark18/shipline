@@ -34,7 +34,7 @@ function packFiles() {
 describe('package.json', () => {
   test('name, version, bin and files', () => {
     assert.equal(pkg.name, '@forgeyard/shipline');
-    assert.equal(pkg.version, '2.0.0');
+    assert.equal(pkg.version, '2.1.0');
     assert.deepEqual(pkg.bin, { shipline: 'bin/shipline.mjs' });
     // npm adds LICENSE on its own but not CHANGELOG.md; both are listed (1.0 plan, item 1-2).
     for (const f of ['bin', 'src', 'templates', 'ui-dist', 'CHANGELOG.md', 'LICENSE']) assert.ok(pkg.files.includes(f), f);
@@ -218,34 +218,44 @@ describe('known-hashes.json', () => {
   // (only the shipline-setup skill changed) and keeps every 1.0.0 one, so upgrade from 1.0.0 refreshes unedited files.
   // 1.3.0 adds lib.mjs (more stacks in the deploy, migrate and release rails and the scope check). 2.0.0 adds the
   // workflow designer: new files (the skill, workflow-check.mjs, bin/shipped/*) and new hashes for stage.mjs, lib.mjs,
-  // the shipline-setup skill and the CLAUDE.md block.
+  // the shipline-setup skill and the CLAUDE.md block. 2.1.0 adds the install_packages rail and fail_first: new hashes
+  // for ci-check.mjs, guard.mjs, lib.mjs, stage.mjs and the shipline-setup skill (the CLAUDE.md block is unchanged).
   test('keeps one 1.0.0 hash per path that existed in 1.0.0, and records the later changes', () => {
     const current = templateHashes();
     assert.deepEqual(Object.keys(KNOWN).sort(), Object.keys(current).sort());
     const SKILL = '.claude/skills/shipline-setup/SKILL.md';
     const LIB = '.shipline/bin/lib.mjs';
     const NEW_IN_2 = (p) => /^\.shipline\/bin\/(shipped\/|workflow-check\.mjs$)|^\.claude\/skills\/shipline-workflow-designer\//.test(p);
-    const CHANGED_IN_2 = ['.shipline/bin/stage.mjs', 'CLAUDE.md#shipline'];
+    const CHANGED_IN_2 = ['CLAUDE.md#shipline'];
+    const CHANGED_IN_21 = ['.shipline/bin/ci-check.mjs', '.shipline/bin/guard.mjs', '.shipline/bin/stage.mjs'];
     for (const [p, byHash] of Object.entries(KNOWN)) {
-      assert.ok(Object.values(byHash).every((v) => ['1.0.0', '1.1.0', '1.3.0', '2.0.0'].includes(v)), p);
+      assert.ok(Object.values(byHash).every((v) => ['1.0.0', '1.1.0', '1.3.0', '2.0.0', '2.1.0'].includes(v)), p);
       if (NEW_IN_2(p)) {
         assert.deepEqual(byHash, { [current[p]]: '2.0.0' }, p);
         continue;
       }
       assert.equal(Object.values(byHash).filter((v) => v === '1.0.0').length, 1, `${p}: its 1.0.0 entry`);
-      if (p !== SKILL && p !== LIB && !CHANGED_IN_2.includes(p)) assert.deepEqual(byHash, { [current[p]]: '1.0.0' }, p);
+      if (p !== SKILL && p !== LIB && !CHANGED_IN_2.includes(p) && !CHANGED_IN_21.includes(p)) assert.deepEqual(byHash, { [current[p]]: '1.0.0' }, p);
     }
     for (const p of CHANGED_IN_2) {
       assert.equal(Object.keys(KNOWN[p]).length, 2, p);
       assert.equal(KNOWN[p][current[p]], '2.0.0', p);
     }
-    assert.equal(Object.keys(KNOWN[LIB]).length, 3);
-    assert.equal(KNOWN[LIB][current[LIB]], '2.0.0');
+    for (const p of ['.shipline/bin/ci-check.mjs', '.shipline/bin/guard.mjs']) {
+      assert.equal(Object.keys(KNOWN[p]).length, 2, p);
+      assert.equal(KNOWN[p][current[p]], '2.1.0', p);
+    }
+    assert.equal(Object.keys(KNOWN['.shipline/bin/stage.mjs']).length, 3);
+    assert.equal(KNOWN['.shipline/bin/stage.mjs'][current['.shipline/bin/stage.mjs']], '2.1.0');
+    assert.equal(Object.keys(KNOWN[LIB]).length, 4);
+    assert.equal(KNOWN[LIB][current[LIB]], '2.1.0');
     assert.ok(Object.values(KNOWN[LIB]).includes('1.3.0'));
+    assert.ok(Object.values(KNOWN[LIB]).includes('2.0.0'));
     assert.deepEqual(KNOWN[SKILL], {
       dada383a26cf8d85288156129d53c3b684455bea529fa78c314c299667cc3c39: '1.0.0',
       '50d2c0c64a6aaddc3ccf5e592e89ea98f03ef644042325732ab2083e73763430': '1.1.0',
-      [current[SKILL]]: '2.0.0',
+      ...Object.fromEntries(Object.entries(KNOWN[SKILL]).filter(([, v]) => v === '2.0.0')),
+      [current[SKILL]]: '2.1.0',
     });
     assert.equal(current[SKILL], sha256(readFileSync(path.join(CLI_ROOT, 'templates', 'claude', 'skills', 'shipline-setup', 'SKILL.md'))));
   });
@@ -258,8 +268,9 @@ describe('known-hashes.json', () => {
       let checked = 0;
       for (const [p, h] of Object.entries(v.files)) {
         if (!KNOWN[p]) continue; // files known-hashes.json doesn't track (none expected beyond the team-owned ones)
-        const since2 = /^\.shipline\/bin\/(shipped\/|workflow-check\.mjs$|stage\.mjs$|lib\.mjs$)|^\.claude\/skills\/shipline-(workflow-designer|setup)\/|^CLAUDE\.md#shipline$/.test(p);
-        assert.equal(KNOWN[p][h], since2 ? '2.0.0' : '1.0.0', p);
+        const since21 = /^\.shipline\/bin\/(stage|lib|guard|ci-check)\.mjs$|^\.claude\/skills\/shipline-setup\//.test(p);
+        const since2 = /^\.shipline\/bin\/(shipped\/|workflow-check\.mjs$)|^\.claude\/skills\/shipline-workflow-designer\/|^CLAUDE\.md#shipline$/.test(p);
+        assert.equal(KNOWN[p][h], since21 ? '2.1.0' : since2 ? '2.0.0' : '1.0.0', p);
         if (!p.includes('#')) assert.equal(sha256(readFileSync(path.join(dir, p))), h, p);
         checked++;
       }
@@ -359,7 +370,8 @@ describe('LICENSE and CHANGELOG.md', () => {
     const log = readFileSync(path.join(CLI_ROOT, 'CHANGELOG.md'), 'utf8');
     assert.match(log, /Keep a Changelog/);
     assert.ok(log.includes(`## [${PACKAGE_VERSION}] - `), `## [${PACKAGE_VERSION}]`);
-    assert.equal(PACKAGE_VERSION, '2.0.0');
+    assert.equal(PACKAGE_VERSION, '2.1.0');
+    assert.ok(log.indexOf('## [2.1.0] - ') < log.indexOf('## [2.0.0] - '), 'newest first');
     assert.ok(log.indexOf('## [2.0.0] - ') < log.indexOf('## [1.0.0] - '), 'newest first, 1.0.0 kept');
     assert.deepEqual([...log.matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)].map((m) => m[1]).filter((v) => v.startsWith('0.')), []);
   });

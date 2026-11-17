@@ -34,6 +34,7 @@ import { safeEqual } from './auth.mjs';
 import { MIN_CLAUDE_VERSION, claudeHealth } from './claude.mjs';
 import { redact } from './log.mjs';
 import { listChats, liveLock } from './sessions.mjs';
+import { routes as preferencesRoutes } from './preferences.mjs';
 import { routes as setupRoutes } from './setup.mjs';
 import { makeTaskView, readOpenTasks, readTask, routes as taskRoutes } from './tasks.mjs';
 import { startTaskWatch } from './watch.mjs';
@@ -741,6 +742,7 @@ export function createProjects(app) {
         path: '/api/projects/:repoId',
         handler: ({ params }) => remove(params.repoId),
       },
+      ...preferencesRoutes(app),
       { method: 'GET', path: '/api/overview', handler: () => overview() },
       { method: 'GET', path: '/api/chats', handler: () => chatsList() },
       {

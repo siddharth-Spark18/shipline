@@ -23,7 +23,8 @@
   ".claude/skills/shipline-setup/SKILL.md": {
     "dada383a26cf8d85288156129d53c3b684455bea529fa78c314c299667cc3c39": "1.0.0",
     "50d2c0c64a6aaddc3ccf5e592e89ea98f03ef644042325732ab2083e73763430": "1.1.0",
-    "5920251a76600fad4bf13a05b8119b27e4cad4d7ba34f305ea1733eab94c80de": "2.0.0"
+    "5920251a76600fad4bf13a05b8119b27e4cad4d7ba34f305ea1733eab94c80de": "2.0.0",
+    "657ba4ed5d215f96033043ce070149b92e8b09e8ccce4223ed4490517926fb48": "2.1.0"
   },
   ".claude/skills/shipline-workflow-designer/SKILL.md": {
     "b8c9f3b6e2e0ef6388b3912d4bdec23a5032291a9fd223d85b8a5354053a5de1": "2.0.0"
@@ -35,15 +36,18 @@
     "f86f30aba4bb7f1a417fe5d4f00c435865a99545c66094543dac286ba9da129e": "1.0.0"
   },
   ".shipline/bin/ci-check.mjs": {
-    "e1a4bf96b5bd488ab5653a39dc9ab6324a73e97c3f76e558951b316bf5440c55": "1.0.0"
+    "e1a4bf96b5bd488ab5653a39dc9ab6324a73e97c3f76e558951b316bf5440c55": "1.0.0",
+    "51f4cf26873a40c06563a1bc419874fefe3ea57a4c8c410d6a5ba3aae1132e9b": "2.1.0"
   },
   ".shipline/bin/guard.mjs": {
-    "845d061d17da3bc717743d132bf9ef130ce3b4f600f1529cae8d17261d647e4e": "1.0.0"
+    "845d061d17da3bc717743d132bf9ef130ce3b4f600f1529cae8d17261d647e4e": "1.0.0",
+    "f26dd1b8f10fcbea55024c2993a7297ec24f0bc1df2e088ddf86a7623aa4ae30": "2.1.0"
   },
   ".shipline/bin/lib.mjs": {
     "53a892b1ed71a82f3fe98c1f4e6522cb5af4e95a5a522fd4ff0ba5ae87bbd732": "1.0.0",
     "91f253aa7926973597bbeb023699d830a05d87669e83b1458cccf87b686f9ed0": "1.3.0",
-    "a8f3960790f0af4bd6e18c9b9322525d05504e28918d4b210185fc53921330ab": "2.0.0"
+    "a8f3960790f0af4bd6e18c9b9322525d05504e28918d4b210185fc53921330ab": "2.0.0",
+    "6f6bc5bc32695a0ef433b96420b6a6c989c37eefabad6ba8e0d6613f4186d83a": "2.1.0"
   },
   ".shipline/bin/prompt-submit.mjs": {
     "6a14bbaee6cc42c6bb65d03cddb30300647663402672fc75d6e1632f5c0ce75f": "1.0.0"
@@ -83,7 +87,8 @@
   },
   ".shipline/bin/stage.mjs": {
     "bff7df0babdda47aedfb2a3e673999ea7209b1584db265dfcf277940aa71145e": "1.0.0",
-    "7ca4007a7a165b012242e62cbc99ad56a7c4e6defd071933b1fe68a0602ed8fb": "2.0.0"
+    "7ca4007a7a165b012242e62cbc99ad56a7c4e6defd071933b1fe68a0602ed8fb": "2.0.0",
+    "4d4c1c42a2b4c7900d0141b55920881e3e7c035fe874dc1779aaebed354e031b": "2.1.0"
   },
   ".shipline/bin/workflow-check.mjs": {
     "4b98feac1710c8574efbe39400deca95fe83ffcc2151b8e538263a024964b855": "2.0.0"

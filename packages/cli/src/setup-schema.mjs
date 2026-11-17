@@ -14,12 +14,13 @@ const TEMPLATES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 
 // Keys the form edits. Anything else in a file is shown as "other fields (kept)".
 export const KNOWN_FIELDS = {
   config: {
-    top: ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup', 'rails', 'rails_commands', 'protected_paths', 'scope_check', 'confirmations'],
+    top: ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup', 'rails', 'rails_commands', 'protected_paths', 'scope_check', 'confirmations', 'fail_first'],
     commands: ['test', 'lint', 'build'],
     ci: ['missing_block', 'skip_label', 'stale_checks'],
-    rails: ['force_push_default', 'push_default', 'pipe_to_shell', 'print_credentials', 'read_credentials', 'deploy', 'migrate', 'agent_config'],
-    rails_commands: ['deploy', 'migrate'],
+    rails: ['force_push_default', 'push_default', 'pipe_to_shell', 'print_credentials', 'read_credentials', 'deploy', 'migrate', 'install_packages', 'agent_config'],
+    rails_commands: ['deploy', 'migrate', 'install_packages'],
     scope_check: ['enabled', 'sensitive_extra'],
+    fail_first: ['level', 'workflows'],
   },
   workflow: {
     top: ['id', 'name', 'description', 'branch_type', 'stages'],
@@ -38,6 +39,7 @@ export const TRACKERS = ['none', 'jira', 'github'];
 export const CONFIRMATIONS = ['standard', 'light'];
 export const RAIL_IDS = KNOWN_FIELDS.config.rails;
 export const RAIL_LEVELS = ['deny', 'ask', 'off'];
+export const FAIL_FIRST_LEVELS = ['off', 'note', 'section', 'proof'];
 
 
 function checkPattern(model, key, out) {
@@ -58,8 +60,9 @@ export function branchPatternError(value) {
 }
 
 // opts.skills: names of the folders in .claude/skills (omit to skip the missing-folder warning).
+// opts.workflows: [{ id, stages: [{ id }] }] of the repo's workflows (omit to skip the fail_first workflow checks).
 // Returns [{ path, message }]. Warnings carry severity: 'warning'; everything else is an error.
-export function validateConfig(model, { skills = null } = {}) {
+export function validateConfig(model, { skills = null, workflows = null } = {}) {
   const out = [];
   if (!isObj(model)) return [err('', 'config must be a map')];
 
@@ -104,6 +107,7 @@ export function validateConfig(model, { skills = null } = {}) {
     }
   }
   validateGuardrails(model, out);
+  validateFailFirst(model, out, workflows);
   lineBreakErrors(model, '', out);
   return out;
 }
@@ -129,11 +133,12 @@ function validateGuardrails(model, out) {
   }
   const rc = model.rails_commands;
   if (rc !== undefined && rc !== null) {
-    if (!isObj(rc)) out.push(err('rails_commands', 'must be a map with deploy and migrate lists'));
+    if (!isObj(rc)) out.push(err('rails_commands', 'must be a map with deploy, migrate and install_packages lists'));
     else {
       for (const k of Object.keys(rc)) if (!KNOWN_FIELDS.config.rails_commands.includes(k)) out.push(warn(`rails_commands.${k}`, 'not a known key; it is ignored'));
       stringList(rc.deploy, 'rails_commands.deploy');
       stringList(rc.migrate, 'rails_commands.migrate');
+      stringList(rc.install_packages, 'rails_commands.install_packages');
     }
   }
   stringList(model.protected_paths, 'protected_paths');
@@ -145,6 +150,32 @@ function validateGuardrails(model, out) {
       stringList(sc.sensitive_extra, 'scope_check.sensitive_extra');
     }
   }
+}
+
+// fail_first: level must be one of FAIL_FIRST_LEVELS; workflows a list of existing workflow ids. A listed workflow
+// with no `reproduce` stage is a warning (nothing to enforce there). An unknown workflow id is an error unless
+// the level is off.
+function validateFailFirst(model, out, workflows) {
+  const ff = model.fail_first;
+  if (ff === undefined || ff === null) return;
+  if (!isObj(ff)) return void out.push(err('fail_first', 'must be a map with level and workflows'));
+  for (const k of Object.keys(ff)) if (!KNOWN_FIELDS.config.fail_first.includes(k)) out.push(warn(`fail_first.${k}`, 'not a known key; it is ignored'));
+  if (ff.level !== undefined && ff.level !== null && !FAIL_FIRST_LEVELS.includes(ff.level)) {
+    out.push(err('fail_first.level', `must be one of ${FAIL_FIRST_LEVELS.join(', ')}`));
+  }
+  const wf = ff.workflows;
+  if (wf === undefined || wf === null) return;
+  if (!Array.isArray(wf)) return void out.push(err('fail_first.workflows', 'must be a list of workflow ids'));
+  wf.forEach((id, i) => {
+    const p = `fail_first.workflows[${i}]`;
+    if (typeof id !== 'string' || !ID_RE.test(id)) return void out.push(err(p, 'must be a workflow id'));
+    if (!workflows) return;
+    const known = workflows.find((w) => w.id === id);
+    if (!known) {
+      if (ff.level !== 'off' && ff.level !== undefined && ff.level !== null) out.push(err(p, `no workflow "${id}" in this repo`));
+    }
+    else if (!(known.stages || []).some((s) => s && s.id === 'reproduce')) out.push(warn(p, `workflow "${id}" has no reproduce stage, so fail_first does nothing there`));
+  });
 }
 
 // The run of `#` lines from line 1 of the shipped template, plus one blank line after it if there is one.

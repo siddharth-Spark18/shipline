@@ -1,0 +1,74 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Setup baseline (Shipline 2.0.0)</title><link rel="stylesheet" href="tokens.css"><script src="theme.js"></script></head><body>
+<!-- baseline: code-only capture from packages/ui/src/pages/setup/*, tokens from index.css (no browser screenshot) -->
+<h1 class="sheet">Setup, today (desktop 1180 and phone 390)</h1>
+<p class="sheet">Reconstructed from source. Everything lives on one page: a flat 14rem nav of 4 sections plus workflows, and one long form per selection. Frame 2 shows the workflow editor, where every stage renders fully expanded.</p>
+<div class="cap">1. Desktop, config.yml selected (SetupPage > ConfigForm)</div>
+<div class="desk">
+<!-- AppSidebar -->
+<div class="side"><div style="font-weight:700;padding:4px 8px 10px">Shipline</div><div class="it">New chat</div><div class="it">All projects</div><div class="grp">Chats</div><div class="it mut">Add due dates to todos</div><div class="it mut">Fix login redirect</div><div style="flex:1"></div><div class="it on">Setup</div><div class="it mut">Theme: System</div></div>
+<div class="main"><div class="hdr"><h1>Setup</h1><span class="inp" style="width:200px;margin-left:8px">todo-app <span>&#9662;</span></span></div>
+<div class="scroll"><div class="pad">
+<!-- DraftBanner -->
+<div class="alert"><b>Draft ready</b><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="badge">New workflow</span><span>hotfix-lite</span><span class="btn s" style="margin-left:auto;height:28px">Review</span></div></div>
+<!-- Alert: default rules -->
+<div class="alert"><b>This repo uses Shipline's default rules</b><div style="display:flex;justify-content:space-between;gap:12px;align-items:center"><span class="mut">Claude can interview you and tailor the workflows, rules and commands to this repo. Or edit the sections below yourself, then mark setup as done.</span><span style="display:flex;gap:8px"><span class="btn p">Run setup with Claude</span><span class="btn">Mark setup as done</span></span></div></div>
+<!-- sticky save bar -->
+<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px"><span class="mut" style="display:flex;gap:8px;align-items:center"><span class="dot" style="background:var(--enf-warn)"></span>2 changed files: config.yml, workflows/feature.yml</span><span style="display:flex;gap:8px"><span class="btn">Discard and reload</span><span class="btn p">Review and save</span></span></div>
+<div style="display:grid;grid-template-columns:14rem 1fr;gap:16px">
+<!-- nav -->
+<div style="display:flex;flex-direction:column;gap:2px;align-self:start"><div class="btn s" style="justify-content:flex-start">config.yml *</div><div class="btn g">Agents &amp; skills</div><div class="btn g">CI check</div><div class="btn g">Guardrails</div><div class="btn g">Phone access</div><div class="grp xs mut" style="font-weight:600;letter-spacing:.05em;text-transform:uppercase;padding:8px 8px 2px;font-size:11px">Workflows</div><div class="btn" style="justify-content:flex-start">+ New workflow</div><div class="btn" style="justify-content:flex-start">+ Add shipped workflow</div><div class="btn" style="justify-content:flex-start">&#10024; Describe a workflow</div><div class="btn g">bugfix</div><div class="btn g">deps</div><div class="btn g">docs</div><div class="btn g">feature *</div><div class="btn g">hotfix</div><div class="btn g">refactor</div><div class="btn g">release</div><div class="btn g">small</div><div class="btn g">spike</div></div>
+<!-- ConfigForm -->
+<div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+<div class="field"><label>Tracker</label><div class="inp">github <span>&#9662;</span></div></div>
+<div class="field"><label>Confirmations</label><div class="inp">Standard <span>&#9662;</span></div></div>
+<div class="field"><label>Branch pattern</label><div class="inp">{type}/{slug}</div></div>
+<h3 style="font-size:14px;margin:4px 0 0">Commands</h3>
+<div class="grid2"><div class="field"><label>test</label><div class="inp">npm test</div></div><div class="field"><label>lint</label><div class="inp">npm run lint</div></div><div class="field"><label>build</label><div class="inp">npm run build</div></div><div class="field"><label>typecheck</label><div class="inp">npx tsc --noEmit</div></div></div>
+<div class="field"><label>When the PR's code differs from the checked code</label><div class="inp">Warn <span>&#9662;</span></div></div>
+</div></div>
+<!-- Preview card -->
+<div class="card"><b style="font-size:14px">Preview of the files as they will be written</b><div class="card" style="margin-top:8px;padding:8px 12px" >config.yml</div><div class="card" style="margin-top:8px;padding:8px 12px">workflows/feature.yml</div></div>
+</div></div></div></div>
+
+<div class="cap">2. Desktop, a workflow selected (WorkflowEditor > StageList > StageEditor x N, all expanded, then Preview)</div>
+<div class="row"><div class="desk" style="height:900px"><div class="side"><div style="font-weight:700;padding:4px 8px 10px">Shipline</div><div class="it">New chat</div><div class="it">All projects</div><div style="flex:1"></div><div class="it on">Setup</div></div>
+<div class="main"><div class="hdr"><h1>Setup</h1><span class="inp" style="width:200px;margin-left:8px">todo-app <span>&#9662;</span></span></div><div class="scroll"><div class="pad">
+<div class="card" style="display:flex;justify-content:space-between;padding:8px 12px"><span class="mut">1 changed file: workflows/bugfix.yml</span><span style="display:flex;gap:8px"><span class="btn">Discard and reload</span><span class="btn p">Review and save</span></span></div>
+<div style="display:grid;grid-template-columns:14rem 1fr;gap:16px"><div style="display:flex;flex-direction:column;gap:2px;align-self:start"><div class="btn g">config.yml</div><div class="btn g">Agents &amp; skills</div><div class="btn g">CI check</div><div class="btn g">Guardrails</div><div class="btn g">Phone access</div><div class="btn g">... 3 buttons ...</div><div class="btn s">bugfix *</div><div class="btn g">deps</div><div class="btn g">... 6 more ...</div></div>
+<!-- WorkflowEditor -->
+<div style="display:flex;flex-direction:column;gap:12px;min-width:0">
+<div style="display:flex;justify-content:space-between;align-items:center"><b>bugfix <span class="mut xs" style="font-weight:400">workflows/bugfix.yml</span></b><span style="display:flex;gap:8px"><span class="btn">&#10024; Change with Claude</span><span class="btn g" style="color:var(--destructive)">Delete</span></span></div>
+<div class="grid2"><div class="field"><label>Name</label><div class="inp">Bugfix</div></div><div class="field"><label>Branch type</label><div class="inp">fix <span>&#9662;</span></div></div></div>
+<div class="field"><label>Description</label><div class="inp">something is broken and needs fixing</div></div>
+<h3 style="font-size:14px;margin:4px 0 0">Stages</h3>
+<!-- StageEditor -->
+<div class="stage"><div class="sh"><span class="grip">&#10303;</span><b>Ticket</b><span class="badge">ticket</span><span style="margin-left:auto" class="mut">&#10005;</span></div></div>
+<div class="stage"><div class="sh"><span class="grip">&#10303;</span><b>Root cause</b><span class="badge">root_cause</span><span style="margin-left:auto" class="mut">&#10005;</span></div>
+<div class="grid2"><div class="field"><label>Name</label><div class="inp">Root cause</div></div><div class="field"><label>Artifact (file name in the task folder)</label><div class="inp">root-cause.md</div></div></div>
+<div class="field"><label>Description</label><div class="inp">&nbsp;</div></div>
+<div class="grid2"><div class="field"><label>Enforcement</label><div class="inp">block: denied <span>&#9662;</span></div></div><div class="field"><label>Condition</label><div class="inp">none <span>&#9662;</span></div></div></div>
+<div class="field"><label>Agent</label><div class="inp">researcher <span>&#9662;</span></div></div>
+<div style="display:flex;flex-direction:column;gap:8px"><span style="display:flex;gap:8px;align-items:center"><span class="sw off"></span>Optional (may be skipped)</span><span style="display:flex;gap:8px;align-items:center"><span class="sw"></span>Confirm to advance</span><span style="display:flex;gap:8px;align-items:center"><span class="sw"></span>Checkpoint (asks in light mode)</span><span style="display:flex;gap:8px;align-items:center"><span class="sw off"></span>Run checks before finishing</span></div>
+<div class="field"><label>Required sections (headings, one per line)</label><div class="ta">Cause
+Evidence</div></div>
+<!-- BlocksEditor -->
+<div class="field"><label>Blocks (held back until this stage is done)</label><div class="card" style="padding:8px"><div class="field"><span class="xs mut">Tools (regex)</span><div class="inp mono">Edit|Write|MultiEdit|NotebookEdit</div></div></div><div><span class="btn" style="height:28px">+ Add block</span></div></div>
+<!-- RulesEditor -->
+<div class="field"><label>Rules (rules/root_cause.md)</label><div class="ta" style="min-height:90px">Find the cause before touching code. Link the failing test or log.</div></div></div>
+<div class="stage"><div class="sh"><span class="grip">&#10303;</span><b>Fix</b><span class="badge">fix</span></div><div class="xs mut">(full form again: 9 fields, 4 toggles, sections, blocks, rules)</div></div>
+<div class="stage"><div class="sh"><span class="grip">&#10303;</span><b>Verify</b><span class="badge">verify</span></div><div class="xs mut">(full form again)</div></div>
+<span class="btn" style="width:max-content">+ Add stage</span>
+</div></div></div></div></div></div>
+<div style="max-width:340px"><div class="alert"><b>Pain points seen in code</b><ul style="margin:6px 0 0;padding-left:18px" class="xs"><li>Every stage is a full form: 4 stages is ~40 fields and ~4 screens of scroll.</li><li>Enforcement is a dropdown with prose; no visual cue of what each level does.</li><li>Rules, blocks and sections are separate textareas, far from the stage's header.</li><li>Three places to save: sticky bar, Agents dialog, CI dialog.</li><li>Nav mixes pages and files (config.yml, Phone access) with workflows.</li><li>Phone access and CI are not "config files" but sit with them.</li></ul></div></div></div>
+
+<div class="cap">3. Phone 390 (chip row nav, sticky save bar above the tab bar)</div>
+<div class="row">
+<div class="phone"><div class="status"><span>9:41</span><span>100%</span></div><div class="hdr"><span>&#9776;</span><h1>Setup</h1></div><div class="scroll"><div class="pad">
+<div class="alert"><b>Draft ready</b><span class="badge">New workflow</span> hotfix-lite <span class="btn s" style="height:32px;margin-left:6px">Review</span></div>
+<div class="card" style="padding:0"><div style="display:flex;align-items:center;gap:12px;padding:8px 12px;min-height:48px">Theme<span style="margin-left:auto;display:flex;gap:4px"><span class="btn l s">System</span><span class="btn l g">Light</span><span class="btn l g">Dark</span></span></div></div></div>
+<div class="chips"><span class="chip on">config.yml *</span><span class="chip">Agents &amp; skills</span><span class="chip">CI check</span><span class="chip">Guardrails</span><span class="chip">Phone access</span><span class="chip">bugfix</span><span class="chip">+ New workflow</span><span class="chip">+ Add shipped</span><span class="chip">&#10024; Describe</span></div>
+<div class="pad"><div class="field"><label>Tracker</label><div class="inp" style="height:44px">github</div></div><div class="field"><label>Confirmations</label><div class="inp" style="height:44px">Standard</div></div><div class="field"><label>Branch pattern</label><div class="inp" style="height:44px">{type}/{slug}</div></div><b>Commands</b><div class="field"><label>test</label><div class="inp" style="height:44px">npm test</div></div></div></div>
+<div class="savebar"><span class="xs mut" style="flex:1">2 unsaved files</span><span class="btn l">Discard</span><span class="btn l p">Review and save</span></div>
+<div class="tabbar"><span>All</span><span>Chats</span><span>New</span><span class="on">Setup</span><span>Health</span></div></div>
+</div>
+</body></html>

@@ -18,6 +18,7 @@ prompt shows) or `off`; a rail left out of the file uses its default.
 | `read_credentials` | ask | the Read tool on credential files, and the Grep tool when its `path` is one or its `glob` matches one |
 | `deploy` | ask | `kubectl apply`, `helm upgrade`, `terraform apply`, `fly deploy`, `vercel --prod`, `wrangler deploy`, `firebase deploy`, `kamal deploy`, `npm run deploy` and similar; add yours under `rails_commands.deploy` |
 | `migrate` | ask | `prisma migrate deploy`, `rails db:migrate`, `alembic upgrade`, `python manage.py migrate`, `php artisan migrate`, `mix ecto.migrate`, `dotnet ef database update` and similar, also through `npx`, `uv run`, `poetry run` and other runners; add yours under `rails_commands.migrate` |
+| `install_packages` | ask | commands that fetch a package by name (see below); add yours under `rails_commands.install_packages` |
 | `agent_config` | ask | Edit or Write on `.claude/**`, `.shipline/**`, `CLAUDE.md` and `.mcp.json` |
 
 Credential files are `.env` and `.env.*` (not `.env.example`, `.sample` or `.template`), `.envrc`, `*.pem`, `*.key`,
@@ -35,6 +36,58 @@ cover it.
 
 The default branch comes from `origin/HEAD` (else `main`, else `master`) and is cached for ten minutes in the task
 store. If several rails match, the strictest wins: deny over ask over a stage `warn`.
+
+**`install_packages`.** About one in five packages an AI suggests doesn't exist, and attackers register those names
+("slopsquatting"). The rail shows Claude Code's permission prompt, naming the packages, before a command that adds a
+named package, runs a package that isn't a dependency, or installs globally. It checks the parsed command, so it also
+sees through `npx`, `pnpm exec`, `bundle exec`, `python -m` and `uv run` / `poetry run`, and each part of a chain
+(`npm i a && npx b`) is checked, with every package listed in the reason.
+
+- **Adds a named package:** `npm`/`pnpm`/`bun` `add`, `install <name>` and `i <name>`; `yarn add`; `pip install <name>`
+  (and `pip3`, `python -m pip`, `uv pip install`); `uv add`, `poetry add`, `pipenv install <name>`, `pdm add`,
+  `rye add`; `cargo add`; `go get <path>` and `go install <path>@<version>`; `gem install`, `bundle add`,
+  `composer require`, `dotnet add package`. A name that is already a dependency still asks (a version change fetches it).
+- **Runs a package that isn't a dependency:** `npx`, `bunx`, `npm exec` and `pnpm exec` ask only when the package isn't
+  in `dependencies`, `devDependencies` or `optionalDependencies` of a `package.json` from the command's folder up to the
+  repo root and has no `node_modules/.bin/<name>`. `npx vitest` in a repo that has vitest doesn't ask; `npx -p <pkg>`
+  checks `<pkg>`. `pnpm dlx`, `yarn dlx`, `uvx` and `pipx run` always ask, because they exist for one-off packages. If
+  `node_modules` isn't installed yet, an `npx` of a listed tool asks until it is.
+- **Global or system installs:** `npm install -g`, `pnpm add -g`, `yarn global add`, `bun add -g`, `pipx install`,
+  `uv tool install`, `cargo install <name>`, `brew install`, `apt` / `apt-get`, `dnf`, `yum`, `choco` and `winget install`.
+- **Never caught:** restoring from a lockfile or manifest (`npm install`, `npm ci`, `pnpm install`,
+  `pip install -r requirements.txt`, `bundle install`), local paths, workspace references and tarballs
+  (`npm i ./pkg`, `pnpm add workspace:*`, `pip install -e .`). Git and HTTP URLs are caught and shown as the URL.
+- **Your own install commands:** `rails_commands.install_packages` takes plain prefixes (`make deps`), matched like
+  `rails_commands.deploy`.
+
+Nothing is looked up on a registry (hooks make no network calls), so the prompt asks you to check that each name is the
+one meant. Existing repos get this rail at `ask` after upgrading, without editing `config.yml`; set
+`rails.install_packages: off` to turn it off.
+
+**Fail-first tests for bugfixes.** `fail_first` asks a bugfix to show a test that fails before the fix. It is off by
+default:
+
+```yaml
+fail_first:
+  level: off          # off | note | section | proof
+  workflows: [bugfix] # each needs a stage with the id `reproduce`
+```
+
+- `note`: when Reproduce starts or is resumed, `stage.mjs` prints a built-in note, before the repo's own rules, telling
+  Claude to write a test that fails on the current code and name it in `reproduction.md`.
+- `section`: the note, and `reproduction.md` must have a `## Failing test` section (with text under it) before Reproduce
+  can finish.
+- `proof`: the note, and `node .shipline/bin/stage.mjs check --expect-fail [test file or name]` must have recorded a
+  failing run. It runs only `commands.test`, with your extra words appended; each may contain only letters, digits and
+  `_ . / : @ = , + -` (no spaces, quotes, shell characters or `..`), because `stage.mjs` runs without a permission
+  prompt. A failing run is recorded in the task ("Failing as expected"); a passing run records nothing, since that
+  test doesn't reproduce the bug. With no `commands.test`, advancing is refused rather than downgraded.
+- When a failing run is recorded, Verify's output and `pr-summary` show "Fail-first: failed before (exit N on
+  `<fingerprint>`), passed after (on `<fingerprint>`)", using the latest test result for the "after". The CI check shows
+  it for information and never fails on it.
+- Skipping Reproduce with `stage.mjs skip --reason "..."` still works (with your confirmation when the stage is
+  required): that is your override. The setting is read when you advance, so it applies from the next Reproduce advance
+  of a task started earlier. Listing a workflow with no `reproduce` stage gives a warning in Setup and does nothing.
 
 **Protected paths.** `protected_paths` is a list of globs relative to the repo root (new installs list migrations,
 infrastructure, Dockerfiles, CI config and lockfiles). Editing one asks first, in any stage, with or without a task,
@@ -62,7 +115,7 @@ be the file you are fixing); every call says so.
 Guardrails run in Claude Code's hooks and parse the command text. They stop mistakes, not a determined user or a
 determined agent. They do not see aliases, shell functions, `eval`, a script that is written and then run, another
 tool that pushes (an IDE, a git GUI), or anything beyond one level of `sh -c` or package-script indirection. Parsing is
-best effort and the deploy and migrate patterns will never be complete: extend them with `rails_commands`.
+best effort and the deploy, migrate and install patterns will never be complete: extend them with `rails_commands`.
 
 For limits that hold, use Claude Code's own controls: its `sandbox` settings, and managed settings that users can't
 override. For example, deny rules in `.claude/settings.json` (or the managed file):

@@ -53,6 +53,10 @@ export const THEMES = [
   { value: 'dark', label: 'Dark', icon: MoonIcon },
 ] as const;
 
+/** The selected item: the palette's --sidebar-active (a solid brand colour, or Classic's soft accent). */
+const ACTIVE =
+  'data-active:bg-(color:--sidebar-active) data-active:text-(color:--sidebar-active-foreground)';
+
 function ThemeMenu() {
   const { theme = 'system', setTheme } = useTheme();
   const current = THEMES.find((t) => t.value === theme) ?? THEMES[0];
@@ -122,7 +126,7 @@ export function AppSidebar({
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip="New chat"
-                className="bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground"
+                className="bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90 hover:text-sidebar-primary-foreground active:bg-sidebar-primary/90 active:text-sidebar-primary-foreground"
                 onClick={() => go('new')}
               >
                 <PlusIcon />
@@ -132,6 +136,7 @@ export function AppSidebar({
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip="All projects"
+                className={ACTIVE}
                 isActive={active === 'all'}
                 onClick={() => go('all')}
               >
@@ -139,7 +144,7 @@ export function AppSidebar({
                 <span>All projects</span>
                 {waitingTotal > 0 && (
                   <Badge
-                    className="ml-auto h-4 min-w-4 px-1.5 text-[10px] group-data-[collapsible=icon]:hidden"
+                    className="ml-auto h-4 min-w-4 bg-sidebar-primary px-1.5 text-[10px] text-sidebar-primary-foreground group-data-[collapsible=icon]:hidden"
                     aria-label={`${waitingTotal} waiting for you`}
                   >
                     {waitingTotal}
@@ -150,6 +155,7 @@ export function AppSidebar({
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip="Setup"
+                className={ACTIVE}
                 isActive={active === 'setup'}
                 onClick={() => go('setup')}
               >
@@ -160,6 +166,7 @@ export function AppSidebar({
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip={healthDot ? `Health: ${DOT_LABEL[healthDot]}` : 'Health'}
+                className={ACTIVE}
                 isActive={active === 'health'}
                 onClick={() => go('health')}
               >
@@ -191,11 +198,11 @@ export function AppSidebar({
               {listed.map((c) => (
                 <SidebarMenuItem key={c.id}>
                   <SidebarMenuButton
-                    className="h-auto py-1.5"
+                    className={cn('h-auto py-1.5', ACTIVE)}
                     isActive={active === 'chat' && c.id === selectedChatId}
                     onClick={() => go({ chat: c.id })}
                   >
-                    <ChatRow chat={c} project={byId.get(c.repoId)} />
+                    <ChatRow chat={c} project={byId.get(c.repoId)} onSidebar />
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}

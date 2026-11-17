@@ -23,7 +23,16 @@ export function projectLabel(p: Pick<Project, 'name' | 'groupName'> | undefined)
  * What one chat shows in the flat list: title and waiting dot, then its project, workflow and stage dots. The sidebar
  * wraps it in a menu button, the phone's Chats tab in a 64px row.
  */
-export function ChatRow({ chat, project }: { chat: ChatListItem; project: Project | undefined }) {
+export function ChatRow({
+  chat,
+  project,
+  onSidebar,
+}: {
+  chat: ChatListItem;
+  project: Project | undefined;
+  /** In the sidebar, which has its own colours (a branded background in most palettes). */
+  onSidebar?: boolean;
+}) {
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
       <div className="flex min-w-0 items-center gap-2">
@@ -31,13 +40,15 @@ export function ChatRow({ chat, project }: { chat: ChatListItem; project: Projec
         {chat.waiting && (
           <span
             role="img"
-            className="size-2 shrink-0 rounded-full bg-primary"
+            className={`size-2 shrink-0 rounded-full ${onSidebar ? 'bg-sidebar-primary group-data-[active=true]/menu-button:bg-(color:--sidebar-active-foreground)' : 'bg-primary'}`}
             aria-label={WAITING_LABEL[chat.waiting]}
             title={WAITING_LABEL[chat.waiting]}
           />
         )}
       </div>
-      <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+      <div
+        className={`flex min-w-0 items-center gap-2 text-xs ${onSidebar ? 'text-sidebar-foreground/70 group-data-[active=true]/menu-button:text-(color:--sidebar-active-foreground)' : 'text-muted-foreground'}`}
+      >
         <span className="min-w-0 flex-1 truncate">
           {projectLabel(project)}
           {chat.task ? ` · ${chat.task.workflow}` : ''}

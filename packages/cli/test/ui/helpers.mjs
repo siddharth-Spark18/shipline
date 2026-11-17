@@ -10,7 +10,7 @@ import { homeFor } from '../helpers.mjs';
 // left there: the server reads it on every request, and the fake claude inherits it).
 // Server-wide routes keep their /api/<x> paths; every other /api path is a per-repo route, served at
 // /api/repos/<repoId>/<x>. api(), openEvents() and repoPath() add the prefix for the server's start folder.
-const SERVER_WIDE = /^\/api\/(repos\/|remote(\/|\?|$)|events|projects|overview|handoff)/;
+const SERVER_WIDE = /^\/api\/(repos\/|remote(\/|\?|$)|events|projects|overview|preferences|handoff)/;
 export function repoPath(ui, pathname) {
   return pathname.startsWith('/api/') && !SERVER_WIDE.test(pathname)
     ? `/api/repos/${ui.repoId}${pathname.slice('/api'.length)}`

@@ -1,5 +1,9 @@
+import { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { StageList } from '@/pages/setup/stage-list';
+import { StagePage } from '@/pages/setup/stage-page';
+import type { StageStep } from '@/lib/routes';
 import type { WorkflowDraft } from '@/pages/setup/draft';
 import type { InstallInfo, SetupAgents } from '@/lib/types';
 
@@ -57,7 +61,8 @@ function visibleDraft(draft: WorkflowDraft, ui: boolean) {
 }
 
 /**
- * Step 2: a tab per chosen workflow with the Setup page's stage list and stage editor. Rules are keyed by stage id,
+ * Step 2: a tab per chosen workflow with the Setup page's stage list; Edit opens that stage's stepper in place
+ * (local state, not the address), and Done returns to the list. Rules are keyed by stage id,
  * so a stage used in two workflows shares one text, the same as on the Setup page.
  */
 export function StagesStep({
@@ -79,8 +84,11 @@ export function StagesStep({
   onChange: (id: string, draft: WorkflowDraft) => void;
   onRulesChange: (stageId: string, text: string) => void;
 }) {
+  const mobile = useIsMobile();
+  // The stage being edited: workflow id, 1-based position in the shown list, step.
+  const [editing, setEditing] = useState<{ id: string; n: number; step: StageStep } | null>(null);
   return (
-    <Tabs defaultValue={workflowIds[0]}>
+    <Tabs defaultValue={workflowIds[0]} onValueChange={() => setEditing(null)}>
       <TabsList className="h-auto flex-wrap">
         {workflowIds.map((id) => (
           <TabsTrigger key={id} value={id}>
@@ -94,18 +102,35 @@ export function StagesStep({
         const { view, merge } = visibleDraft(draft, ui);
         return (
           <TabsContent key={id} value={id} className="flex flex-col gap-3">
-            <p className="text-xs text-muted-foreground">
-              Open a stage to change its enforcement, confirmation, agent and rules. Drag to
-              reorder.
-              {!ui && ' Stages for a UI are left out: this repo has no UI.'}
-            </p>
-            <StageList
-              draft={view}
-              agents={agents}
-              rules={(stageId) => ({ text: rules[stageId] ?? '', exists: true })}
-              onChange={(next) => onChange(id, merge(next))}
-              onRulesChange={onRulesChange}
-            />
+            {editing?.id === id && (view.model.stages ?? [])[editing.n - 1] ? (
+              <StagePage
+                n={editing.n}
+                step={editing.step}
+                draft={view}
+                agents={agents}
+                rules={(stageId) => ({ text: rules[stageId] ?? '', exists: true })}
+                mobile={mobile}
+                pagerSlot={null}
+                onStep={(step) => setEditing({ ...editing, step })}
+                onClose={() => setEditing(null)}
+                onChange={(next) => onChange(id, merge(next))}
+                onRulesChange={onRulesChange}
+              />
+            ) : (
+              <>
+                <p className="text-xs text-muted-foreground">
+                  Edit a stage to change its enforcement, confirmation, agent and rules. Drag to
+                  reorder.
+                  {!ui && ' Stages for a UI are left out: this repo has no UI.'}
+                </p>
+                <StageList
+                  draft={view}
+                  onChange={(next) => onChange(id, merge(next))}
+                  onEdit={(n) => setEditing({ id, n, step: 'basics' })}
+                  onAdded={(n) => setEditing({ id, n, step: 'basics' })}
+                />
+              </>
+            )}
           </TabsContent>
         );
       })}

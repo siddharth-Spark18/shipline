@@ -193,6 +193,16 @@ function stageIds(model) {
   return model && Array.isArray(model.stages) ? model.stages.filter(isObj).map((s) => s.id) : [];
 }
 
+// The repo's workflows on disk as { id, stages: [{ id }] } (config validation checks fail_first against them).
+function workflowsOnDisk(app) {
+  const dir = path.join(app.repo.root, '.shipline', 'workflows');
+  return listIds(dir, '.yml').map((id) => {
+    const raw = readText(path.join(dir, `${id}.yml`));
+    const parsed = raw === null ? {} : parseModel(app, raw);
+    return { id, stages: stageIds(parsed.model).map((sid) => ({ id: sid })) };
+  });
+}
+
 // ---------- the save pipeline ----------
 
 function badRequest(message) {
@@ -241,7 +251,7 @@ function prepare(app, entry, override = {}) {
 
   const issues =
     entry.kind === 'config'
-      ? validateConfig(model, { skills: listSkills(root) })
+      ? validateConfig(model, { skills: listSkills(root), workflows: workflowsOnDisk(app) })
       : validateWorkflow(model, { id: entry.id, agents: listAgents(root), existingStageIds });
   out.errors = issues.filter((i) => i.severity !== 'warning');
   if (disk.error !== undefined)

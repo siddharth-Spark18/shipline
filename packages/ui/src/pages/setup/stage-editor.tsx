@@ -11,10 +11,9 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { BlocksEditor } from '@/pages/setup/blocks-editor';
 import { OtherFields } from '@/pages/setup/other-fields';
-import { RulesEditor } from '@/pages/setup/rules-editor';
-import { ID_RE, setOptional } from '@/pages/setup/draft';
+import { ID_RE, isBashBlock, regexError, setOptional } from '@/pages/setup/draft';
+import type { StageStep } from '@/lib/routes';
 import type { Enforcement, SetupAgents, StageModel } from '@/lib/types';
 
 const NONE = '__none__';
@@ -34,42 +33,65 @@ const STAGE_KEYS = [
   'checkpoint',
 ];
 
-export interface StageEditorProps {
+/** The stage fields shared by every step component: the stage, and a callback with its updated copy. */
+interface StageFieldsProps {
   stage: StageModel;
-  /** True for a stage added in this session: only then can the id be edited. */
-  isFresh: boolean;
-  /** Ids of the other stages in this workflow. */
-  otherIds: string[];
-  agents: SetupAgents;
-  rules: { text: string; exists: boolean };
   onChange: (stage: StageModel) => void;
-  onRulesChange: (text: string) => void;
 }
 
-export function StageEditor({
-  stage,
-  isFresh,
-  otherIds,
-  agents,
-  rules,
-  onChange,
-  onRulesChange,
-}: StageEditorProps) {
-  const base = `stage-${stage.id || 'new'}`;
-  const setText = (key: string, value: string) => {
-    const next = { ...stage };
-    setOptional(next, key, value);
-    onChange(next);
+/** The text and field setters the steps share. An empty text removes an optional key. */
+function setters(stage: StageModel, onChange: (stage: StageModel) => void) {
+  return {
+    setText: (key: string, value: string) => {
+      const next = { ...stage };
+      setOptional(next, key, value);
+      onChange(next);
+    },
+    setField: (key: string, value: unknown) => onChange({ ...stage, [key]: value }),
   };
-  const setField = (key: string, value: unknown) => onChange({ ...stage, [key]: value });
+}
 
-  const idError = !stage.id
+/** Why the stage's id is not usable, or null. */
+export function stageIdError(stage: StageModel, otherIds: string[]): string | null {
+  return !stage.id
     ? 'Required'
     : !ID_RE.test(stage.id)
       ? 'Use letters, digits, - and _ only'
       : otherIds.includes(stage.id)
         ? 'Another stage already has this id'
         : null;
+}
+
+/** The steps whose fields hold something the save would reject (the stepper marks them with a dot). */
+export function stepErrors(
+  stage: StageModel,
+  otherIds: string[],
+  isFresh: boolean,
+): Partial<Record<StageStep, boolean>> {
+  const errors: Partial<Record<StageStep, boolean>> = {};
+  if (isFresh && stageIdError(stage, otherIds)) errors.basics = true;
+  if ((stage.blocks ?? []).some((b) => isBashBlock(b) && b.bash && regexError(b.bash)))
+    errors.blocks = true;
+  return errors;
+}
+
+/** Step 1: id, name, artifact, description, condition, agent and optional. */
+export function StageBasics({
+  stage,
+  isFresh,
+  otherIds,
+  agents,
+  onChange,
+}: StageFieldsProps & {
+  /** True for a stage added in this session: only then can the id be edited. */
+  isFresh: boolean;
+  /** Ids of the other stages in this workflow. */
+  otherIds: string[];
+  agents: SetupAgents;
+}) {
+  const base = `stage-${stage.id || 'new'}`;
+  const { setText, setField } = setters(stage, onChange);
+  const idError = stageIdError(stage, otherIds);
 
   // Shipline's installed agents, then the repo's own (which includes a Shipline name whose file is
   // the team's own, kept instead of ours).
@@ -131,23 +153,6 @@ export function StageEditor({
             value={stage.description ?? ''}
             onChange={(e) => setText('description', e.target.value)}
           />
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor={`${base}-enforcement`}>Enforcement</Label>
-          <Select
-            value={stage.enforcement ?? ''}
-            onValueChange={(v) => setField('enforcement', v as Enforcement)}
-          >
-            <SelectTrigger id={`${base}-enforcement`} className="w-full">
-              <SelectValue placeholder="Choose guide, warn or block" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="guide">guide: rules are ignored</SelectItem>
-              <SelectItem value="warn">warn: allowed, with a reminder</SelectItem>
-              <SelectItem value="block">block: denied</SelectItem>
-            </SelectContent>
-          </Select>
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={`${base}-condition`}>Condition</Label>
@@ -214,87 +219,141 @@ export function StageEditor({
             </SelectContent>
           </Select>
         </div>
-
-        <div className="flex flex-col justify-end gap-3">
-          <div className="flex items-center gap-2">
-            <Switch
-              id={`${base}-optional`}
-              checked={stage.optional === true}
-              onCheckedChange={(v) => setField('optional', v)}
-            />
-            <Label htmlFor={`${base}-optional`}>Optional (may be skipped)</Label>
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch
-              id={`${base}-confirm`}
-              checked={stage.confirm_to_advance === true}
-              onCheckedChange={(v) => setField('confirm_to_advance', v)}
-            />
-            <Label htmlFor={`${base}-confirm`}>Confirm to advance</Label>
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch
-              id={`${base}-checkpoint`}
-              checked={stage.checkpoint === true}
-              disabled={stage.confirm_to_advance !== true}
-              onCheckedChange={(v) => setField('checkpoint', v)}
-            />
-            <Label htmlFor={`${base}-checkpoint`}>Checkpoint (asks in light mode)</Label>
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch
-              id={`${base}-checks`}
-              checked={stage.checks === true}
-              onCheckedChange={(v) => setField('checks', v)}
-            />
-            <Label htmlFor={`${base}-checks`}>Run checks before finishing</Label>
-          </div>
-        </div>
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`${base}-sections`}>Required sections (headings, one per line)</Label>
-        {/* Uncontrolled, so a trailing newline survives while typing. */}
-        <Textarea
-          id={`${base}-sections`}
-          className="min-h-16 text-xs"
-          defaultValue={(stage.sections ?? []).join('\n')}
-          placeholder="Scope"
-          onChange={(e) =>
-            setField(
-              'sections',
-              e.target.value.split('\n').filter((l) => l.trim() !== ''),
-            )
-          }
+      <div className="flex items-center gap-2">
+        <Switch
+          id={`${base}-optional`}
+          checked={stage.optional === true}
+          onCheckedChange={(v) => setField('optional', v)}
         />
+        <Label htmlFor={`${base}-optional`}>Optional (may be skipped)</Label>
+      </div>
+
+      <OtherFields value={stage} known={STAGE_KEYS} />
+    </div>
+  );
+}
+
+const LEVELS: { value: Enforcement; meaning: string; effect: string }[] = [
+  {
+    value: 'guide',
+    meaning: 'Rules are ignored',
+    effect: 'Claude is only guided. The stage’s rules and blocks have no effect.',
+  },
+  {
+    value: 'warn',
+    meaning: 'Allowed, with a reminder',
+    effect: 'An action the stage holds back goes ahead, with a reminder shown in the chat.',
+  },
+  {
+    value: 'block',
+    meaning: 'Denied',
+    effect: 'An action the stage holds back is refused until the stage is done.',
+  },
+];
+
+/** Step 2: guide, warn or block as option cards, then confirm, checkpoint and checks. */
+export function StageEnforcement({ stage, onChange }: StageFieldsProps) {
+  const base = `stage-${stage.id || 'new'}`;
+  const { setField } = setters(stage, onChange);
+  const level = stage.enforcement ?? null;
+  const chosen = LEVELS.find((l) => l.value === level);
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1.5">
+        <span id={`${base}-enf-label`} className="text-sm leading-none font-medium">
+          Enforcement
+        </span>
+        <div
+          role="radiogroup"
+          aria-labelledby={`${base}-enf-label`}
+          className="grid gap-2 sm:grid-cols-3"
+        >
+          {LEVELS.map((l) => (
+            <button
+              key={l.value}
+              type="button"
+              role="radio"
+              aria-checked={level === l.value}
+              className={`flex min-h-11 flex-col gap-0.5 rounded-lg border-[1.5px] bg-card p-3 text-left text-sm transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${
+                level === l.value
+                  ? 'border-primary bg-accent text-accent-foreground ring-1 ring-primary'
+                  : 'border-input hover:bg-accent/50'
+              }`}
+              onClick={() => setField('enforcement', l.value)}
+            >
+              <b>{l.value}</b>
+              <span className="text-xs text-muted-foreground">{l.meaning}</span>
+            </button>
+          ))}
+        </div>
         <p className="text-xs text-muted-foreground">
-          The artifact must have each as a Markdown heading with some text under it before the stage
-          can finish.
+          {chosen ? (
+            <>
+              <b className="text-foreground">What {chosen.value} does here:</b> {chosen.effect}
+            </>
+          ) : (
+            'Choose guide, warn or block.'
+          )}
         </p>
       </div>
 
-      <BlocksEditor
-        stageId={stage.id || 'new'}
-        blocks={stage.blocks ?? []}
-        enforcement={stage.enforcement}
-        onChange={(blocks) => {
-          const next = { ...stage };
-          if (blocks.length === 0) delete next.blocks;
-          else next.blocks = blocks;
-          onChange(next);
-        }}
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <Switch
+            id={`${base}-confirm`}
+            checked={stage.confirm_to_advance === true}
+            onCheckedChange={(v) => setField('confirm_to_advance', v)}
+          />
+          <Label htmlFor={`${base}-confirm`}>Confirm to advance</Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Switch
+            id={`${base}-checkpoint`}
+            checked={stage.checkpoint === true}
+            disabled={stage.confirm_to_advance !== true}
+            onCheckedChange={(v) => setField('checkpoint', v)}
+          />
+          <Label htmlFor={`${base}-checkpoint`}>Checkpoint (asks in light mode)</Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Switch
+            id={`${base}-checks`}
+            checked={stage.checks === true}
+            onCheckedChange={(v) => setField('checks', v)}
+          />
+          <Label htmlFor={`${base}-checks`}>Run checks before finishing</Label>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Step 4: the headings the artifact must have, one per line. */
+export function StageSections({ stage, onChange }: StageFieldsProps) {
+  const base = `stage-${stage.id || 'new'}`;
+  const { setField } = setters(stage, onChange);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={`${base}-sections`}>Required sections (headings, one per line)</Label>
+      {/* Uncontrolled, so a trailing newline survives while typing. */}
+      <Textarea
+        id={`${base}-sections`}
+        className="min-h-24 text-xs"
+        defaultValue={(stage.sections ?? []).join('\n')}
+        placeholder="Scope"
+        onChange={(e) =>
+          setField(
+            'sections',
+            e.target.value.split('\n').filter((l) => l.trim() !== ''),
+          )
+        }
       />
-
-      {stage.id && ID_RE.test(stage.id) && (
-        <RulesEditor
-          stageId={stage.id}
-          exists={rules.exists}
-          value={rules.text}
-          onChange={onRulesChange}
-        />
-      )}
-
-      <OtherFields value={stage} known={STAGE_KEYS} />
+      <p className="text-xs text-muted-foreground">
+        The artifact must have each as a Markdown heading with some text under it before the stage
+        can finish.
+      </p>
     </div>
   );
 }

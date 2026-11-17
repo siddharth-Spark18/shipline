@@ -32,7 +32,7 @@ const CONFIG_PATH = '.shipline/config.yml';
 const WORKFLOW_PATH = '.github/workflows/shipline.yml';
 const SKIP_LABEL_MAX = 50;
 
-const MODES: { value: CiMissingBlock; label: string }[] = [
+export const MODES: { value: CiMissingBlock; label: string }[] = [
   { value: 'fail-unless-label', label: 'Fail, unless the PR has the skip label' },
   { value: 'warn', label: 'Pass with a warning' },
   { value: 'fail', label: 'Always fail' },

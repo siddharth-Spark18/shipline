@@ -1,5 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { getCurrentRepo, reportAccessIssue } from '@/lib/api';
+import { applyPalette, isPaletteId } from '@/lib/palette';
 import type {
   AccessEndedEvent,
   BannerEvent,
@@ -7,6 +8,7 @@ import type {
   ChatListItem,
   PromptEvent,
   PromptResolvedEvent,
+  Preferences,
   Project,
   ShellEvent,
   TasksData,
@@ -55,6 +57,8 @@ export const queryKeys = {
   /** Pending prompts of every repo; each carries its repoId. */
   prompts: ['prompts'] as const,
   remote: ['remote'] as const,
+  /** Server-wide UI preferences (the palette). */
+  preferences: ['preferences'] as const,
   projects: ['projects'] as const,
   overview: ['overview'] as const,
   /** The flat chat list across every project. (`chats` above is one project's own list.) */
@@ -123,6 +127,7 @@ export function connectEvents(queryClient: QueryClient): () => void {
         void queryClient.invalidateQueries({ queryKey: queryKeys.overview });
         void queryClient.invalidateQueries({ queryKey: queryKeys.allChats });
         void queryClient.invalidateQueries({ queryKey: queryKeys.health });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.preferences });
       }
       delay = MIN_DELAY;
     };
@@ -135,6 +140,14 @@ export function connectEvents(queryClient: QueryClient): () => void {
       void queryClient.invalidateQueries({ queryKey: queryKeys.overview });
       // The health dot follows registration, state and waiting changes.
       void queryClient.invalidateQueries({ queryKey: queryKeys.health });
+    });
+
+    // The palette was changed (by this browser, another tab or a phone).
+    es.addEventListener('preferences', (e) => {
+      const data = parse<Preferences>(e as MessageEvent);
+      if (!data || !isPaletteId(data.palette)) return;
+      queryClient.setQueryData(queryKeys.preferences, { palette: data.palette });
+      applyPalette(data.palette);
     });
 
     // The flat chat list: a chat was added, a task's stage or a waiting state changed.

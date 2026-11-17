@@ -1,30 +1,30 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { PlusIcon, SparklesIcon } from 'lucide-react';
-import { useTheme } from 'next-themes';
+import { ArrowLeftIcon, ChevronRightIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { THEMES } from '@/components/app-sidebar';
 import { DiffView } from '@/components/diff-view';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { AddWorkflowDialog } from '@/pages/setup/add-workflow-dialog';
 import { AgentsSkills } from '@/pages/setup/agents-skills';
 import { CiCheck } from '@/pages/setup/ci-check';
-import { DraftBanner, DraftReview } from '@/pages/setup/draft-review';
+import { DraftReview } from '@/pages/setup/draft-review';
 import { PhoneAccess } from '@/pages/setup/phone-access';
 import { ConfigForm } from '@/pages/setup/config-form';
 import { GuardrailsSection } from '@/pages/setup/guardrails-section';
 import { NewWorkflowDialog } from '@/pages/setup/new-workflow-dialog';
 import { SaveDialog, fileLabel } from '@/pages/setup/save-dialog';
+import { SetupHub, SetupHubSkeleton } from '@/pages/setup/setup-hub';
+import { StagePage } from '@/pages/setup/stage-page';
 import { WorkflowEditor } from '@/pages/setup/workflow-editor';
+import { WorkflowsPage } from '@/pages/setup/workflows-page';
 import {
   buildEntries,
   findRules,
   initDrafts,
-  isConfigDirty,
   isWorkflowDirty,
   removedStageIds,
   type Drafts,
@@ -35,16 +35,8 @@ import { chatStore } from '@/pages/chat/chat-store';
 import { ApiError, api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
 import { useDrafts } from '@/lib/queries';
+import { setupHash, stageHash, workflowHash, workflowsHash, type SetupSub } from '@/lib/routes';
 import type { ConfigModel, ValidationIssue, VersionState } from '@/lib/types';
-
-/** Nav key of the Agents & skills section. The colon can't occur in a workflow id. */
-const AGENTS_KEY = ':agents';
-/** Nav key of the CI check section. */
-const CI_KEY = ':ci';
-/** Nav key of the Guardrails section. */
-const GUARDRAILS_KEY = ':guardrails';
-/** Nav key of the Phone access section. */
-const PHONE_KEY = ':phone';
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -61,40 +53,45 @@ const DESCRIBE_MESSAGE = '/shipline-workflow-designer --draft';
 const changeMessage = (workflowId: string) => `${DESCRIBE_MESSAGE} --edit ${workflowId}`;
 const UPGRADE_HINT = 'Upgrade this repo to use Describe a workflow';
 
-/** Phone only: Theme, which the desktop keeps in the sidebar footer. */
-function MobileSettingsRows() {
-  const { theme = 'system', setTheme } = useTheme();
-  return (
-    <div className="flex flex-col divide-y rounded-xl border bg-card">
-      <div className="flex min-h-12 items-center gap-3 px-3 py-2">
-        <span className="text-sm">Theme</span>
-        <div className="ml-auto flex gap-1" role="group" aria-label="Theme">
-          {THEMES.map((t) => (
-            <Button
-              key={t.value}
-              variant={theme === t.value ? 'secondary' : 'ghost'}
-              className="h-11 px-3"
-              aria-pressed={theme === t.value}
-              onClick={() => setTheme(t.value)}
-            >
-              <t.icon />
-              {t.label}
-            </Button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+const PAGE_TITLE = {
+  guardrails: 'Guardrails',
+  agents: 'Agents & skills',
+  ci: 'CI check',
+  phone: 'Phone access',
+  config: 'Project config',
+} as const;
+
+/** The page one step up: stage to workflow, workflow to the list, the list and the other pages to the hub. */
+function parentHash(repoId: string, sub: SetupSub): string {
+  switch (sub.page) {
+    case 'stage':
+      return workflowHash(repoId, sub.workflowId);
+    case 'workflow':
+      return workflowsHash(repoId);
+    default:
+      return setupHash(repoId);
+  }
 }
 
 export default function SetupPage({
+  repoId,
+  sub,
+  navigate,
   versionState,
+  versionMessage = null,
   onChatStarted,
   draftId,
   onOpenDraft,
   onCloseDraft,
 }: {
+  repoId: string;
+  /** Which page of Setup the address names (see lib/routes.ts). */
+  sub: SetupSub;
+  /** Go to another address (a hash). */
+  navigate: (hash: string) => void;
   versionState: VersionState | undefined;
+  /** The server's text for a repo that is read-only here. */
+  versionMessage?: string | null;
   /** Called with the id of the chat started by "Set up with Claude", so the app can show it. */
   onChatStarted: (id: string) => void;
   /** The workflow draft open for review (the route #/setup/<repoId>/draft/<workflowId>), or null. */
@@ -114,11 +111,12 @@ export default function SetupPage({
 
   const workflowDrafts = useDrafts();
   const [drafts, setDrafts] = useState<Drafts | null>(null);
-  const [selected, setSelected] = useState('config');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newWorkflowOpen, setNewWorkflowOpen] = useState(false);
   const [addWorkflowOpen, setAddWorkflowOpen] = useState(false);
   const [startingChat, setStartingChat] = useState(false);
+  // On a phone the stage page's Back/Next sit in the same pinned strip as the unsaved bar (see the end of the page).
+  const [pagerSlot, setPagerSlot] = useState<HTMLElement | null>(null);
 
   // Whenever the files are (re)loaded from disk, the edit copies start over from them.
   useEffect(() => {
@@ -157,12 +155,45 @@ export default function SetupPage({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Something went wrong.'),
   });
 
+  // An address that names a workflow or stage that isn't there goes to the nearest page that is. It waits for the files
+  // and the edit copies (so it never acts on half-loaded data) and checks the stage list with the unsaved edits applied.
+  let redirect: { to: string; message?: string } | null = null;
+  if (data && drafts && (sub.page === 'workflow' || sub.page === 'stage')) {
+    const file = data.workflows.find((w) => w.id === sub.workflowId);
+    if (!file) {
+      redirect = { to: workflowsHash(repoId), message: `Workflow ${sub.workflowId} not found` };
+    } else if (sub.page === 'stage') {
+      if (file.parseError !== undefined) redirect = { to: workflowHash(repoId, sub.workflowId) };
+      else {
+        const draft = drafts.workflows[sub.workflowId];
+        // A workflow created a moment ago has no edit copy until the effect above has run.
+        if (draft && sub.n > (draft.model.stages ?? []).length)
+          redirect = { to: workflowHash(repoId, sub.workflowId) };
+      }
+    }
+  }
+  const redirectTo = redirect?.to ?? null;
+  const redirectMessage = redirect?.message;
+  useEffect(() => {
+    if (!redirectTo) return;
+    if (redirectMessage) toast.error(redirectMessage);
+    // Replace, so Back does not return to the address that does not exist.
+    window.location.replace(redirectTo);
+  }, [redirectTo, redirectMessage]);
+
   if (isPending || !drafts) {
     return error ? (
       <Alert variant="destructive">
         <AlertTitle>Could not load the setup files</AlertTitle>
-        <AlertDescription>{error.message}</AlertDescription>
+        <AlertDescription className="flex flex-col items-start gap-2">
+          {error.message}
+          <Button variant="outline" size="sm" onClick={() => void refetch()}>
+            Retry
+          </Button>
+        </AlertDescription>
       </Alert>
+    ) : sub.page === 'hub' ? (
+      <SetupHubSkeleton />
     ) : (
       <p className="text-sm text-muted-foreground">Loading...</p>
     );
@@ -170,21 +201,12 @@ export default function SetupPage({
   if (!data) return null;
 
   const workflowIds = data.workflows.map((w) => w.id!).filter(Boolean);
-  const current =
-    selected === 'config' ||
-    selected === AGENTS_KEY ||
-    selected === CI_KEY ||
-    selected === GUARDRAILS_KEY ||
-    selected === PHONE_KEY ||
-    workflowIds.includes(selected)
-      ? selected
-      : 'config';
-  const workflowFile = data.workflows.find((w) => w.id === current);
 
   const updateWorkflow = (id: string, draft: WorkflowDraft) =>
     setDrafts((d) => (d ? { ...d, workflows: { ...d.workflows, [id]: draft } } : d));
   const updateRules = (stageId: string, text: string) =>
     setDrafts((d) => (d ? { ...d, rules: { ...d.rules, [stageId]: text } } : d));
+  const updateConfig = (m: ConfigModel) => setDrafts((d) => (d ? { ...d, config: m } : d));
 
   // Shown until /shipline-setup writes `setup: done` into config.yml.
   const usesDefaultRules = (data.config.model as ConfigModel | undefined)?.setup !== 'done';
@@ -222,42 +244,212 @@ export default function SetupPage({
     await refetch();
   };
 
+  const workflowFile =
+    sub.page === 'workflow' || sub.page === 'stage'
+      ? data.workflows.find((w) => w.id === sub.workflowId)
+      : undefined;
+  const workflowDraft =
+    workflowFile?.id && workflowFile.parseError === undefined
+      ? drafts.workflows[workflowFile.id]
+      : undefined;
+  const stageModel =
+    sub.page === 'stage' ? (workflowDraft?.model.stages ?? [])[sub.n - 1] : undefined;
+
+  // The breadcrumb: Setup > Workflows > <workflow> > <stage>, or Setup > <page>.
+  const crumbs: { label: string; to: string | null }[] = [
+    { label: 'Setup', to: setupHash(repoId) },
+  ];
+  if (sub.page === 'workflows' || sub.page === 'workflow' || sub.page === 'stage')
+    crumbs.push({
+      label: 'Workflows',
+      to: sub.page === 'workflows' ? null : workflowsHash(repoId),
+    });
+  if (sub.page === 'workflow' || sub.page === 'stage')
+    crumbs.push({
+      label: sub.workflowId,
+      to: sub.page === 'stage' ? workflowHash(repoId, sub.workflowId) : null,
+    });
+  if (sub.page === 'stage')
+    crumbs.push({ label: stageModel?.name || stageModel?.id || `Stage ${sub.n}`, to: null });
+  if (sub.page in PAGE_TITLE)
+    crumbs.push({ label: PAGE_TITLE[sub.page as keyof typeof PAGE_TITLE], to: null });
+
+  const renderPage = () => {
+    switch (sub.page) {
+      case 'hub':
+        return (
+          <SetupHub
+            repoId={repoId}
+            data={data}
+            drafts={drafts}
+            workflowDrafts={workflowDrafts.data ?? []}
+            usesDefaultRules={usesDefaultRules}
+            readOnly={readOnly}
+            readOnlyMessage={versionMessage}
+            startingChat={startingChat}
+            hasEdits={entries.length > 0}
+            markingDone={markDone.isPending}
+            designerSupported={designerSupported}
+            upgradeHint={UPGRADE_HINT}
+            onRunSetup={() => void startSetupChat()}
+            onMarkDone={() => markDone.mutate()}
+            onDescribe={() => void startChat(DESCRIBE_MESSAGE)}
+            onReviewDraft={onOpenDraft}
+          />
+        );
+      case 'workflows':
+        return (
+          <WorkflowsPage
+            repoId={repoId}
+            data={data}
+            drafts={drafts}
+            readOnly={readOnly}
+            designerSupported={designerSupported}
+            startingChat={startingChat}
+            upgradeHint={UPGRADE_HINT}
+            onNew={() => setNewWorkflowOpen(true)}
+            onAddShipped={() => setAddWorkflowOpen(true)}
+            onDescribe={() => void startChat(DESCRIBE_MESSAGE)}
+          />
+        );
+      case 'workflow':
+      case 'stage': {
+        // Not found: the redirect above is on its way.
+        if (!workflowFile) return null;
+        if (workflowFile.parseError !== undefined) {
+          return (
+            <WorkflowEditor
+              key={workflowFile.id}
+              file={workflowFile}
+              draft={undefined}
+              dirty={false}
+              repoId={repoId}
+              existingIds={workflowIds}
+              otherWorkflows={[]}
+              readOnly={readOnly}
+              onChange={() => {}}
+              navigate={navigate}
+            />
+          );
+        }
+        // The edit copy of a workflow created a moment ago is made by the effect above.
+        if (!workflowDraft) return null;
+        if (sub.page === 'stage') {
+          return (
+            <StagePage
+              key={`${workflowFile.id}:${sub.n}`}
+              n={sub.n}
+              step={sub.step}
+              draft={workflowDraft}
+              agents={data.agents}
+              rules={(id) => ({ text: drafts.rules[id] ?? '', exists: !!findRules(data, id) })}
+              mobile={mobile}
+              pagerSlot={pagerSlot}
+              onStep={(to) => navigate(stageHash(repoId, workflowFile.id!, sub.n, to))}
+              onClose={() => navigate(workflowHash(repoId, workflowFile.id!))}
+              onChange={(d) => updateWorkflow(workflowFile.id!, d)}
+              onRulesChange={updateRules}
+            />
+          );
+        }
+        return (
+          <WorkflowEditor
+            key={workflowFile.id}
+            file={workflowFile}
+            draft={workflowDraft}
+            dirty={isWorkflowDirty(data, drafts, workflowFile.id!)}
+            repoId={repoId}
+            existingIds={workflowIds}
+            otherWorkflows={data.workflows
+              .filter((w) => w.id && w.id !== workflowFile.id)
+              .map((w) => ({ id: w.id!, name: drafts.workflows[w.id!]?.model.name || w.id! }))}
+            confirmations={(drafts.config ?? data.config.model)?.confirmations}
+            readOnly={readOnly}
+            onChange={(d) => updateWorkflow(workflowFile.id!, d)}
+            navigate={navigate}
+            onChangeWithClaude={
+              designerSupported && !startingChat
+                ? () => void startChat(changeMessage(workflowFile.id!))
+                : undefined
+            }
+          />
+        );
+      }
+      case 'guardrails':
+        return (
+          <GuardrailsSection
+            key={dataUpdatedAt}
+            model={drafts.config}
+            readOnly={readOnly}
+            onChange={updateConfig}
+          />
+        );
+      case 'agents':
+        return (
+          <AgentsSkills
+            data={data}
+            config={drafts.config}
+            onConfigChange={updateConfig}
+            readOnly={readOnly}
+            hasOtherEdits={entries.length > 0}
+            onReload={() => void reload()}
+          />
+        );
+      case 'ci':
+        return (
+          <CiCheck
+            key={dataUpdatedAt}
+            data={data}
+            readOnly={readOnly}
+            hasOtherEdits={entries.length > 0}
+            onReload={() => void reload()}
+          />
+        );
+      case 'phone':
+        return <PhoneAccess />;
+      case 'config':
+        return <ConfigForm file={data.config} model={drafts.config} onChange={updateConfig} />;
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4">
-      <DraftBanner drafts={workflowDrafts.data ?? []} readOnly={readOnly} onReview={onOpenDraft} />
-      {usesDefaultRules && (
-        <Alert>
-          <AlertTitle>This repo uses Shipline&apos;s default rules</AlertTitle>
-          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
-            <span>
-              Claude can interview you and tailor the workflows, rules and commands to this repo. Or
-              edit the sections below yourself, then mark setup as done.
-            </span>
-            <span className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                disabled={readOnly || startingChat}
-                onClick={() => void startSetupChat()}
-              >
-                Run setup with Claude
-              </Button>
-              {!readOnly && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  // Marking done reloads the files from disk, which would drop unsaved edits.
-                  disabled={markDone.isPending || entries.length > 0}
-                  title={entries.length > 0 ? 'Save or discard your changes first' : undefined}
-                  onClick={() => markDone.mutate()}
-                >
-                  Mark setup as done
-                </Button>
-              )}
-            </span>
-          </AlertDescription>
-        </Alert>
-      )}
-      {mobile && <MobileSettingsRows />}
+      <div className="flex flex-wrap items-center gap-2">
+        {sub.page !== 'hub' && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="max-md:h-11"
+            onClick={() => navigate(parentHash(repoId, sub))}
+          >
+            <ArrowLeftIcon /> Back
+          </Button>
+        )}
+        <nav aria-label="Breadcrumb" className="min-w-0">
+          <ol className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+            {crumbs.map((c, i) => (
+              <Fragment key={i}>
+                {i > 0 && <ChevronRightIcon className="size-3" aria-hidden />}
+                <li className="min-w-0 truncate">
+                  {c.to ? (
+                    <a className="underline-offset-2 hover:underline" href={c.to}>
+                      {c.label}
+                    </a>
+                  ) : (
+                    <b
+                      className="text-foreground"
+                      aria-current={i === crumbs.length - 1 ? 'page' : undefined}
+                    >
+                      {c.label}
+                    </b>
+                  )}
+                </li>
+              </Fragment>
+            ))}
+          </ol>
+        </nav>
+      </div>
+
       {!mobile && (
         <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card/95 px-3 py-2 shadow-xs backdrop-blur">
           <span className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -267,11 +459,11 @@ export default function SetupPage({
             />
             {entries.length === 0
               ? 'No unsaved changes.'
-              : `${entries.length} changed ${entries.length === 1 ? 'file' : 'files'}: ${entries.map(fileLabel).join(', ')}`}
+              : `${entries.length} unsaved: ${entries.map(fileLabel).join(', ')}`}
           </span>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => void reload()}>
-              {entries.length === 0 ? 'Reload from disk' : 'Discard and reload'}
+              {entries.length === 0 ? 'Reload from disk' : 'Discard'}
             </Button>
             <Button
               size="sm"
@@ -284,220 +476,9 @@ export default function SetupPage({
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-[14rem_1fr]">
-        {mobile ? (
-          <nav
-            className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none]"
-            aria-label="Setup files"
-          >
-            {(
-              [
-                ['config', `config.yml${isConfigDirty(data, drafts) ? ' *' : ''}`],
-                [AGENTS_KEY, 'Agents & skills'],
-                [CI_KEY, 'CI check'],
-                [GUARDRAILS_KEY, 'Guardrails'],
-                [PHONE_KEY, 'Phone access'],
-                ...data.workflows.map(
-                  (w) =>
-                    [
-                      w.id!,
-                      `${w.id}${isWorkflowDirty(data, drafts, w.id!) ? ' *' : ''}${w.parseError !== undefined ? ' (error)' : ''}`,
-                    ] as const,
-                ),
-              ] as const
-            ).map(([key, label]) => (
-              <Button
-                key={key}
-                variant={current === key ? 'secondary' : 'outline'}
-                className="h-11 shrink-0 rounded-full px-4"
-                onClick={() => setSelected(key)}
-              >
-                {label}
-              </Button>
-            ))}
-            <Button
-              variant="outline"
-              className="h-11 shrink-0 rounded-full px-4"
-              disabled={readOnly}
-              onClick={() => setNewWorkflowOpen(true)}
-            >
-              <PlusIcon />
-              New workflow
-            </Button>
-            <Button
-              variant="outline"
-              className="h-11 shrink-0 rounded-full px-4"
-              disabled={readOnly || data.addableWorkflows.length === 0}
-              onClick={() => setAddWorkflowOpen(true)}
-            >
-              <PlusIcon />
-              Add shipped workflow
-            </Button>
-            {designerSupported && (
-              <Button
-                variant="outline"
-                className="h-11 shrink-0 rounded-full px-4"
-                disabled={readOnly || startingChat}
-                onClick={() => void startChat(DESCRIBE_MESSAGE)}
-              >
-                <SparklesIcon />
-                Describe a workflow
-              </Button>
-            )}
-          </nav>
-        ) : (
-          <nav
-            className="flex flex-row flex-wrap gap-1 md:flex-col md:self-start"
-            aria-label="Setup files"
-          >
-            <Button
-              variant={current === 'config' ? 'secondary' : 'ghost'}
-              className="justify-start"
-              onClick={() => setSelected('config')}
-            >
-              config.yml{isConfigDirty(data, drafts) ? ' *' : ''}
-            </Button>
-            <Button
-              variant={current === AGENTS_KEY ? 'secondary' : 'ghost'}
-              className="justify-start"
-              onClick={() => setSelected(AGENTS_KEY)}
-            >
-              Agents &amp; skills
-            </Button>
-            <Button
-              variant={current === CI_KEY ? 'secondary' : 'ghost'}
-              className="justify-start"
-              onClick={() => setSelected(CI_KEY)}
-            >
-              CI check
-            </Button>
-            <Button
-              variant={current === GUARDRAILS_KEY ? 'secondary' : 'ghost'}
-              className="justify-start"
-              onClick={() => setSelected(GUARDRAILS_KEY)}
-            >
-              Guardrails
-            </Button>
-            <Button
-              variant={current === PHONE_KEY ? 'secondary' : 'ghost'}
-              className="justify-start"
-              onClick={() => setSelected(PHONE_KEY)}
-            >
-              Phone access
-            </Button>
-            <p className="mt-2 hidden px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase md:block">
-              Workflows
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              className="justify-start"
-              disabled={readOnly}
-              onClick={() => setNewWorkflowOpen(true)}
-            >
-              <PlusIcon />
-              New workflow
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="justify-start"
-              disabled={readOnly || data.addableWorkflows.length === 0}
-              onClick={() => setAddWorkflowOpen(true)}
-            >
-              <PlusIcon />
-              Add shipped workflow
-            </Button>
-            {designerSupported ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="justify-start"
-                disabled={readOnly || startingChat}
-                onClick={() => void startChat(DESCRIBE_MESSAGE)}
-              >
-                <SparklesIcon />
-                Describe a workflow
-              </Button>
-            ) : (
-              <p className="px-2 text-xs text-muted-foreground">{UPGRADE_HINT}</p>
-            )}
-            {data.workflows.map((w) => (
-              <Button
-                key={w.id}
-                variant={current === w.id ? 'secondary' : 'ghost'}
-                className="justify-start"
-                onClick={() => setSelected(w.id!)}
-              >
-                {w.id}
-                {isWorkflowDirty(data, drafts, w.id!) ? ' *' : ''}
-                {w.parseError !== undefined ? ' (error)' : ''}
-              </Button>
-            ))}
-          </nav>
-        )}
+      <div className="min-w-0">{renderPage()}</div>
 
-        <div className="min-w-0">
-          {current === 'config' && (
-            <ConfigForm
-              file={data.config}
-              model={drafts.config}
-              onChange={(m: ConfigModel) => setDrafts({ ...drafts, config: m })}
-            />
-          )}
-          {current === AGENTS_KEY && (
-            <AgentsSkills
-              data={data}
-              config={drafts.config}
-              onConfigChange={(m: ConfigModel) => setDrafts({ ...drafts, config: m })}
-              readOnly={readOnly}
-              hasOtherEdits={entries.length > 0}
-              onReload={() => void reload()}
-            />
-          )}
-          {current === GUARDRAILS_KEY && (
-            <GuardrailsSection
-              key={dataUpdatedAt}
-              model={drafts.config}
-              readOnly={readOnly}
-              onChange={(m: ConfigModel) => setDrafts({ ...drafts, config: m })}
-            />
-          )}
-          {current === CI_KEY && (
-            <CiCheck
-              key={dataUpdatedAt}
-              data={data}
-              readOnly={readOnly}
-              hasOtherEdits={entries.length > 0}
-              onReload={() => void reload()}
-            />
-          )}
-          {current === PHONE_KEY && <PhoneAccess />}
-          {workflowFile && (
-            <WorkflowEditor
-              key={workflowFile.id}
-              file={workflowFile}
-              draft={drafts.workflows[workflowFile.id!]}
-              dirty={isWorkflowDirty(data, drafts, workflowFile.id!)}
-              agents={data.agents}
-              existingIds={workflowIds}
-              confirmations={(drafts.config ?? data.config.model)?.confirmations}
-              readOnly={readOnly}
-              rules={(id) => ({ text: drafts.rules[id] ?? '', exists: !!findRules(data, id) })}
-              onChange={(d) => updateWorkflow(workflowFile.id!, d)}
-              onRulesChange={updateRules}
-              onStructureChange={(id) => setSelected(id ?? 'config')}
-              onChangeWithClaude={
-                designerSupported && !startingChat
-                  ? () => void startChat(changeMessage(workflowFile.id!))
-                  : undefined
-              }
-            />
-          )}
-        </div>
-      </div>
-
-      {entries.length > 0 && (
+      {sub.page === 'hub' && entries.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
@@ -538,18 +519,24 @@ export default function SetupPage({
         </Card>
       )}
 
-      {mobile && entries.length > 0 && (
-        // Sticks to the bottom of the scrolling page, right above the tab bar.
-        <div className="sticky bottom-0 z-10 -mx-4 -mb-4 flex items-center gap-2 border-t bg-card px-4 py-2">
-          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-            {entries.length} unsaved {entries.length === 1 ? 'file' : 'files'}
-          </span>
-          <Button variant="outline" className="h-11 px-3" onClick={() => void reload()}>
-            Discard and reload
-          </Button>
-          <Button className="h-11 px-3" disabled={readOnly} onClick={() => setDialogOpen(true)}>
-            Review and save
-          </Button>
+      {mobile && (
+        // Sticks to the bottom of the scrolling page, right above the tab bar: the stage page's Back/Next (portalled
+        // into the first div), then the unsaved bar.
+        <div className="sticky bottom-0 z-10 -mx-4 -mb-4 flex flex-col">
+          <div ref={setPagerSlot} />
+          {entries.length > 0 && (
+            <div className="flex items-center gap-2 border-t bg-card px-4 py-2">
+              <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                {entries.length} unsaved: {entries.map(fileLabel).join(', ')}
+              </span>
+              <Button variant="outline" className="h-11 px-3" onClick={() => void reload()}>
+                Discard
+              </Button>
+              <Button className="h-11 px-3" disabled={readOnly} onClick={() => setDialogOpen(true)}>
+                Review and save
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -557,14 +544,14 @@ export default function SetupPage({
         open={newWorkflowOpen}
         onOpenChange={setNewWorkflowOpen}
         existingIds={workflowIds}
-        onCreated={setSelected}
+        onCreated={(id) => navigate(workflowHash(repoId, id))}
       />
 
       <AddWorkflowDialog
         open={addWorkflowOpen}
         onOpenChange={setAddWorkflowOpen}
         data={data}
-        onAdded={setSelected}
+        onAdded={(id) => navigate(workflowHash(repoId, id))}
       />
 
       {draftId && <DraftReview workflowId={draftId} readOnly={readOnly} onClose={onCloseDraft} />}

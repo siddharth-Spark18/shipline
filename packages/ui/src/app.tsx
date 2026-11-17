@@ -12,6 +12,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useVisualViewport } from '@/hooks/use-visual-viewport';
 import { api, setCurrentRepo } from '@/lib/api';
 import { connectEvents, queryKeys } from '@/lib/events';
+import { usePalette } from '@/lib/palette';
 import { useAccessIssue, useAllChats, useHealth, useProjects } from '@/lib/queries';
 import {
   ALL_HASH,
@@ -26,6 +27,7 @@ import {
   rememberRepo,
   setupHash,
   type Route,
+  type SetupSub,
 } from '@/lib/routes';
 import type { ChatListItem, HealthDot, Project } from '@/lib/types';
 import { useChatRepo } from '@/lib/use-chat-selection';
@@ -42,6 +44,19 @@ export default function App() {
   if (window.location.pathname === '/pair') return <PairPage />;
   return <MainApp />;
 }
+
+/** The header title of a Setup page. */
+const SETUP_TITLES: Record<SetupSub['page'], string> = {
+  hub: 'Setup',
+  workflows: 'Setup: Workflows',
+  workflow: 'Setup: Workflow',
+  stage: 'Setup: Stage',
+  guardrails: 'Setup: Guardrails',
+  agents: 'Setup: Agents & skills',
+  ci: 'Setup: CI check',
+  phone: 'Setup: Phone access',
+  config: 'Setup: Project config',
+};
 
 const TITLES: Record<Route['kind'], string> = {
   chat: 'Chat',
@@ -120,6 +135,7 @@ function MainApp() {
   const projectsQuery = useProjects();
   const allChats = useAllChats();
   const health = useHealth();
+  usePalette(!issue);
   const [hash, setHash] = useState(() => window.location.hash);
   // Projects seen "Not set up" in this session keep showing the wizard after Install (its last step), until a reload.
   const installSeen = useRef(new Set<string>());
@@ -279,7 +295,11 @@ function MainApp() {
               <RepoScope key={current.id} nav={nav} withBanners>
                 {(status) => (
                   <SetupPage
+                    repoId={current.id}
+                    sub={route.kind === 'setup' ? route.sub : { page: 'hub' }}
+                    navigate={navigate}
                     versionState={status?.versionState}
+                    versionMessage={status?.versionMessage ?? null}
                     onChatStarted={(id) => navigate(chatHash(id))}
                     draftId={route.kind === 'setup' ? route.draftId : null}
                     onOpenDraft={(workflowId) => navigate(draftHash(current.id, workflowId))}
@@ -419,7 +439,9 @@ function MainApp() {
         <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
           <SidebarTrigger />
           <Separator orientation="vertical" className="h-4" />
-          <h1 className="text-sm font-semibold">{TITLES[route.kind]}</h1>
+          <h1 className="text-sm font-semibold">
+            {route.kind === 'setup' ? SETUP_TITLES[route.sub.page] : TITLES[route.kind]}
+          </h1>
         </header>
         {content}
       </SidebarInset>

@@ -97,6 +97,9 @@
   --sidebar-accent-foreground: #2c2488;
   --sidebar-border: #ddd9cf;
   --sidebar-ring: #4b3fd6;
+  /* The selected sidebar item. Classic keeps the soft accent; the branded palettes use a solid sidebar-primary. */
+  --sidebar-active: var(--sidebar-accent);
+  --sidebar-active-foreground: var(--sidebar-accent-foreground);
 
   /* Stage state. */
   --stage-done: #2b7a3e;
@@ -166,6 +169,228 @@
   --notice-blocked: #ff867b;
   --notice-reminder: #f0b452;
   --notice-denied: #e8a0c8;
+}
+
+/*
+ * Palettes. Classic is :root and .dark above (today's look, light sidebar). The others set data-palette on <html>
+ * (see lib/palette.ts); next-themes puts .dark on <html> too, so each has a light block and a .dark block. They also
+ * give the sidebar its own brand colour. Stage, enforcement, change and notice colours follow the palette only
+ * where a block below overrides them (see the contrast results in docs/plans/shipline-setup-redesign-and-palettes.md).
+ */
+[data-palette='ultramarine'] {
+  --background: #f2f5ff;
+  --foreground: #0d1330;
+  --card: #fff;
+  --card-foreground: #0d1330;
+  --popover: #fff;
+  --popover-foreground: #0d1330;
+  --primary: #2438d4;
+  --primary-foreground: #fff;
+  --secondary: #e4e9fb;
+  --secondary-foreground: #0d1330;
+  --muted: #e4e9fb;
+  --muted-foreground: #4f5a85;
+  --accent: #dfe6ff;
+  --accent-foreground: #1a2a9c;
+  --border: #d3daf2;
+  --input: #bcc6e8;
+  --ring: #2438d4;
+  --chart-1: #2438d4;
+  --sidebar: #16208a;
+  --sidebar-foreground: #fff;
+  --sidebar-primary: #fff;
+  --sidebar-primary-foreground: #16208a;
+  --sidebar-accent: rgb(255 255 255 / 0.16);
+  --sidebar-accent-foreground: #fff;
+  --sidebar-border: #0f1661;
+  --sidebar-ring: #fff;
+  --sidebar-active: var(--sidebar-primary);
+  --sidebar-active-foreground: var(--sidebar-primary-foreground);
+
+  /* Contrast: raised to 4.5:1 on background, card and accent. */
+  --stage-done: #2a763c;
+  --stage-skipped: #6f6552;
+  --change-added: #2a763c;
+}
+
+.dark[data-palette='ultramarine'] {
+  --background: #0b1024;
+  --foreground: #eef1ff;
+  --card: #111833;
+  --card-foreground: #eef1ff;
+  --popover: #111833;
+  --popover-foreground: #eef1ff;
+  --primary: #8fa2ff;
+  --primary-foreground: #0a0f2e;
+  --secondary: #1a2145;
+  --secondary-foreground: #eef1ff;
+  --muted: #1a2145;
+  --muted-foreground: #9aa3cc;
+  --accent: #1c2760;
+  --accent-foreground: #d3dbff;
+  --border: #232c58;
+  --input: #34407a;
+  --ring: #8fa2ff;
+  --chart-1: #8fa2ff;
+  --sidebar: #070b1c;
+  --sidebar-foreground: #eef1ff;
+  --sidebar-primary: #8fa2ff;
+  --sidebar-primary-foreground: #0a0f2e;
+  --sidebar-accent: rgb(143 162 255 / 0.16);
+  --sidebar-accent-foreground: #eef1ff;
+  --sidebar-border: #050814;
+  --sidebar-ring: #8fa2ff;
+  --sidebar-active: var(--sidebar-primary);
+  --sidebar-active-foreground: var(--sidebar-primary-foreground);
+
+  /* Contrast: raised to 4.5:1 on background, card and accent. */
+  --stage-pending: #949494;
+  /* Back to the dark values: the light block above also matches in dark. */
+  --stage-done: #5ccb7a;
+  --stage-skipped: #a79c84;
+  --change-added: #5ccb7a;
+}
+
+[data-palette='ember'] {
+  --background: #fff7f0;
+  --foreground: #2b1a14;
+  --card: #fff;
+  --card-foreground: #2b1a14;
+  --popover: #fff;
+  --popover-foreground: #2b1a14;
+  --primary: #c2410c;
+  --primary-foreground: #fff;
+  --secondary: #f6e7db;
+  --secondary-foreground: #2b1a14;
+  --muted: #f6e7db;
+  --muted-foreground: #6a4f43;
+  --accent: #ffe9dc;
+  --accent-foreground: #7c2d12;
+  --border: #ecd9cb;
+  --input: #d9bfae;
+  --ring: #c2410c;
+  --chart-1: #c2410c;
+  --sidebar: #3b1708;
+  --sidebar-foreground: #ffe9dc;
+  --sidebar-primary: #ffe9dc;
+  --sidebar-primary-foreground: #7c2d12;
+  --sidebar-accent: rgb(255 233 220 / 0.16);
+  --sidebar-accent-foreground: #ffe9dc;
+  --sidebar-border: #291006;
+  --sidebar-ring: #ffe9dc;
+  --sidebar-active: var(--sidebar-primary);
+  --sidebar-active-foreground: var(--sidebar-primary-foreground);
+
+  /* Contrast: raised to 4.5:1 on background, card and accent. */
+  --stage-skipped: #736855;
+}
+
+.dark[data-palette='ember'] {
+  --background: #14100e;
+  --foreground: #f4ede8;
+  --card: #1d1714;
+  --card-foreground: #f4ede8;
+  --popover: #1d1714;
+  --popover-foreground: #f4ede8;
+  --primary: #ff9a62;
+  --primary-foreground: #2a1206;
+  --secondary: #2a201b;
+  --secondary-foreground: #f4ede8;
+  --muted: #2a201b;
+  --muted-foreground: #b39f94;
+  --accent: #3a1d0f;
+  --accent-foreground: #ffd9c2;
+  --border: #33281f;
+  --input: #44352b;
+  --ring: #ff9a62;
+  --chart-1: #ff9a62;
+  --sidebar: #0d0a08;
+  --sidebar-foreground: #f4ede8;
+  --sidebar-primary: #ff9a62;
+  --sidebar-primary-foreground: #2a1206;
+  --sidebar-accent: rgb(255 154 98 / 0.16);
+  --sidebar-accent-foreground: #f4ede8;
+  --sidebar-border: #090706;
+  --sidebar-ring: #ff9a62;
+  --sidebar-active: var(--sidebar-primary);
+  --sidebar-active-foreground: var(--sidebar-primary-foreground);
+
+  /* Back to the dark values: the light block above also matches in dark. */
+  --stage-skipped: #a79c84;
+}
+
+[data-palette='harbor'] {
+  --background: #f1f6f3;
+  --foreground: #0f1f1a;
+  --card: #fff;
+  --card-foreground: #0f1f1a;
+  --popover: #fff;
+  --popover-foreground: #0f1f1a;
+  --primary: #0b7a62;
+  --primary-foreground: #fff;
+  --secondary: #e1ece6;
+  --secondary-foreground: #0f1f1a;
+  --muted: #e1ece6;
+  --muted-foreground: #496157;
+  --accent: #d8efe7;
+  --accent-foreground: #0a5c4a;
+  --border: #cfe0d7;
+  --input: #b5cbc0;
+  --ring: #0b7a62;
+  --chart-1: #0b7a62;
+  --sidebar: #0a3d31;
+  --sidebar-foreground: #e1f5ee;
+  --sidebar-primary: #e1f5ee;
+  --sidebar-primary-foreground: #0a3d31;
+  --sidebar-accent: rgb(225 245 238 / 0.16);
+  --sidebar-accent-foreground: #e1f5ee;
+  --sidebar-border: #072b22;
+  --sidebar-ring: #e1f5ee;
+  --sidebar-active: var(--sidebar-primary);
+  --sidebar-active-foreground: var(--sidebar-primary-foreground);
+
+  /* Contrast: raised to 4.5:1 on background, card and accent. */
+  --stage-done: #2a763c;
+  --stage-skipped: #736855;
+  --change-added: #2a763c;
+}
+
+.dark[data-palette='harbor'] {
+  --background: #08130f;
+  --foreground: #e9f5f0;
+  --card: #0e1c17;
+  --card-foreground: #e9f5f0;
+  --popover: #0e1c17;
+  --popover-foreground: #e9f5f0;
+  --primary: #4fd6b4;
+  --primary-foreground: #04201a;
+  --secondary: #14271f;
+  --secondary-foreground: #e9f5f0;
+  --muted: #14271f;
+  --muted-foreground: #8fb0a4;
+  --accent: #0f3a2f;
+  --accent-foreground: #bff2e1;
+  --border: #1c3329;
+  --input: #2a4639;
+  --ring: #4fd6b4;
+  --chart-1: #4fd6b4;
+  --sidebar: #050d0a;
+  --sidebar-foreground: #e9f5f0;
+  --sidebar-primary: #4fd6b4;
+  --sidebar-primary-foreground: #04201a;
+  --sidebar-accent: rgb(79 214 180 / 0.16);
+  --sidebar-accent-foreground: #e9f5f0;
+  --sidebar-border: #040907;
+  --sidebar-ring: #4fd6b4;
+  --sidebar-active: var(--sidebar-primary);
+  --sidebar-active-foreground: var(--sidebar-primary-foreground);
+
+  /* Contrast: raised to 4.5:1 on background, card and accent. */
+  --stage-pending: #9e9e9e;
+  /* Back to the dark values: the light block above also matches in dark. */
+  --stage-done: #5ccb7a;
+  --stage-skipped: #a79c84;
+  --change-added: #5ccb7a;
 }
 
 @layer base {

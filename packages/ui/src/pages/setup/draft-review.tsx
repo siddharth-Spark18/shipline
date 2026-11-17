@@ -1,14 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { SaveDialog } from '@/pages/setup/save-dialog';
 import { ApiError, api, getCurrentRepo } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
 import { useDrafts } from '@/lib/queries';
-import type { ValidationIssue, WorkflowDraftInfo } from '@/lib/types';
+import type { ValidationIssue } from '@/lib/types';
 
 const failMessage = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
 
@@ -24,47 +21,6 @@ export function useDiscardDraft(onDone?: () => void) {
     },
     onError: (e) => toast.error(failMessage(e)),
   });
-}
-
-/** "Draft ready" at the top of Setup: one row per draft Claude left, with Review and Discard. */
-export function DraftBanner({
-  drafts,
-  readOnly,
-  onReview,
-}: {
-  drafts: WorkflowDraftInfo[];
-  readOnly: boolean;
-  onReview: (workflowId: string) => void;
-}) {
-  const discard = useDiscardDraft();
-  if (drafts.length === 0) return null;
-  return (
-    <Alert>
-      <AlertTitle>Draft ready</AlertTitle>
-      <AlertDescription className="flex flex-col gap-2">
-        {drafts.map((d) => (
-          <div key={d.workflowId} className="flex flex-wrap items-center gap-2">
-            <span className="min-w-0 truncate text-foreground">{d.name}</span>
-            <Badge variant="secondary">{d.isNew ? 'New workflow' : 'Changed workflow'}</Badge>
-            {(d.stale || d.staleRules.length > 0) && <Badge variant="outline">Stale</Badge>}
-            {d.errors.length > 0 && <Badge variant="destructive">Invalid</Badge>}
-            <span className="flex-1" />
-            <Button size="sm" onClick={() => onReview(d.workflowId)}>
-              Review
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={readOnly || discard.isPending}
-              onClick={() => discard.mutate(d.workflowId)}
-            >
-              Discard
-            </Button>
-          </div>
-        ))}
-      </AlertDescription>
-    </Alert>
-  );
 }
 
 /**

@@ -1,12 +1,6 @@
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import type { ConfigModel } from '@/lib/types';
@@ -73,6 +67,18 @@ const RAILS: { id: string; name: string; description: string; fallback: Level }[
 ];
 
 const isLevel = (v: unknown): v is Level => v === 'deny' || v === 'ask' || v === 'off';
+
+/** How many rails are on deny and on ask, with each rail's default for the ones the config doesn't set. */
+export function railCounts(model: ConfigModel | null): { deny: number; ask: number } {
+  const counts = { deny: 0, ask: 0 };
+  for (const r of RAILS) {
+    const raw = model?.rails?.[r.id];
+    const value: Level = isLevel(raw) ? raw : r.fallback;
+    if (value === 'deny') counts.deny++;
+    else if (value === 'ask') counts.ask++;
+  }
+  return counts;
+}
 
 /** One value per line. Uncontrolled, so a trailing newline survives while typing. */
 function LinesField({
@@ -172,25 +178,28 @@ export function GuardrailsSection({
             return (
               <li key={r.id} className="flex flex-wrap items-center gap-3 px-3 py-2">
                 <div className="min-w-0 flex-1">
-                  <Label htmlFor={`rail-${r.id}`}>{r.name}</Label>
+                  <span className="text-sm leading-none font-medium">{r.name}</span>
                   <p className="text-xs text-muted-foreground">{r.description}</p>
                 </div>
-                <Select
-                  value={value}
-                  disabled={readOnly}
-                  onValueChange={(v) => setRail(r.id, v as Level)}
+                <div
+                  role="group"
+                  aria-label={`${r.name}: deny, ask or off`}
+                  className="flex shrink-0 gap-1"
                 >
-                  <SelectTrigger id={`rail-${r.id}`} className="w-28">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {LEVELS.map((l) => (
-                      <SelectItem key={l.value} value={l.value}>
-                        {l.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  {LEVELS.map((l) => (
+                    <Button
+                      key={l.value}
+                      size="sm"
+                      variant={value === l.value ? 'default' : 'outline'}
+                      className="min-w-12 max-md:h-11"
+                      aria-pressed={value === l.value}
+                      disabled={readOnly}
+                      onClick={() => setRail(r.id, l.value)}
+                    >
+                      {l.label}
+                    </Button>
+                  ))}
+                </div>
               </li>
             );
           })}

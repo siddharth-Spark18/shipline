@@ -380,6 +380,12 @@ export default function SetupPage({
           <GuardrailsSection
             key={dataUpdatedAt}
             model={drafts.config}
+            workflows={workflowIds.map((id) => ({
+              id,
+              hasReproduce: (drafts.workflows[id]?.model.stages ?? []).some(
+                (st) => st.id === 'reproduce',
+              ),
+            }))}
             readOnly={readOnly}
             onChange={updateConfig}
           />

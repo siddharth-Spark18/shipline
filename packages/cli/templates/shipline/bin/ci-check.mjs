@@ -153,6 +153,18 @@ if (scope) {
   if (bits.length) notice(`Scope: ${scopeCell}.`);
 }
 
+// ---------- fail-first (information only, never a failure) ----------
+const ff = data.fail_first && typeof data.fail_first === 'object' ? data.fail_first : null;
+const fp12 = (v) => (typeof v === 'string' && v ? v.slice(0, 12) : 'unknown');
+let failFirstCell = null;
+if (ff && ff.before && typeof ff.before === 'object') {
+  const after = ff.after && typeof ff.after === 'object' ? ff.after : null;
+  failFirstCell = `failed before (exit ${cell0(ff.before.exit)} on ${fp12(ff.before.fingerprint)}), ${
+    after ? (after.exit === 0 ? `passed after (on ${fp12(after.fingerprint)})` : `not passing after (exit ${cell0(after.exit)})`) : 'no passing run after'
+  }`;
+  notice(`Fail-first: ${failFirstCell}.`);
+}
+
 // Were the checks run on exactly this code? Never a failure when it can't be told, or for a v1 summary.
 let staleMessage = null;
 if (data.v === 1 || data.v === undefined) {
@@ -176,6 +188,9 @@ if (staleMessage && cfg.ci.stale_checks === 'fail') problems.push(staleMessage);
 else if (staleMessage) warning(staleMessage);
 
 const label = { answer: 'your answer', auto: 'auto' };
+function cell0(v) {
+  return v === undefined || v === null ? '?' : String(v).replace(/[|\r\n]/g, ' ');
+}
 const cell = (v) => String(v === undefined || v === null ? '' : v).replace(/[|\r\n]/g, ' ');
 summaryOut(
   [
@@ -185,6 +200,7 @@ summaryOut(
     ...data.stages.map((s) => `| ${cell(s && s.id)} | ${cell(s && s.status)} | ${label[s && s.confirmed] || '—'} |`),
     ...(checksCell !== null ? [`| Checks | ${cell(checksCell)} | \u2014 |`] : []),
     ...(scopeCell !== null ? [`| Scope | ${cell(scopeCell)} | \u2014 |`] : []),
+    ...(failFirstCell !== null ? [`| Fail-first | ${cell(failFirstCell)} | \u2014 |`] : []),
     ...(scopeSensitive.length ? ['', '<details><summary>Test, lint and CI files edited</summary>', '', ...scopeSensitive.map((f) => `- \`${cell(f)}\``), '', '</details>'] : []),
     ...(scopeOutside && scopeOutside.length ? ['', '<details><summary>Files outside the plan</summary>', '', ...scopeOutside.map((f) => `- \`${cell(f)}\``), '', '</details>'] : []),
     ...(problems.length ? ['', ...problems.map((p) => `- ${p}`)] : []),

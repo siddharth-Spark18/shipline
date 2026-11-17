@@ -16,7 +16,7 @@ async function loadPrompts() {
 }
 
 export const GUARDRAILS_SUMMARY =
-  'On: force-push to main and printing credentials are denied; pushes to main, deploys, migrations, edits to agent config and protected paths (migrations/, infra/, CI files, lockfiles…) ask first.';
+  'On: force-push to main and printing credentials are denied; pushes to main, deploys, migrations, package installs, edits to agent config and protected paths (migrations/, infra/, CI files, lockfiles…) ask first.';
 
 // A command answer as stored: trimmed, and `none` (any case) means empty.
 export const commandAnswer = (answer) => {
@@ -35,7 +35,7 @@ export async function askConfirmInstall() {
 
 // info: { workflows, agents, repoAgents, repoSkills, detected, trackerDefault, uiDetected, agentUse,
 //   missingStageAgents(selection), defaultAgents(workflowIds, ui) } (see init.mjs).
-// Returns { workflows, ui, agents, clashes, stageAgents, skills, commands, tracker, confirmations, guardrails,
+// Returns { workflows, ui, agents, clashes, stageAgents, skills, commands, tracker, confirmations, guardrails, failFirst,
 //   branchPattern, ci }.
 export async function askSelection(info) {
   const { checkbox, confirm, input, select } = await loadPrompts();
@@ -112,6 +112,16 @@ export async function askSelection(info) {
   console.log(GUARDRAILS_SUMMARY);
   const guardrailsOn = await confirm({ message: 'Turn guardrails on?', default: true });
   const guardrails = guardrailsOn ? 'on' : 'off';
+  const failFirst = await select({
+    message: 'Fail-first tests for bugfixes?',
+    choices: [
+      { name: 'Off', value: 'off' },
+      { name: 'Note (Claude is told to write a failing test first)', value: 'note' },
+      { name: 'Section (Reproduce needs a "Failing test" section)', value: 'section' },
+      { name: 'Proof (a recorded failing test run is required)', value: 'proof' },
+    ],
+    default: 'off',
+  });
 
   // Step 6. Agents and skills. Shipline's agents (none is fine): the ones the chosen workflows' stages use are
   // ticked; standalone agents (no stage names them) come in a section of their own, unticked.
@@ -175,5 +185,5 @@ export async function askSelection(info) {
   stepTitle(7, 'CI check');
   const ci = await confirm({ message: 'Add a Shipline CI check for pull requests?', default: false });
 
-  return { workflows, ui, agents, clashes, stageAgents, skills, commands, tracker, confirmations, guardrails, branchPattern, ci };
+  return { workflows, ui, agents, clashes, stageAgents, skills, commands, tracker, confirmations, guardrails, failFirst, branchPattern, ci };
 }

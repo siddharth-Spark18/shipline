@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { AppearanceCard } from '@/pages/setup/appearance-card';
 import { MODES } from '@/pages/setup/ci-check';
 import { useDiscardDraft } from '@/pages/setup/draft-review';
-import { railCounts } from '@/pages/setup/guardrails-section';
+import { failFirstLevel, railCounts } from '@/pages/setup/guardrails-section';
 import { isConfigDirty, isWorkflowDirty, type Drafts } from '@/pages/setup/draft';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useRemote } from '@/lib/queries';
@@ -193,7 +193,10 @@ export function SetupHub({
   const rails = railCounts(config);
   const protectedPaths = config?.protected_paths?.length ?? 0;
   const extraCommands =
-    (config?.rails_commands?.deploy?.length ?? 0) + (config?.rails_commands?.migrate?.length ?? 0);
+    (config?.rails_commands?.deploy?.length ?? 0) +
+    (config?.rails_commands?.migrate?.length ?? 0) +
+    (config?.rails_commands?.install_packages?.length ?? 0);
+  const failFirst = failFirstLevel(config);
 
   const shiplineInstalled = data.agents.shipline.filter((a) => a.installed && !a.excluded).length;
   const own =
@@ -241,7 +244,9 @@ export function SetupHub({
         value={config ? `${rails.deny} deny / ${rails.ask} ask` : 'Unreadable'}
         detail={
           config
-            ? `${plural(protectedPaths, 'protected path')}, ${plural(extraCommands, 'extra command')}`
+            ? `${plural(protectedPaths, 'protected path')}, ${plural(extraCommands, 'extra command')}${
+                failFirst !== 'off' ? `, fail-first: ${failFirst}` : ''
+              }`
             : 'config.yml does not parse'
         }
       />

@@ -54,13 +54,17 @@ rails:
   deploy: ask
   # prisma migrate deploy, rails db:migrate, alembic upgrade and the like.
   migrate: ask
+  # npm/pnpm/yarn/bun add, pip install <pkg>, uv add, cargo add, go get, npx of a package that isn't a dependency,
+  # global installs (npm i -g, pipx, brew, apt) and the like. Bare lockfile installs (npm install) never prompt.
+  install_packages: ask
   # Edits to .claude/**, .shipline/**, CLAUDE.md and .mcp.json.
   agent_config: ask
 
-# Extra commands that count as a deploy or a migration (plain prefixes, for example "make ship").
+# Extra commands that count as a deploy, a migration or a package install (plain prefixes, for example "make ship").
 rails_commands:
   deploy: []
   migrate: []
+  install_packages: []
 
 # Files that need a permission prompt to change, in any stage (globs relative to the repo root).
 protected_paths:
@@ -91,6 +95,14 @@ protected_paths:
   - go.sum
   - Gemfile.lock
   - composer.lock
+
+# Bugfixes: require a test that fails before the fix. level: off | note | section | proof.
+#   note: Claude is told to write a failing test first. section: Reproduce must have a "## Failing test" section.
+#   proof: `stage.mjs check --expect-fail` must record a failing test run before Reproduce can finish.
+# workflows: the workflows it applies to (each needs a reproduce stage). Skipping Reproduce with a reason still works.
+fail_first:
+  level: off
+  workflows: [bugfix]
 
 # At Verify, `stage.mjs check` lists the test, lint and CI files the change edits and the files outside the plan's
 # "Files to touch"; finishing the stage then needs the developer's answer, and the PR summary shows it.

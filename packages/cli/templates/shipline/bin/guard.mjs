@@ -15,7 +15,7 @@ import path from 'node:path';
 import {
   findRoot, loadConfig, loadWorkflow, readSession, readManifest, readStdinJson, stateDir, storeDir, shiplineHome,
   isInside, stageEnforcement, findStage, isDone, globToRegExp, listOpenTasks, currentBranch, safeId, out, failOpen,
-  parseCommand, makeMatchCtx, matchAction, matchRail, bashWriteTargets, isCredentialPath, resolveTarget, repoRelative,
+  parseCommand, makeMatchCtx, matchAction, matchRail, matchInstallPackages, bashWriteTargets, isCredentialPath, resolveTarget, repoRelative,
   globMatches, globMatchesCredential, defaultConfig, railReason, RAIL_IDS, ACTIONS,
 } from './lib.mjs';
 
@@ -134,6 +134,12 @@ function railDecisions(input, root, cfg) {
     const parts = parseCommand(ti.command);
     for (const id of RAIL_IDS) {
       if (!on(id)) continue;
+      if (id === 'install_packages') {
+        // One reason for the whole command, listing every package a chain fetches.
+        const what = matchInstallPackages(parts, ctx);
+        if (what) raise(id, what);
+        continue;
+      }
       for (const part of parts) {
         const what = matchRail(part, id, ctx);
         if (what) {

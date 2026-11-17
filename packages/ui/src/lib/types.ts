@@ -250,10 +250,11 @@ export interface ConfigModel {
   setup?: string | null;
   /** Always-on guardrails, rail id to deny | ask | off; edited in the Guardrails section. */
   rails?: { [rail: string]: string | null | undefined } | null;
-  /** Extra commands that count as a deploy or a migration (plain prefixes). */
+  /** Extra commands that count as a deploy, a migration or a package install (plain prefixes). */
   rails_commands?: {
     deploy?: string[] | null;
     migrate?: string[] | null;
+    install_packages?: string[] | null;
     [key: string]: unknown;
   } | null;
   /** Globs (relative to the repo root) that need a permission prompt to change. */
@@ -262,6 +263,12 @@ export interface ConfigModel {
   scope_check?: {
     enabled?: boolean | null;
     sensitive_extra?: string[] | null;
+    [key: string]: unknown;
+  } | null;
+  /** Bugfixes: require a test that fails before the fix. `level` is off | note | section | proof. */
+  fail_first?: {
+    level?: string | null;
+    workflows?: string[] | null;
     [key: string]: unknown;
   } | null;
   [key: string]: unknown;
@@ -761,6 +768,8 @@ export interface InstallSelection {
   confirmations?: 'standard' | 'light';
   /** Optional: missing means on. Off writes every rail as off and no protected paths. */
   guardrails?: 'on' | 'off';
+  /** Optional (terminal init): fail-first level for bugfixes. `guardrailConfig.fail_first` wins over it. */
+  failFirst?: 'off' | 'note' | 'section' | 'proof';
   /** Optional: missing means the default pattern. */
   branchPattern?: string;
   ci: boolean;
@@ -771,7 +780,7 @@ export interface InstallSelection {
   /** The guardrail part of config.yml. Takes precedence over `guardrails`. */
   guardrailConfig?: Pick<
     ConfigModel,
-    'rails' | 'rails_commands' | 'protected_paths' | 'scope_check'
+    'rails' | 'rails_commands' | 'protected_paths' | 'scope_check' | 'fail_first'
   >;
   /** Writes `setup: done`. */
   setupDone?: boolean;

@@ -3,24 +3,25 @@
 // then defaultBranches(root) (origin/HEAD, the main/master fallback, and the per-repo cache). Node 18+ (test:hooks).
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { git, hook, homeFor, makeRepo, removeDir, storeOf, tmpDir } from './helpers.mjs';
-import { RAIL_DEFAULTS, RAIL_IDS, defaultBranches, isCredentialPath, loadConfig, matchRail, parseCommand } from '../templates/shipline/bin/lib.mjs';
+import { RAIL_DEFAULTS, RAIL_IDS, defaultBranches, isCredentialPath, loadConfig, matchInstallPackages, matchRail, parseCommand } from '../templates/shipline/bin/lib.mjs';
 import { validateConfig } from '../src/setup-schema.mjs';
 
 // ---------- matchers, with a stub context ----------
 
 const ROOT = path.resolve(os.tmpdir(), 'rails-stub-repo');
-function ctx({ branch = 'feature/x', defaults = ['main'], scripts = {}, deploy = [], migrate = [] } = {}) {
+function ctx({ branch = 'feature/x', defaults = ['main'], scripts = {}, deploy = [], migrate = [], install = [], listed = [] } = {}) {
   return {
     root: ROOT,
     cwd: ROOT,
-    cfg: { rails_commands: { deploy, migrate } },
+    cfg: { rails_commands: { deploy, migrate, install_packages: install } },
     defaultBranches: () => defaults,
     branch: () => branch,
     scriptBody: (_part, name) => (Object.prototype.hasOwnProperty.call(scripts, name) ? scripts[name] : null),
+    isListedNodePackage: (_dir, name) => listed.includes(name),
   };
 }
 // The rails a command trips: { railId: what }.
@@ -283,6 +284,237 @@ describe('migrate', () => {
 
 // ---------- the guard hook, on a real repo ----------
 
+describe('install_packages', () => {
+  const what = (text, c = ctx()) => matchInstallPackages(parseCommand(text), c);
+
+  test('adding a named package, per tool, names the packages and the tool', () => {
+    for (const [text, expected] of [
+      ['npm install lodash', 'lodash (npm)'],
+      ['npm i left-pad lodahs', 'left-pad, lodahs (npm)'],
+      ['npm add @types/node@18 --save-dev', '@types/node@18 (npm)'],
+      ['pnpm add zod', 'zod (pnpm)'],
+      ['pnpm install zod', 'zod (pnpm)'],
+      ['pnpm add -D typescript', 'typescript (pnpm)'],
+      ['yarn add react', 'react (yarn)'],
+      ['bun add hono', 'hono (bun)'],
+      ['bun install hono', 'hono (bun)'],
+      ['pip install requests', 'requests (pip)'],
+      ['pip3 install requests==2.31', 'requests==2.31 (pip)'],
+      ['uv add httpx', 'httpx (uv)'],
+      ['uv pip install httpx', 'httpx (uv)'],
+      ['poetry add rich', 'rich (poetry)'],
+      ['pipenv install flask', 'flask (pipenv)'],
+      ['pdm add attrs', 'attrs (pdm)'],
+      ['rye add pytest', 'pytest (rye)'],
+      ['cargo add serde', 'serde (cargo)'],
+      ['go get github.com/gin-gonic/gin', 'github.com/gin-gonic/gin (go)'],
+      ['go install golang.org/x/tools/cmd/goimports@latest', 'golang.org/x/tools/cmd/goimports@latest (go)'],
+      ['gem install rails', 'rails (gem)'],
+      ['bundle add devise', 'devise (bundle)'],
+      ['composer require monolog/monolog', 'monolog/monolog (composer)'],
+      ['dotnet add package Newtonsoft.Json --version 13.0.1', 'Newtonsoft.Json (dotnet)'],
+      ['dotnet add src/App.csproj package Serilog', 'Serilog (dotnet)'],
+    ]) {
+      assert.equal(what(text), `Installs packages: ${expected}`, text);
+    }
+  });
+
+  test('unwrapped forms: python -m pip, uv run pip, sudo, a cd, bundle exec', () => {
+    assert.equal(what('python -m pip install x'), 'Installs packages: x (pip)');
+    assert.equal(what('python3.11 -m pip install x'), 'Installs packages: x (pip)');
+    assert.equal(what('uv run pip install x'), 'Installs packages: x (pip)');
+    assert.equal(what('poetry run pip install x'), 'Installs packages: x (pip)');
+    assert.equal(what('sudo pip install x'), 'Installs packages: x (pip)');
+    assert.equal(what('cd sub && npm i x'), 'Installs packages: x (npm)');
+    assert.equal(what('bundle exec gem install x'), 'Installs packages: x (gem)');
+    assert.ok(trips('cd sub && npm i x', 'install_packages'));
+  });
+
+  test('not: lockfile restores, local paths, workspace refs, tarballs, other subcommands', () => {
+    for (const text of [
+      'npm install',
+      'npm i',
+      'npm ci',
+      'pnpm install',
+      'pnpm install --frozen-lockfile',
+      'yarn install',
+      'yarn',
+      'bun install',
+      'pip install -r requirements.txt',
+      'pip install -e .',
+      'pip install .',
+      'pip install ./dist/x.whl',
+      'pip install -r requirements.txt -c constraints.txt',
+      'uv sync',
+      'uv pip install -r requirements.txt',
+      'poetry install',
+      'bundle install',
+      'cargo build',
+      'cargo install --path .',
+      'go get ./...',
+      'go install ./...',
+      'npm i ./pkg',
+      'npm i ../pkg',
+      'npm i file:../pkg',
+      'pnpm add workspace:*',
+      'npm i ./x.tgz',
+      'gem install ./x.gem',
+      'npm run build',
+      'npm uninstall lodash',
+      'brew update',
+      'apt list',
+      'git status',
+    ]) {
+      assert.equal(what(text), null, text);
+    }
+  });
+
+  test('git and http URLs are matched and shown as the URL', () => {
+    assert.equal(what('npm i https://example.com/x.tgz'), 'Installs packages: https://example.com/x.tgz (npm)');
+    assert.equal(what('pip install git+https://github.com/a/b.git'), 'Installs packages: git+https://github.com/a/b.git (pip)');
+  });
+
+  test('a name that is already a dependency is still matched (it is being fetched)', () => {
+    assert.ok(what('npm install lodash', ctx({ listed: ['lodash'] })));
+  });
+
+  test('npx and its kin: a package that is not listed prompts, a listed one does not', () => {
+    assert.equal(what('npx some-unknown-tool'), "Runs a package that isn't a dependency of this repo: some-unknown-tool (npx)");
+    assert.equal(what('npx -y create-foo@latest my-app'), "Runs a package that isn't a dependency of this repo: create-foo@latest (npx)");
+    assert.equal(what('bunx cowsay hi'), "Runs a package that isn't a dependency of this repo: cowsay (bunx)");
+    assert.equal(what('pnpm exec some-tool'), "Runs a package that isn't a dependency of this repo: some-tool (pnpm exec)");
+    assert.equal(what('npm exec some-tool'), "Runs a package that isn't a dependency of this repo: some-tool (npm exec)");
+    const c = ctx({ listed: ['vitest', 'typescript'] });
+    assert.equal(what('npx vitest run', c), null);
+    assert.equal(what('npx --yes vitest@1 run', c), null, 'the version is stripped for the lookup');
+    assert.equal(what('pnpm exec vitest', c), null);
+    assert.equal(what('npx ./local-script.js'), null);
+    assert.equal(what('npx'), null);
+  });
+
+  test('npx -p / --package checks the named package, not the command', () => {
+    const c = ctx({ listed: ['typescript'] });
+    assert.equal(what('npx -p typescript tsc --version', c), null);
+    assert.equal(what('npx -p @scope/tool tool', c), "Runs a package that isn't a dependency of this repo: @scope/tool (npx)");
+    assert.equal(what('npx --package=left-pad run-it', c), "Runs a package that isn't a dependency of this repo: left-pad (npx)");
+  });
+
+  test('pnpm dlx, yarn dlx, uvx and pipx run always match, even for a "listed" name', () => {
+    const c = ctx({ listed: ['create-x', 'ruff'] });
+    assert.equal(what('pnpm dlx create-x', c), "Runs a package that isn't a dependency of this repo: create-x (pnpm)");
+    assert.equal(what('yarn dlx create-x', c), "Runs a package that isn't a dependency of this repo: create-x (yarn)");
+    assert.equal(what('uvx ruff check .', c), "Runs a package that isn't a dependency of this repo: ruff (uvx)");
+    assert.equal(what('pipx run black .', c), "Runs a package that isn't a dependency of this repo: black (pipx)");
+    assert.equal(what('uvx --from httpie http', c), "Runs a package that isn't a dependency of this repo: httpie (uvx)");
+  });
+
+  test('global and system installs', () => {
+    for (const [text, expected] of [
+      ['npm install -g typescript', 'Installs packages globally: typescript (npm)'],
+      ['npm i --global typescript', 'Installs packages globally: typescript (npm)'],
+      ['pnpm add -g typescript', 'Installs packages globally: typescript (pnpm)'],
+      ['yarn global add typescript', 'Installs packages globally: typescript (yarn)'],
+      ['bun add -g typescript', 'Installs packages globally: typescript (bun)'],
+      ['pipx install black', 'Installs packages globally: black (pipx)'],
+      ['uv tool install ruff', 'Installs packages globally: ruff (uv)'],
+      ['cargo install ripgrep', 'Installs packages globally: ripgrep (cargo)'],
+      ['brew install jq', 'Installs packages globally: jq (brew)'],
+      ['sudo apt-get install -y curl git', 'Installs packages globally: curl, git (apt)'],
+      ['apt install ripgrep', 'Installs packages globally: ripgrep (apt)'],
+      ['dnf install -y gcc', 'Installs packages globally: gcc (dnf)'],
+      ['yum install gcc', 'Installs packages globally: gcc (yum)'],
+      ['choco install nodejs', 'Installs packages globally: nodejs (choco)'],
+      ['winget install --id Git.Git -e', 'Installs packages globally: Git.Git (winget)'],
+    ]) {
+      assert.equal(what(text), expected, text);
+    }
+  });
+
+  test('a chain lists every package found', () => {
+    assert.equal(what('npm i a && pip install b && npx c'), "Runs a package that isn't a dependency of this repo: c (npx). Installs packages: a (npm), b (pip)");
+    assert.equal(what('npm i a; npm i b'), 'Installs packages: a, b (npm)');
+  });
+
+  test('rails_commands.install_packages: plain prefixes on the parsed words', () => {
+    const c = ctx({ install: ['make deps', 'just bootstrap'] });
+    assert.equal(what('make deps', c), 'Runs `make deps`, listed as an install command in config.yml');
+    assert.ok(what('just bootstrap --fast', c));
+    assert.ok(what('cd app && make deps', c));
+    assert.equal(what('make build', c), null);
+    assert.equal(what('make', c), null);
+    assert.equal(what('make deps'), null, 'not matched without the config entry');
+  });
+
+  test('matchRail reports it per command, through RAIL_IDS', () => {
+    assert.ok(RAIL_IDS.includes('install_packages'));
+    assert.equal(RAIL_DEFAULTS.install_packages, 'ask');
+    assert.match(railsOf('npm i lodash').install_packages, /^Installs packages: lodash \(npm\)$/);
+    assert.deepEqual(Object.keys(railsOf('npm install')), []);
+  });
+});
+
+describe('install_packages in the guard (a real repo)', () => {
+  let dir;
+  let configText;
+  const bash = (command, cwd = dir) => hook(dir, 'guard.mjs', { session_id: 'inst-s1', cwd, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } });
+  const decision = (r) => (r.json && r.json.hookSpecificOutput ? r.json.hookSpecificOutput.permissionDecision : null);
+  const reason = (r) => r.json.hookSpecificOutput.permissionDecisionReason;
+
+  before(() => {
+    dir = makeRepo({ commitInit: true });
+    configText = readFileSync(path.join(dir, '.shipline', 'config.yml'), 'utf8');
+    writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'x', dependencies: { lodash: '4' }, devDependencies: { vitest: '1' }, optionalDependencies: { fsevents: '2' } }));
+    mkdirSync(path.join(dir, 'node_modules', '.bin'), { recursive: true });
+    writeFileSync(path.join(dir, 'node_modules', '.bin', 'tsc'), '');
+    mkdirSync(path.join(dir, 'packages', 'app'), { recursive: true });
+    writeFileSync(path.join(dir, 'packages', 'app', 'package.json'), JSON.stringify({ name: 'app', devDependencies: { eslint: '9' } }));
+  });
+  after(() => removeDir(dir));
+
+  test('a fresh install asks, with the packages in the reason', () => {
+    const r = bash('npm install lodahs left-pad');
+    assert.equal(decision(r), 'ask');
+    assert.match(reason(r), /^Shipline rail install_packages: Installs packages: lodahs, left-pad \(npm\)\. Check each name is the one you meant and exists on the official registry before allowing\. To change this rail: rails\.install_packages in \.shipline\/config\.yml \(or Setup, Guardrails\)\.$/);
+    assert.ok(!reason(r).includes('Do not work around this'));
+  });
+
+  test('npx: listed in dependencies, devDependencies, optionalDependencies, a parent package.json or .bin say nothing; an unknown tool asks', () => {
+    for (const command of ['npx vitest run', 'npx lodash', 'npx fsevents', 'npx tsc --noEmit', 'pnpm exec vitest', 'npm install', 'npm ci']) {
+      assert.equal(bash(command).stdout, '', command);
+    }
+    assert.equal(bash('npx vitest', path.join(dir, 'packages', 'app')).stdout, '', 'the root package.json is read from a sub folder');
+    assert.equal(bash('npx eslint .', path.join(dir, 'packages', 'app')).stdout, '', 'the nearest package.json too');
+    assert.equal(bash('cd packages/app && npx eslint .').stdout, '', 'after a cd');
+    assert.equal(decision(bash('npx eslint .')), 'ask', 'but not from the root, where eslint is not listed');
+    const r = bash('npx some-unknown-tool');
+    assert.equal(decision(r), 'ask');
+    assert.match(reason(r), /Runs a package that isn't a dependency of this repo: some-unknown-tool \(npx\)\./);
+  });
+
+  test('deny uses the same text with the deny wording; off turns it off; a missing key uses ask', () => {
+    writeFileSync(path.join(dir, '.shipline', 'config.yml'), configText.replace(/^ {2}install_packages: ask$/m, '  install_packages: deny'));
+    let r = bash('pip install requests');
+    assert.equal(decision(r), 'deny');
+    assert.match(reason(r), /^Shipline rail install_packages: Installs packages: requests \(pip\)\..*Do not work around this\./);
+    writeFileSync(path.join(dir, '.shipline', 'config.yml'), configText.replace(/^ {2}install_packages: ask$/m, '  install_packages: off'));
+    assert.equal(bash('pip install requests').stdout, '');
+    writeFileSync(path.join(dir, '.shipline', 'config.yml'), configText.replace(/^ {2}install_packages: ask\n/m, ''));
+    assert.equal(loadConfig(dir).rails.install_packages, 'ask');
+    r = bash('pip install requests');
+    assert.equal(decision(r), 'ask', 'an upgraded repo with no key gets the default');
+    writeFileSync(path.join(dir, '.shipline', 'config.yml'), configText);
+  });
+
+  test('rails_commands.install_packages from config.yml', () => {
+    writeFileSync(path.join(dir, '.shipline', 'config.yml'), configText.replace(/^ {2}install_packages: \[\]$/m, '  install_packages: ["make deps"]'));
+    assert.equal(loadConfig(dir).rails_commands.install_packages[0], 'make deps');
+    const r = bash('make deps');
+    assert.equal(decision(r), 'ask');
+    assert.match(reason(r), /Runs `make deps`, listed as an install command in config\.yml\./);
+    writeFileSync(path.join(dir, '.shipline', 'config.yml'), configText);
+  });
+});
+
 describe('the guard: decisions and config', () => {
   let dir;
   let configText;
@@ -319,6 +551,7 @@ describe('the guard: decisions and config', () => {
       read_credentials: 'ask',
       deploy: 'ask',
       migrate: 'ask',
+      install_packages: 'ask',
       agent_config: 'ask',
     });
   });

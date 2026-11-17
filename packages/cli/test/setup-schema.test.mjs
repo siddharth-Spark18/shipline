@@ -265,9 +265,10 @@ describe('known fields, header and layout', () => {
   test('KNOWN_FIELDS lists the form fields from the schema table', () => {
     // `setup` is known (so not listed under "other fields") but the form doesn't edit it (Teams Phase 1, E).
     // Teams Phase 3, F: the Guardrails section edits rails, rails_commands, protected_paths and scope_check.
-    assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup', 'rails', 'rails_commands', 'protected_paths', 'scope_check', 'confirmations']);
-    assert.deepEqual(KNOWN_FIELDS.config.rails, ['force_push_default', 'push_default', 'pipe_to_shell', 'print_credentials', 'read_credentials', 'deploy', 'migrate', 'agent_config']);
-    assert.deepEqual(KNOWN_FIELDS.config.rails_commands, ['deploy', 'migrate']);
+    assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup', 'rails', 'rails_commands', 'protected_paths', 'scope_check', 'confirmations', 'fail_first']);
+    assert.deepEqual(KNOWN_FIELDS.config.rails, ['force_push_default', 'push_default', 'pipe_to_shell', 'print_credentials', 'read_credentials', 'deploy', 'migrate', 'install_packages', 'agent_config']);
+    assert.deepEqual(KNOWN_FIELDS.config.rails_commands, ['deploy', 'migrate', 'install_packages']);
+    assert.deepEqual(KNOWN_FIELDS.config.fail_first, ['level', 'workflows']);
     assert.deepEqual(KNOWN_FIELDS.config.scope_check, ['enabled', 'sensitive_extra']);
     assert.deepEqual(KNOWN_FIELDS.workflow.block, ['tools', 'allow_paths', 'bash', 'actions']);
     assert.deepEqual(KNOWN_FIELDS.config.commands, ['test', 'lint', 'build']);
@@ -365,9 +366,11 @@ describe('guardrails (Teams Phase 3)', () => {
       read_credentials: 'ask',
       deploy: 'ask',
       migrate: 'ask',
+      install_packages: 'ask',
       agent_config: 'ask',
     });
-    assert.deepEqual(c.rails_commands, { deploy: [], migrate: [] });
+    assert.deepEqual(c.rails_commands, { deploy: [], migrate: [], install_packages: [] });
+    assert.deepEqual(c.fail_first, { level: 'off', workflows: ['bugfix'] });
     assert.deepEqual(c.scope_check, { enabled: true, sensitive_extra: [] });
     assert.deepEqual(c.protected_paths, [
       'migrations/**', 'db/migrate/**', 'prisma/migrations/**', 'alembic/versions/**', 'infra/**', 'terraform/**', '**/*.tf', 'k8s/**', 'helm/**',
@@ -379,7 +382,7 @@ describe('guardrails (Teams Phase 3)', () => {
 
   test('every key is optional, and empty values pass', () => {
     const c = baseConfig();
-    for (const k of ['rails', 'rails_commands', 'protected_paths', 'scope_check']) delete c[k];
+    for (const k of ['rails', 'rails_commands', 'protected_paths', 'scope_check', 'fail_first']) delete c[k];
     assert.deepEqual(validateConfig(c), []);
     assert.deepEqual(validateConfig({ ...c, rails: null, rails_commands: null, protected_paths: [], scope_check: null }), []);
     assert.deepEqual(validateConfig({ ...c, rails: { deploy: 'off' }, rails_commands: { deploy: ['make ship'] }, scope_check: { enabled: false } }), []);
@@ -397,6 +400,26 @@ describe('guardrails (Teams Phase 3)', () => {
     assert.deepEqual(errorPaths({ rails_commands: { deploy: 'make ship' } }), ['rails_commands.deploy']);
     assert.deepEqual(errorPaths({ rails_commands: { migrate: ['ok', ''] } }), ['rails_commands.migrate[1]']);
     assert.deepEqual(warningPaths({ rails_commands: { deploy: [], publish: [] } }), ['rails_commands.publish']);
+    assert.deepEqual(errorPaths({ rails_commands: { install_packages: 'make deps' } }), ['rails_commands.install_packages']);
+    assert.deepEqual(errorPaths({ rails_commands: { install_packages: ['make deps', ' '] } }), ['rails_commands.install_packages[1]']);
+    assert.deepEqual(issuesOf({ rails_commands: { install_packages: ['make deps'] } }), []);
+  });
+
+  test('fail_first: level is one of four, workflows a list of ids that exist; no reproduce stage is a warning', () => {
+    const wfs = [{ id: 'bugfix', stages: [{ id: 'reproduce' }] }, { id: 'feature', stages: [{ id: 'plan' }] }];
+    const check = (ff, workflows = wfs) => validateConfig({ ...baseConfig(), fail_first: ff }, { workflows }).map((i) => [i.path, i.severity === 'warning' ? 'warning' : 'error']);
+    assert.deepEqual(check({ level: 'proof', workflows: ['bugfix'] }), []);
+    for (const level of ['off', 'note', 'section', 'proof']) assert.deepEqual(check({ level, workflows: ['bugfix'] }), [], level);
+    assert.deepEqual(check({ level: 'strict' }), [['fail_first.level', 'error']]);
+    assert.deepEqual(check({ level: 'note', workflows: 'bugfix' }), [['fail_first.workflows', 'error']]);
+    assert.deepEqual(check({ level: 'note', workflows: ['nope'] }), [['fail_first.workflows[0]', 'error']]);
+    assert.deepEqual(check({ level: 'note', workflows: [7] }), [['fail_first.workflows[0]', 'error']]);
+    assert.deepEqual(check({ level: 'note', workflows: ['feature'] }), [['fail_first.workflows[0]', 'warning']]);
+    assert.deepEqual(check({ level: 'off', workflows: ['nope'] }), [], 'an unknown workflow is only an error while fail_first is on');
+    assert.deepEqual(check({ level: 'note', workflows: ['nope'] }, null), [], 'without the workflow list there is nothing to check against');
+    assert.deepEqual(check({ level: 'off', extra: 1 }), [['fail_first.extra', 'warning']]);
+    assert.deepEqual(validateConfig({ ...baseConfig(), fail_first: 'proof' }).map((i) => i.path), ['fail_first']);
+    assert.deepEqual(validateConfig({ ...baseConfig(), fail_first: null }), []);
   });
 
   test('protected_paths: a list of non-empty text', () => {
@@ -429,7 +452,7 @@ describe('guardrails (Teams Phase 3)', () => {
     assert.deepEqual(back.protected_paths, model.protected_paths);
     assert.deepEqual(back.scope_check, model.scope_check);
     assert.match(out, /^ {2}- '\*\*\/\*\.tf'$/m, 'unchanged items keep their quoting');
-    assert.match(out, /^ {2}- composer\.lock\n {2}- secrets\/\*\*\n\n# At Verify/m);
+    assert.match(out, /^ {2}- composer\.lock\n {2}- secrets\/\*\*\n\n# Bugfixes/m);
     assert.match(out, /^ {2}# Edits to \.claude[^\n]*\n {2}agent_config: off$/m, 'the comment above each rail is kept');
     assert.deepEqual(validateConfig(back), []);
   });

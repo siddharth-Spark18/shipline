@@ -9,6 +9,7 @@
 //   node .shipline/bin/stage.mjs reopen <stage>
 //   node .shipline/bin/stage.mjs flag ui true|false
 //   node .shipline/bin/stage.mjs check
+//   node .shipline/bin/stage.mjs check --expect-fail [test file or name]   (fail_first: records a failing test run at Reproduce)
 //   node .shipline/bin/stage.mjs pr-summary
 //   node .shipline/bin/stage.mjs validate <folder with workflow.yml and rules/ | workflow .yml file | .shipline>
 //   node .shipline/bin/stage.mjs draft --tmp                           (a fresh scratch folder for /shipline-workflow-designer)
@@ -163,6 +164,59 @@ function sections(sc) {
   return Array.isArray(sc.sections) ? sc.sections.filter((h) => typeof h === 'string' && h.trim()) : [];
 }
 
+// ---------- fail-first (config.yml `fail_first`) ----------
+
+// off | note | section | proof for this stage of this workflow: the configured level when the stage is Reproduce of a
+// listed workflow, else off. An unknown workflow id in the list never matches.
+function failFirstLevel(stageId, wf) {
+  const ff = cfg.fail_first;
+  if (!ff || ff.level === 'off' || stageId !== 'reproduce' || !ff.workflows.includes(wf.id)) return 'off';
+  return ff.level;
+}
+
+// The built-in note printed with Reproduce, before the repo's own rules; null when fail_first doesn't apply.
+function failFirstNote(stageId, wf) {
+  const level = failFirstLevel(stageId, wf);
+  if (level === 'off') return null;
+  const lines = ['Shipline (fail-first): before changing any code, write a test that reproduces this bug and fails on the current code. Name it in reproduction.md.'];
+  if (level === 'section') lines.push('reproduction.md must have a `## Failing test` section naming the test and showing its failing output.');
+  if (level === 'proof') lines.push('Run `node .shipline/bin/stage.mjs check --expect-fail [test file or name]` to record that it fails. Reproduce can\'t finish until a failing run is recorded.');
+  return lines.join('\n');
+}
+
+// Arguments `check --expect-fail` may append to the test command: no spaces, quotes, shell characters or `..` segments.
+const EXPECT_FAIL_ARG = /^[A-Za-z0-9_./:@=,+-]+$/;
+
+// The words after --expect-fail on the command line (parseArgs would read the first one as the flag's value), without
+// the global --session and --task options.
+function expectFailExtras() {
+  const argv = process.argv.slice(2);
+  const i = argv.indexOf('--expect-fail');
+  const out = [];
+  for (let k = i + 1; k < argv.length; k++) {
+    if (argv[k] === '--session' || argv[k] === '--task') k++;
+    else out.push(argv[k]);
+  }
+  return out;
+}
+
+// The "Fail-first: ..." facts for Verify and the PR summary, or null when no failing run is recorded:
+// { before: { exit, fingerprint }, after: { exit, fingerprint } | null } (after: the latest test result).
+function failFirstFacts(manifest) {
+  const ff = manifest.fail_first;
+  if (!ff || typeof ff !== 'object') return null;
+  const ch = manifest.checks && Array.isArray(manifest.checks.results) ? manifest.checks : null;
+  const t = ch && ch.results.find((r) => r.name === 'test');
+  return { before: { exit: ff.exit, fingerprint: ff.fingerprint || null }, after: t ? { exit: t.exit, fingerprint: ch.fingerprint || null } : null };
+}
+
+function failFirstLine(facts) {
+  const fp = (v) => (v ? v.slice(0, 12) : 'none');
+  const before = `failed before (exit ${facts.before.exit} on ${fp(facts.before.fingerprint)})`;
+  if (!facts.after) return `Fail-first: ${before}, no test result after`;
+  return `Fail-first: ${before}, ${facts.after.exit === 0 ? 'passed' : `not passing (exit ${facts.after.exit === null ? 'did not run' : facts.after.exit})`} after (on ${fp(facts.after.fingerprint)})`;
+}
+
 function describeCurrent(taskDir, manifest, wf) {
   const cur = currentStage(manifest);
   if (!cur) return 'All stages are done. The task is complete.';
@@ -177,6 +231,8 @@ function describeCurrent(taskDir, manifest, wf) {
   ].filter(Boolean);
   if (Array.isArray(cfg.skills) && cfg.skills.length) lines.push(`Repo skills you can use: ${cfg.skills.join(', ')}`);
   if (sameStage(cur.id, 'ticket')) lines.push(trackerLine(manifest));
+  const note = failFirstNote(cur.id, wf);
+  if (note) lines.push('', note);
   const rules = rulesFor(cur.id);
   if (rules && rules.text) lines.push('', `Repo rules for this stage (.shipline/rules/${rules.file}):`, rules.text);
   return lines.join('\n');
@@ -587,9 +643,19 @@ switch (cmd) {
       }
       if (sc.artifact) {
         const wanted = sections(sc);
+        if (failFirstLevel(cur.id, wf) === 'section' && !wanted.some((h) => h.trim().replace(/:+$/, '').trim().toLowerCase() === 'failing test')) wanted.push('Failing test');
         if (wanted.length) {
           const problems = sectionProblems(readFileSync(path.join(taskDir, sc.artifact), 'utf8'), wanted);
           if (problems.length) die(`${sc.artifact} is missing: ${problems.join(', ')}.`);
+        }
+      }
+      if (failFirstLevel(cur.id, wf) === 'proof') {
+        if (!configuredCommands().some(([n]) => n === 'test')) {
+          die('fail_first is set to proof but no test command is configured. Set commands.test in .shipline/config.yml, or skip this stage with a reason (`stage.mjs skip --reason "..."`).');
+        }
+        const rec = manifest.fail_first;
+        if (!rec || typeof rec.exit !== 'number' || rec.exit === 0) {
+          die('fail_first is set to proof: Reproduce can\'t finish until a failing test run is recorded. Run `node .shipline/bin/stage.mjs check --expect-fail [test file or name]` against the test that reproduces the bug.');
         }
       }
       if (sc.checks === true) gateChecks(taskDir, manifest, cur);
@@ -665,6 +731,10 @@ switch (cmd) {
   case 'check': {
     const taskDir = activeTaskDir();
     const { manifest, wf } = load(taskDir);
+    if (flags['expect-fail'] !== undefined) {
+      expectFail(taskDir, manifest, wf);
+      break;
+    }
     const commands = configuredCommands();
     if (!commands.length) {
       manifest.checks = { fingerprint: fingerprint(root), ran_at: now(), results: [] };
@@ -689,6 +759,8 @@ switch (cmd) {
     printScope(manifest.checks.scope, wf);
     for (const r of failed) console.log(`\n--- ${r.name} (${r.exit === null ? 'did not run' : `exit ${r.exit}`}) last output ---\n${r.tail}`);
     console.log(`\nFingerprint: ${fp ? fp.slice(0, 12) : 'none'}`);
+    const ffFacts = failFirstFacts(manifest);
+    if (ffFacts) console.log(failFirstLine(ffFacts));
     if (failed.length) process.exit(1);
     break;
   }
@@ -714,6 +786,35 @@ switch (cmd) {
   default:
     console.log('usage: stage.mjs workflows [--shipped] | start | resume <task> | status | advance | skip | reopen <stage> | flag ui true|false | check | pr-summary | validate <path> | draft --tmp | draft <id> --from <folder>');
     process.exit(cmd ? 1 : 0);
+}
+
+// `check --expect-fail [extra...]`: runs only commands.test (plus the validated extra words) and records a failing run
+// as manifest.fail_first. Valid only at Reproduce of a workflow fail_first applies to.
+function expectFail(taskDir, manifest, wf) {
+  const cur = currentStage(manifest);
+  if (!cur || failFirstLevel(cur.id, wf) === 'off') {
+    die('check --expect-fail only applies at the Reproduce stage of a workflow listed in fail_first (and fail_first must not be off).');
+  }
+  const extras = expectFailExtras();
+  const bad = extras.find((x) => !EXPECT_FAIL_ARG.test(x) || x.split('/').includes('..'));
+  if (bad !== undefined) {
+    console.error('shipline: check --expect-fail only accepts a test file or name made of letters, digits and _ . / : @ = , + - (no spaces, quotes, shell characters or ".." segments).');
+    process.exit(2);
+  }
+  const test = configuredCommands().find(([n]) => n === 'test');
+  if (!test) die('no test command is configured. Set commands.test in .shipline/config.yml.');
+  const command = [test[1], ...extras].join(' ');
+  const fp = fingerprint(root);
+  console.log(`Running test: ${command}`);
+  const r = runCommand('test', command);
+  if (r.exit === null) die(`the test command did not run:\n${r.tail}`);
+  if (r.exit === 0) {
+    console.log('The test passed, so it doesn\'t reproduce the bug: nothing recorded.');
+    process.exit(1);
+  }
+  manifest.fail_first = { fingerprint: fp, ran_at: now(), command, exit: r.exit, tail: r.tail };
+  save(taskDir, manifest);
+  console.log(`${r.tail}\n\nFailing as expected (exit ${r.exit}): recorded.`);
 }
 
 function uiWork(manifest) {
@@ -953,6 +1054,11 @@ function prSummary(taskDir, manifest, wf) {
       json.checks = { fingerprint: null, results: [] };
     } else {
       out.push('', '**Checks:** not run');
+    }
+    const ffFacts = failFirstFacts(manifest);
+    if (ffFacts) {
+      out.push('', `**${failFirstLine(ffFacts).replace(/^Fail-first:/, 'Fail-first:**')}`);
+      json.fail_first = ffFacts;
     }
     const sc = cfg.scope_check.enabled && ch && ch.scope && Array.isArray(ch.scope.sensitive) ? ch.scope : null;
     if (sc) {

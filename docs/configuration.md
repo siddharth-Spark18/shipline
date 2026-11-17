@@ -19,6 +19,13 @@ setup: done                             # written by /shipline-setup; stops the 
 rails: { ... }                          # always-on guardrails, deny | ask | off each (see Guardrails)
 protected_paths: [ ... ]                # globs that ask before an edit, in any stage
 scope_check: { enabled: true }          # Verify: flag edits to tests, lint and CI, and files outside the plan
+rails_commands:                         # extra commands that count as a deploy, a migration or a package install
+  deploy: []                            #   plain prefixes, for example "make ship"
+  migrate: []
+  install_packages: []                  #   for example "make deps" (see the install_packages rail)
+fail_first:                             # bugfixes: require a test that fails before the fix (see Guardrails)
+  level: off                            #   off | note | section | proof
+  workflows: [bugfix]                   #   workflows it applies to; each needs a `reproduce` stage
 ```
 
 **Workflow files** (`.shipline/workflows/<id>.yml`): `id`, `name`, `description` and a list of `stages`. Stage fields:

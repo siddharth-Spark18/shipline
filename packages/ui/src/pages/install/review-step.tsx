@@ -36,7 +36,7 @@ export const ISSUE_STEP_LABEL: Record<IssueStep, string> = {
   guardrails: 'Guardrails',
 };
 
-const GUARDRAIL_KEYS = ['rails', 'rails_commands', 'protected_paths', 'scope_check'];
+const GUARDRAIL_KEYS = ['rails', 'rails_commands', 'protected_paths', 'scope_check', 'fail_first'];
 
 /** Which step fixes a problem: workflow files are Stages & rules; config.yml depends on the key. */
 export function issueStep(issue: InstallIssue): IssueStep {
@@ -155,6 +155,8 @@ export function ReviewStep({
             <dd>{selection.confirmations === 'light' ? 'Light' : 'Standard'}</dd>
             <dt className="text-muted-foreground">Guardrails</dt>
             <dd>{guardrailsSummary(selection)}</dd>
+            <dt className="text-muted-foreground">Fail-first tests</dt>
+            <dd>{failFirstSummary(selection)}</dd>
             <dt className="text-muted-foreground">Branch pattern</dt>
             <dd className="font-mono">{selection.branchPattern ?? '{type}/{key}-{slug}'}</dd>
           </dl>
@@ -246,4 +248,13 @@ function guardrailsSummary(selection: InstallSelection): string {
   const values = Object.values(rails);
   const active = values.filter((v) => v !== 'off').length;
   return `${active} of ${values.length} rails active`;
+}
+
+/** One line for the Settings list: the fail-first level and the workflows it applies to. */
+function failFirstSummary(selection: InstallSelection): string {
+  const ff = selection.guardrailConfig?.fail_first;
+  const level = ff?.level ?? selection.failFirst ?? 'off';
+  if (level === 'off') return 'Off';
+  const workflows = ff?.workflows ?? ['bugfix'];
+  return `${level} (${workflows.join(', ') || 'no workflows'})`;
 }

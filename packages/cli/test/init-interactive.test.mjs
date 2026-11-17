@@ -694,6 +694,25 @@ describe('setup wizard: the new questions', () => {
   });
 });
 
+// Guardrails 2.1: the terminal's Fail-first answer is reviewed and written to config.yml.
+describe('fail-first in the terminal init', () => {
+  test('proof: the review says so and config.yml gets fail_first for bugfix; the hooks read it back', async () => {
+    const dir = repo();
+    const r = await initWith(dir, selection({ failFirst: 'proof' }));
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.reviews[0].split('\n').some((l) => /^ {2}Fail-first: +proof \(bugfix\)$/.test(l)), r.reviews[0]);
+    assert.deepEqual(parseYaml(readFileSync(path.join(dir, '.shipline', 'config.yml'), 'utf8')).fail_first, { level: 'proof', workflows: ['bugfix'] });
+    assert.deepEqual(loadConfig(dir).fail_first, { level: 'proof', workflows: ['bugfix'] });
+  });
+
+  test('an answer-less init (--yes semantics) leaves it off', async () => {
+    const dir = repo();
+    const r = await initWith(dir, selection());
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(loadConfig(dir).fail_first, { level: 'off', workflows: ['bugfix'] });
+  });
+});
+
 // Setup polish plan, item 4: the terminal review before writing. --yes skips it.
 describe('the review before writing', () => {
   test('shows every setting and the file list in the --dry-run format, then asks', async () => {
@@ -709,6 +728,7 @@ describe('the review before writing', () => {
       /^ {2}Tracker: +jira$/,
       /^ {2}Confirmations: +light \(asks only at plan approval\)$/,
       /^ {2}Guardrails: +off \(every rail off, no protected paths\)$/,
+      /^ {2}Fail-first: +off$/,
       /^ {2}Branch pattern: feat\/\{slug\}$/,
       /^ {2}Agents: +builder$/,
       /^ {2}Skills: +none$/,

@@ -736,3 +736,24 @@ describe('tracker: none and the CI check', () => {
     }
   });
 });
+
+// Guardrails 2.1: the fail-first line in the summary is information only.
+describe('fail-first in the summary', () => {
+  test('shown as a notice and a table row; it never fails the check', () => {
+    setCi(null);
+    const ff = { before: { exit: 3, fingerprint: 'a'.repeat(40) }, after: { exit: 0, fingerprint: 'b'.repeat(40) } };
+    const r = check(body(featureSummary({}, { fail_first: ff })));
+    assert.equal(r.code, 0, r.stdout);
+    assert.match(r.stdout, /^::notice title=Shipline::Fail-first: failed before \(exit 3 on aaaaaaaaaaaa\), passed after \(on bbbbbbbbbbbb\)\.$/m);
+    assert.match(r.summary, /\| Fail-first \| failed before \(exit 3 on aaaaaaaaaaaa\), passed after \(on bbbbbbbbbbbb\) \| \u2014 \|/);
+    const noAfter = check(body(featureSummary({}, { fail_first: { before: ff.before, after: null } })));
+    assert.equal(noAfter.code, 0, noAfter.stdout);
+    assert.match(noAfter.stdout, /no passing run after/);
+  });
+
+  test('a summary without it shows no Fail-first row', () => {
+    setCi(null);
+    const r = check(body(featureSummary()));
+    assert.ok(!r.summary.includes('Fail-first'), r.summary);
+  });
+});

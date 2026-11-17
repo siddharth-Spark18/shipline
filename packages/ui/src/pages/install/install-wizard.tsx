@@ -56,7 +56,13 @@ const STEP_OF: Record<IssueStep, number> = {
   guardrails: GUARDRAILS_STEP,
 };
 const SETUP_MESSAGE = '/shipline-setup';
-const GUARDRAIL_KEYS = ['rails', 'rails_commands', 'protected_paths', 'scope_check'] as const;
+const GUARDRAIL_KEYS = [
+  'rails',
+  'rails_commands',
+  'protected_paths',
+  'scope_check',
+  'fail_first',
+] as const;
 const NONE = '__none__'; // a select value cannot be null
 const COMMANDS = ['test', 'lint', 'build'] as const;
 const FOUND_TEXT = { 'claude-md-block': 'the CLAUDE.md block', hooks: "Shipline's hooks" } as const;
@@ -414,6 +420,14 @@ function Wizard({ info }: { info: InstallInfo }) {
             {stepper && step === GUARDRAILS_STEP && (
               <GuardrailsSection
                 model={draft.config}
+                workflows={draft.workflows
+                  .filter((id) => draft.workflowDrafts[id])
+                  .map((id) => ({
+                    id,
+                    hasReproduce: (draft.workflowDrafts[id].model.stages ?? []).some(
+                      (st) => st.id === 'reproduce',
+                    ),
+                  }))}
                 readOnly={false}
                 onChange={(config) => patch({ config })}
               />

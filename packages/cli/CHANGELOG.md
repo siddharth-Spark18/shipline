@@ -4,6 +4,47 @@ All notable changes to `@forgeyard/shipline` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.1.0] - 2026-11-17
+
+A new guardrail against slopsquatted packages, an optional fail-first test requirement for bugfixes, and a redesigned
+Setup with selectable colour palettes. The hook contract (INTERFACE) is unchanged; `upgrade` refreshes the vendored
+scripts and the `/shipline-setup` skill.
+
+### Added
+
+- **`install_packages` rail (default `ask`).** Claude Code's permission prompt now shows, naming the packages, before a
+  command that adds a named package (`npm install lodash`, `pip install x`, `uv add`, `cargo add`, `go get`, ...), runs
+  a package that isn't a dependency (`npx some-tool`, `pnpm dlx`, `uvx`, `pipx run`) or installs globally (`npm i -g`,
+  `pipx`, `brew`, `apt`, ...). `npx vitest` in a repo that has vitest, and lockfile restores such as `npm install`,
+  `npm ci` and `pip install -r requirements.txt`, never prompt. Nothing is looked up on a registry. Add your own with
+  `rails_commands.install_packages`. **Existing repos get the rail at `ask` after upgrading, with no config edit**; set
+  `rails.install_packages: off` to turn it off.
+- **`fail_first` (off by default).** A per-repo setting that asks a bugfix to show a test that fails before the fix:
+  `note` (Claude is told to write a failing test first), `section` (Reproduce needs a `## Failing test` section) or
+  `proof` (`stage.mjs check --expect-fail [test file or name]` must record a failing test run before Reproduce can
+  finish; it runs only `commands.test`, and unsafe extra arguments are refused). Verify and `pr-summary` then show
+  "failed before, passed after"; the CI check shows it for information only. Skipping Reproduce with a reason still
+  works. The built-in note is printed by `stage.mjs`, so shipped rules files are unchanged.
+- **Setup, Guardrails, and the install stepper** have the new rail, the extra install commands and a Fail-first tests
+  block (a level and the workflows it applies to; workflows with no Reproduce stage are marked). The terminal `init` asks
+  "Fail-first tests for bugfixes?" after the Guardrails step (`init --yes` uses off). `/shipline-setup` covers both.
+- **Setup is a task hub.** It opens on summary cards (Workflows, Guardrails, Agents & skills, CI check, Phone access,
+  Project config, Appearance), each opening a focused page with its own address (`#/setup/<repoId>/workflows/<id>/...`),
+  so back, forward and reload keep your place. A workflow is a short list of stages (drag, up/down, delete, Edit); a
+  stage is edited on its own page in five steps (Basics, Enforcement, Blocks, Required sections, Rules). The install
+  wizard reuses the same stage page. Unsaved edits are kept while moving between Setup pages, with one sticky bar to
+  discard or review and save.
+- **Selectable palettes.** Classic (the previous indigo), Ultramarine (the new default), Ember and Harbor, each in light
+  and dark, with a coloured sidebar for the new three. Pick one on the Appearance card (with light, dark or system). The
+  choice is per machine (`$SHIPLINE_HOME/ui-preferences.json`, `GET` and `POST /api/preferences`) and applies live to
+  every open window and paired phone.
+
+### Changed
+
+- The vendored `lib.mjs`, `guard.mjs`, `stage.mjs`, `ci-check.mjs` and the `shipline-setup` skill have new hashes;
+  `upgrade` replaces them where you haven't edited them. `config.yml` is yours and isn't rewritten: a config without the
+  new keys uses `install_packages: ask` and `fail_first` off.
+
 ## [2.0.0] - 2026-11-16
 
 One UI server for every repo on the machine, and a way to design your own workflows by describing them. The hook

@@ -129,6 +129,7 @@ describe('defaultSelection, fillSelection and checkSelection', () => {
       tracker: 'none',
       confirmations: 'standard',
       guardrails: 'on',
+      failFirst: 'off',
       branchPattern: '{type}/{key}-{slug}',
       ci: false,
     });
@@ -154,6 +155,7 @@ describe('defaultSelection, fillSelection and checkSelection', () => {
       tracker: 'none',
       confirmations: 'standard',
       guardrails: 'on',
+      failFirst: 'off',
       branchPattern: '{type}/{key}-{slug}',
       ci: false,
     });
@@ -541,6 +543,74 @@ describe('selection.guardrails and selection.branchPattern (Setup polish)', () =
     assert.equal(cfg.confirmations, 'light');
     assert.deepEqual(cfg.rails, Object.fromEntries(HOOK_RAIL_IDS.map((id) => [id, 'off'])));
     assert.deepEqual(cfg.protected_paths, []);
+  });
+});
+
+// Guardrails 2.1: the terminal's failFirst field and guardrailConfig.fail_first (the wizard's).
+describe('selection.failFirst and guardrailConfig.fail_first (Guardrails 2.1)', () => {
+  const configOf = (plan) => plan.writes.find((w) => w.to === '.shipline/config.yml').data.toString('utf8');
+  const TEMPLATE_CONFIG = readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8');
+
+  test("'off' or a missing field leaves the template; defaults are off", () => {
+    const dir = repo();
+    const info = installInfo(dir);
+    assert.equal(defaultSelection(info).failFirst, 'off');
+    const missing = full(info);
+    delete missing.failFirst;
+    for (const sel of [full(info, { failFirst: 'off' }), missing]) {
+      assert.doesNotThrow(() => checkSelection(info, sel));
+      assert.equal(configOf(planInstall(dir, info, sel)), TEMPLATE_CONFIG);
+    }
+  });
+
+  test('note, section and proof write fail_first for [bugfix], changing only that block', () => {
+    const dir = repo();
+    const info = installInfo(dir);
+    for (const level of ['note', 'section', 'proof']) {
+      const text = configOf(planInstall(dir, info, full(info, { failFirst: level })));
+      assert.deepEqual(parseYaml(text).fail_first, { level, workflows: ['bugfix'] }, level);
+      assert.equal(text, TEMPLATE_CONFIG.replace(/^ {2}level: off$/m, `  level: ${level}`), level);
+    }
+  });
+
+  test('checkSelection refuses any other value, in both modes', () => {
+    const info = installInfo(repo());
+    for (const failFirst of ['strict', 'Proof', null, 1, true]) {
+      assert.throws(() => checkSelection(info, full(info, { failFirst })), /invalid selection: failFirst must be off, note, section, proof/, String(failFirst));
+      assert.throws(() => checkSelection(info, full(info, { failFirst }), { partial: true }), /failFirst must be/, `partial ${failFirst}`);
+    }
+  });
+
+  test('fillSelection defaults failFirst to off', () => {
+    assert.equal(fillSelection(installInfo(repo()), { workflows: ['hotfix'], agents: [] }).failFirst, 'off');
+  });
+
+  test('guardrailConfig.fail_first is accepted and wins over failFirst', () => {
+    const dir = repo();
+    const info = installInfo(dir);
+    const sel = full(info, { failFirst: 'note', guardrailConfig: { fail_first: { level: 'proof', workflows: ['bugfix', 'hotfix'] } } });
+    assert.doesNotThrow(() => checkSelection(info, sel));
+    assert.deepEqual(parseYaml(configOf(planInstall(dir, info, sel))).fail_first, { level: 'proof', workflows: ['bugfix', 'hotfix'] });
+    const alone = full(info, { guardrailConfig: { fail_first: { level: 'section', workflows: ['bugfix'] } } });
+    assert.deepEqual(parseYaml(configOf(planInstall(dir, info, alone))).fail_first, { level: 'section', workflows: ['bugfix'] });
+  });
+
+  test('guardrailConfig.fail_first is validated: a bad level or an unchosen workflow errors; off with an unchosen workflow does not', () => {
+    const info = installInfo(repo());
+    assert.throws(() => checkSelection(info, full(info, { guardrailConfig: { fail_first: { level: 'strict', workflows: ['bugfix'] } } })), /fail_first\.level: must be one of off, note, section, proof/);
+    assert.throws(
+      () => checkSelection(info, full(info, { workflows: ['feature'], agents: [], guardrailConfig: { fail_first: { level: 'note', workflows: ['bugfix'] } } })),
+      /fail_first\.workflows\[0\]: no workflow "bugfix"/,
+    );
+    assert.doesNotThrow(() => checkSelection(info, full(info, { workflows: ['feature'], guardrailConfig: { fail_first: { level: 'off', workflows: ['bugfix'] } } })));
+  });
+
+  test('guardrails off at install leaves fail_first off', () => {
+    const dir = repo();
+    const info = installInfo(dir);
+    const cfg = parseYaml(configOf(planInstall(dir, info, full(info, { guardrails: 'off' }))));
+    assert.equal(cfg.fail_first.level, 'off');
+    assert.equal(cfg.rails.install_packages, 'off');
   });
 });
 

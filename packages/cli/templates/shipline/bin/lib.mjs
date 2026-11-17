@@ -161,7 +161,7 @@ export const CI_STALE_CHECKS = ['warn', 'fail'];
 export const DEFAULT_CI = { missing_block: 'fail-unless-label', skip_label: 'shipline:skip', stale_checks: 'warn' };
 
 // Guardrails (config.yml `rails`, `rails_commands`, `protected_paths`, `scope_check`). A rail is deny | ask | off.
-export const RAIL_IDS = ['force_push_default', 'push_default', 'pipe_to_shell', 'print_credentials', 'read_credentials', 'deploy', 'migrate', 'agent_config'];
+export const RAIL_IDS = ['force_push_default', 'push_default', 'pipe_to_shell', 'print_credentials', 'read_credentials', 'deploy', 'migrate', 'install_packages', 'agent_config'];
 export const RAIL_LEVELS = ['deny', 'ask', 'off'];
 export const RAIL_DEFAULTS = {
   force_push_default: 'deny',
@@ -171,8 +171,12 @@ export const RAIL_DEFAULTS = {
   read_credentials: 'ask',
   deploy: 'ask',
   migrate: 'ask',
+  install_packages: 'ask',
   agent_config: 'ask',
 };
+// Fail-first tests for bugfixes (config.yml `fail_first`): off | note | section | proof, on the listed workflows.
+export const FAIL_FIRST_LEVELS = ['off', 'note', 'section', 'proof'];
+export const DEFAULT_FAIL_FIRST = { level: 'off', workflows: ['bugfix'] };
 // The protected_paths the shipped config.yml lists (keep the two identical; a test checks). Used as-is when config.yml
 // can't be read; a readable config.yml that leaves the key out protects nothing.
 export const DEFAULT_PROTECTED_PATHS = [
@@ -224,7 +228,13 @@ function normalizeConfig(raw) {
   const rails = isObj(cfg.rails) ? cfg.rails : {};
   cfg.rails = Object.fromEntries(RAIL_IDS.map((id) => [id, RAIL_LEVELS.includes(rails[id]) ? rails[id] : RAIL_DEFAULTS[id]]));
   const rc = isObj(cfg.rails_commands) ? cfg.rails_commands : {};
-  cfg.rails_commands = { deploy: strList(rc.deploy), migrate: strList(rc.migrate) };
+  cfg.rails_commands = { deploy: strList(rc.deploy), migrate: strList(rc.migrate), install_packages: strList(rc.install_packages) };
+  // fail_first: a missing or invalid value is off on [bugfix] (`setup-schema` warns about invalid ones).
+  const ff = isObj(cfg.fail_first) ? cfg.fail_first : {};
+  cfg.fail_first = {
+    level: FAIL_FIRST_LEVELS.includes(ff.level) ? ff.level : DEFAULT_FAIL_FIRST.level,
+    workflows: Array.isArray(ff.workflows) ? strList(ff.workflows) : [...DEFAULT_FAIL_FIRST.workflows],
+  };
   cfg.protected_paths = strList(cfg.protected_paths);
   const sc = isObj(cfg.scope_check) ? cfg.scope_check : {};
   cfg.scope_check = { enabled: sc.enabled !== false, sensitive_extra: strList(sc.sensitive_extra) };
@@ -1071,6 +1081,8 @@ export function makeMatchCtx(root, cwd, cfg) {
   let branches = null;
   let branch = null;
   const pkgs = new Map();
+  const deps = new Map();
+  const bins = new Map();
   const ctx = {
     root,
     cwd: cwd || root,
@@ -1106,6 +1118,35 @@ export function makeMatchCtx(root, cwd, cfg) {
         const up = path.dirname(dir);
         if (up === dir || dir === root) return null;
         dir = up;
+      }
+    },
+    // Is the node package `name` a dependency (dependencies, devDependencies or optionalDependencies) of a package.json
+    // from `dir` up to the repo root, or does one of those folders have node_modules/.bin/<its bin name>? Cached.
+    isListedNodePackage(dir, name) {
+      const bare = String(name).replace(/^@[^/]+\//, '');
+      let d = path.resolve(dir || root);
+      if (repoRelative(root, d) === null) d = root;
+      for (;;) {
+        const file = path.join(d, 'package.json');
+        if (!deps.has(file)) {
+          const set = new Set();
+          if (existsSync(file)) {
+            try {
+              const j = JSON.parse(readFileSync(file, 'utf8'));
+              if (isObj(j)) for (const k of ['dependencies', 'devDependencies', 'optionalDependencies']) if (isObj(j[k])) for (const n of Object.keys(j[k])) set.add(n);
+            } catch {
+              // An unreadable package.json lists nothing.
+            }
+          }
+          deps.set(file, set);
+        }
+        if (deps.get(file).has(name)) return true;
+        const bin = path.join(d, 'node_modules', '.bin', bare);
+        if (!bins.has(bin)) bins.set(bin, existsSync(bin));
+        if (bins.get(bin)) return true;
+        const up = path.dirname(d);
+        if (up === d || d === root) return false;
+        d = up;
       }
     },
   };
@@ -1353,6 +1394,208 @@ export function matchAction(part, action, ctx, depth = 0) {
   return Boolean(body) && parseCommand(body).some((p) => matchAction(p, action, ctx, depth + 1));
 }
 
+
+// ---- install_packages: commands that fetch packages ----
+
+// Options that take a value, per tool family (so the value isn't read as a package name).
+const NODE_OPTS = ['--prefix', '-C', '--dir', '--cwd', '--registry', '--workspace', '-w', '--filter', '-F', '--tag', '--cache', '--cache-dir', '--userconfig', '--location', '--omit', '--include', '--install-strategy', '--loglevel', '--config'];
+const PIP_OPTS = ['-r', '-c', '-e', '-i', '-t', '-f', '-C', '--requirement', '--constraint', '--editable', '--index-url', '--extra-index-url', '--find-links', '--target', '--root', '--prefix', '--python', '--platform', '--abi', '--implementation', '--python-version', '--src', '--proxy', '--cert', '--cache-dir', '--no-binary', '--only-binary', '--progress-bar', '--upgrade-strategy', '--config-settings'];
+const UV_OPTS = [...PIP_OPTS, '--requirements', '--constraints', '--index', '--default-index', '--group', '--extra', '--optional', '--package', '--project', '--directory', '--rev', '--branch', '--tag', '--marker', '-m', '-p'];
+const PYPM_OPTS = ['--group', '-G', '--source', '--python', '-e', '--extras', '-E', '--platform', '--markers', '-r', '--categories', '--pypi-mirror', '--index', '-c'];
+const CARGO_OPTS = ['--path', '--git', '--branch', '--tag', '--rev', '--registry', '-p', '--package', '--manifest-path', '--features', '-F', '--rename', '--target', '--root', '--version', '--vers', '--bin', '--example', '--index', '--profile', '-j', '--jobs'];
+const GEM_OPTS = ['-v', '--version', '-i', '--install-dir', '-n', '--bindir', '--source', '-s', '--platform', '-g', '--group', '-r', '--require'];
+const DOTNET_OPTS = ['-v', '--version', '-s', '--source', '-f', '--framework', '--package-directory', '-n', '--tool-path', '--add-source'];
+const SYS_OPTS = ['-o', '-t', '--target-release', '--enablerepo', '--disablerepo', '--releasever', '-c', '--config', '--version', '-s', '--source', '-v'];
+const RUNNER_OPTS = ['-p', '--package', '--from', '--with', '--python'];
+
+const URL_SPEC = /^(?:git\+[a-z]+:|git:|https?:|ssh:|git@|github:|gitlab:|bitbucket:)/i;
+const LOCAL_FILE = /\.(?:tgz|tar\.gz|tar|zip|whl|gem|deb|rpm|nupkg)$/i;
+
+// A word that names a package to fetch: not a path, workspace ref or local archive. Git and HTTP URLs count.
+function isPackageSpec(x) {
+  const t = String(x);
+  if (!t || t === '-') return false;
+  if (URL_SPEC.test(t)) return true;
+  if (/^[.~/\\]/.test(t) || /^[A-Za-z]:[\\/]/.test(t) || /^(?:file|workspace|link|portal):/i.test(t)) return false;
+  if (LOCAL_FILE.test(t)) return false;
+  if (t.includes('/')) return /^@[^/]+\/[^/]+$/.test(t) || /^[\w.-]+\/[\w.-]+$/.test(t); // @scope/name, owner/repo
+  return true;
+}
+
+// `pkg@1.2.3` and `@scope/pkg@next` -> the package name.
+const nodeName = (spec) => String(spec).replace(/^(@?[^@]+)@.*$/, '$1');
+function optValue(args, names) {
+  for (let i = 0; i < args.length; i++) {
+    for (const n of names) {
+      if (args[i] === n) return args[i + 1];
+      if (args[i].startsWith(`${n}=`)) return args[i].slice(n.length + 1);
+    }
+  }
+  return undefined;
+}
+const hasFlag = (args, ...flags) => args.some((a) => flags.includes(a));
+
+// What a simple command fetches: { label, pkgs, extra?, unlisted?, global? } or null. Unwraps uv run, python -m, ...
+function installFindings(p, ctx) {
+  if (extraCommand(p, ctx.cfg.rails_commands && ctx.cfg.rails_commands.install_packages)) {
+    return { label: '', pkgs: [], extra: p.argv.slice(0, 5).join(' ').slice(0, 80) };
+  }
+  const a = p.args;
+
+  // One-off runners: always a package fetch.
+  const oneOff = (args, label) => {
+    const pkg = optValue(args, ['--package', '-p', '--from']) || positionals(args, RUNNER_OPTS)[0];
+    return pkg ? { label, pkgs: [pkg], unlisted: true } : null;
+  };
+  if ((p.tool === 'pnpm' || p.tool === 'yarn') && a[0] === 'dlx') return oneOff(a.slice(1), p.tool);
+  if (p.tool === 'uvx') return oneOff(a, 'uvx');
+  if (p.tool === 'pipx' && a[0] === 'run') return oneOff(a.slice(1), 'pipx');
+
+  // npx and friends: a prompt only when the package isn't a dependency (or its bin isn't installed).
+  const runnerArgs =
+    p.tool === 'npx' || p.tool === 'bunx'
+      ? a
+      : (p.tool === 'pnpm' || p.tool === 'npm' || p.tool === 'yarn') && a[0] === 'exec'
+        ? a.slice(1)
+        : p.tool === 'bun' && a[0] === 'x'
+          ? a.slice(1)
+          : null;
+  if (runnerArgs) {
+    const label = p.tool === 'bun' ? 'bun x' : a[0] === 'exec' ? `${p.tool} exec` : p.tool;
+    const given = [];
+    let first = null;
+    for (let i = 0; i < runnerArgs.length; i++) {
+      const w = runnerArgs[i];
+      if (w === '--') {
+        first = runnerArgs[i + 1];
+        break;
+      }
+      if (w === '-p' || w === '--package') {
+        if (runnerArgs[i + 1]) given.push(runnerArgs[i + 1]);
+        i++;
+      } else if (w.startsWith('--package=')) given.push(w.slice('--package='.length));
+      else if (!w.startsWith('-')) {
+        first = w;
+        break;
+      }
+    }
+    const dir = resolveTarget(ctx, p, '.');
+    const unlisted = (given.length ? given : first ? [first] : []).filter((n) => isPackageSpec(n) && !ctx.isListedNodePackage(dir, nodeName(n)));
+    return unlisted.length ? { label, pkgs: unlisted, unlisted: true } : null;
+  }
+
+  const { tool, args } = effective(p);
+  const global = hasFlag(args, '-g', '--global') || optValue(args, ['--location']) === 'global';
+  const found = (label, list, isGlobal = false, filter = isPackageSpec) => {
+    const pkgs = list.filter(filter);
+    return pkgs.length ? { label, pkgs, global: isGlobal } : null;
+  };
+  const withOpts = (opts) => {
+    const pos = positionals(args, opts);
+    return { sub: pos[0], rest: pos.slice(1) };
+  };
+  let m;
+  switch (tool) {
+    case 'npm':
+    case 'pnpm':
+    case 'bun':
+      m = withOpts(NODE_OPTS);
+      return (tool === 'npm' ? ['install', 'i', 'add'] : ['add', 'install', 'i', 'a']).includes(m.sub) ? found(tool, m.rest, global) : null;
+    case 'yarn':
+      m = withOpts(NODE_OPTS);
+      if (m.sub === 'global' && m.rest[0] === 'add') return found('yarn', m.rest.slice(1), true);
+      return m.sub === 'add' ? found('yarn', m.rest, global) : null;
+    case 'uv':
+      m = withOpts(UV_OPTS);
+      if (m.sub === 'add') return found('uv', m.rest);
+      if (m.sub === 'pip' && m.rest[0] === 'install') return found('uv', m.rest.slice(1));
+      return m.sub === 'tool' && m.rest[0] === 'install' ? found('uv', m.rest.slice(1), true) : null;
+    case 'poetry':
+    case 'pdm':
+    case 'rye':
+      m = withOpts(PYPM_OPTS);
+      return m.sub === 'add' ? found(tool, m.rest) : null;
+    case 'pipenv':
+      m = withOpts(PYPM_OPTS);
+      return m.sub === 'install' ? found('pipenv', m.rest) : null;
+    case 'pipx':
+      m = withOpts(['--python', '--pip-args', '--suffix', '-f', '--index-url']);
+      return m.sub === 'install' ? found('pipx', m.rest, true) : null;
+    case 'cargo':
+      m = withOpts(CARGO_OPTS);
+      if (m.sub === 'add') return found('cargo', m.rest);
+      return m.sub === 'install' ? found('cargo', m.rest, true) : null;
+    case 'go':
+      m = withOpts([]);
+      if (m.sub === 'get') return found('go', m.rest, false, (x) => !x.startsWith('.') && !x.startsWith('/'));
+      return m.sub === 'install' ? found('go', m.rest, false, (x) => x.includes('@') && !x.startsWith('.')) : null;
+    case 'gem':
+      m = withOpts(GEM_OPTS);
+      return m.sub === 'install' ? found('gem', m.rest) : null;
+    case 'bundle':
+      m = withOpts(GEM_OPTS);
+      return m.sub === 'add' ? found('bundle', m.rest) : null;
+    case 'composer':
+      m = withOpts(['-d', '--working-dir']);
+      if (m.sub === 'global' && m.rest[0] === 'require') return found('composer', m.rest.slice(1), true);
+      return m.sub === 'require' ? found('composer', m.rest) : null;
+    case 'dotnet': {
+      m = withOpts(DOTNET_OPTS);
+      if (m.sub === 'add') {
+        const i = m.rest.indexOf('package');
+        return i >= 0 ? found('dotnet', m.rest.slice(i + 1, i + 2)) : null;
+      }
+      return m.sub === 'tool' && m.rest[0] === 'install' ? found('dotnet', m.rest.slice(1), true) : null;
+    }
+    case 'brew':
+    case 'apt':
+    case 'apt-get':
+    case 'dnf':
+    case 'yum':
+    case 'choco':
+      m = withOpts(SYS_OPTS);
+      return m.sub === 'install' ? found(tool === 'apt-get' ? 'apt' : tool, m.rest, true) : null;
+    case 'winget': {
+      m = withOpts(['--id', '--name', '-q', '--version', '-v', '--source', '-s', '--scope', '--location', '-l', '--override', '--locale']);
+      if (m.sub !== 'install') return null;
+      const id = optValue(args, ['--id', '--name', '-q']);
+      return found('winget', id ? [id] : m.rest, true);
+    }
+    default:
+      break;
+  }
+  if (/^pip[\d.]*$/.test(tool)) {
+    m = withOpts(PIP_OPTS);
+    return m.sub === 'install' ? found('pip', m.rest) : null;
+  }
+  return null;
+}
+
+// The prompt text for what one or more commands fetch (findings from installFindings), with no closing period:
+// railReason adds the hint that follows.
+export function installWhat(findings) {
+  const list = findings.filter(Boolean);
+  if (!list.length) return null;
+  // Grouped by tool, in order of first appearance: "a, b (npm), c (pip)".
+  const fmt = (fs) => {
+    const byLabel = new Map();
+    for (const f of fs) {
+      const pkgs = byLabel.get(f.label) || new Set();
+      for (const p of f.pkgs) pkgs.add(p);
+      byLabel.set(f.label, pkgs);
+    }
+    return [...byLabel].map(([label, pkgs]) => `${[...pkgs].join(', ')} (${label})`).join(', ');
+  };
+  const bits = [];
+  for (const f of list.filter((x) => x.extra)) bits.push(`Runs \`${f.extra}\`, listed as an install command in config.yml`);
+  const fetched = list.filter((x) => !x.extra);
+  const runs = fetched.filter((f) => f.unlisted);
+  const adds = fetched.filter((f) => !f.unlisted);
+  if (runs.length) bits.push(`Runs a package that isn't a dependency of this repo: ${fmt(runs)}`);
+  if (adds.length) bits.push(`Installs packages${adds.every((f) => f.global) ? ' globally' : ''}: ${fmt(adds)}`);
+  return bits.join('. ');
+}
+
 // ---- rails ----
 
 const brief = (p) => p.argv.slice(0, 5).join(' ').slice(0, 80);
@@ -1466,9 +1709,16 @@ export function matchRail(part, rail, ctx) {
       return matchAction(part, 'deploy', ctx) ? `running a deploy command (${brief(part)})` : null;
     case 'migrate':
       return matchAction(part, 'migrate', ctx) ? `running a database migration (${brief(part)})` : null;
+    case 'install_packages':
+      return installWhat([installFindings(part, ctx)]);
     default:
       return null;
   }
+}
+
+// What every simple command of a parsed command fetches, as one text (so a chain lists every package), or null.
+export function matchInstallPackages(parts, ctx) {
+  return installWhat(parts.map((p) => (p && p.tool ? installFindings(p, ctx) : null)));
 }
 
 const RAIL_HOW = {
@@ -1479,6 +1729,7 @@ const RAIL_HOW = {
   read_credentials: 'Only read credential files when the developer asked for it.',
   deploy: 'Deploys are the developer\'s call; check with them first.',
   migrate: 'Migrations change real data; check with the developer first.',
+  install_packages: 'Check each name is the one you meant and exists on the official registry before allowing.',
   agent_config: 'Changes to Claude Code and Shipline settings need the developer\'s approval.',
 };
 

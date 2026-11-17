@@ -1,30 +1,45 @@
 name: cli
 
 on:
-  # Branch pushes are covered by the pull_request run; only main is built on push, so one push to a PR
-  # branch starts one run, not two (macOS runners are scarce).
-  push:
-    branches: [main]
-    paths:
-      - 'packages/cli/**'
-      - 'packages/ui/**'
-      - '.github/workflows/cli.yml'
+  # Only pull requests: with "Require branches to be up to date" on main (ruleset), every merged result has passed
+  # here first, so main isn't built again on push, and the publish workflow tests once more before publishing.
+  # No path filter on the trigger: the `ci` job below is the required check and must report on every PR, so the
+  # `changes` job decides whether the test matrix runs.
   pull_request:
-    paths:
-      - 'packages/cli/**'
-      - 'packages/ui/**'
-      - '.github/workflows/cli.yml'
 
-# A new push to the same PR (or to main) cancels its older, now outdated run.
+# A new push to the same PR cancels its older, now outdated run.
 concurrency:
-  group: cli-${{ github.event.pull_request.number || github.ref }}
+  group: cli-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
+  # Whether the PR touches the CLI, the UI or this workflow (the test matrix is skipped otherwise).
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.files.outputs.code }}
+    steps:
+      - id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" -q '.[].filename')
+          if printf '%s\n' "$files" | grep -qE '^(packages/cli/|packages/ui/|\.github/workflows/cli\.yml$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # Every supported Node line (engines.node >=22): 22 and 24 are maintenance LTS, 26 is the active LTS.
   # Ubuntu runs all three; macOS and Windows run the oldest and newest (macOS runners are scarce).
   test:
     name: test (Node ${{ matrix.node }}, ${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -52,3 +67,15 @@ jobs:
         run: pnpm exec prettier --check packages/ui/src packages/cli/src/ui
       # Build plus the 400 KB gzip size check (check-ui.mjs).
       - run: node packages/cli/scripts/build-ui.mjs
+
+  # The one required status check (main's ruleset): passes when the tests passed or were skipped (no code changes),
+  # fails when any test job failed or was cancelled.
+  ci:
+    if: always()
+    needs: [changes, test]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "changes: ${{ needs.changes.result }}, test: ${{ needs.test.result }}"
+          [ "${{ needs.changes.result }}" = success ] || exit 1
+          case "${{ needs.test.result }}" in success|skipped) ;; *) exit 1 ;; esac

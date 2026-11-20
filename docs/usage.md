@@ -58,6 +58,12 @@ node .shipline/bin/stage.mjs reopen <stage>            # go back
 node .shipline/bin/stage.mjs resume <task folder>      # pick up an unfinished task
 ```
 
+**Verify and checks that write files.** `check` records the result for the code as it is after the commands ran. If a
+command writes files (coverage reports, `tsbuildinfo`, `eslint --fix`), `check` lists them ("the checks changed these
+files") so Verify doesn't report "the code changed" afterwards; add generated files to `.gitignore` to keep them out of
+the diff. A check that rewrites tracked source counts as checked on the rewritten code. With `fail_first` on, Claude can
+write the failing test at Reproduce (test files are allowed there; see [Guardrails](guardrails.md)).
+
 Outside a Claude Code session (no session id), `status` lists the unfinished tasks on the current branch.
 
 ## The browser UI

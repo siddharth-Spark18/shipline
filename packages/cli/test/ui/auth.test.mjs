@@ -70,7 +70,7 @@ describe('status and diagnostics', () => {
     const d = await api(ui, 'GET', '/api/diagnostics');
     assert.equal(d.status, 200);
     assert.equal(d.json.root, dir);
-    assert.equal(d.json.uiInterface, 1);
+    assert.equal(d.json.uiInterface, INTERFACE);
     assert.equal(d.json.storeDir, storeOf(dir));
     assert.equal(d.json.versionMessage, null);
     assert.ok(!('needsUpgrade' in d.json), 'the pre-store flag is gone');

@@ -1,5 +1,5 @@
 // What `shipline init` and the browser wizard share: what can be chosen, the plan for a selection (which reads
-// files and writes nothing), and the all-or-nothing write. Node 18+, no dependencies.
+// files and writes nothing), and the all-or-nothing write. Node 22+, no dependencies.
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { detectEol, isInside, parseYaml, toEol } from '../templates/shipline/bin/lib.mjs';

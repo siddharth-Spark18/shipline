@@ -7,6 +7,12 @@ Common problems and what to do.
 - **A hook warning appears at session start or on a tool call.** Read it: it names the problem (a config
   that doesn't parse, a missing stage). A config.yml that can't be read keeps the guardrails on with their
   defaults ("guardrails are using their defaults"); fix the file shown, or run `npx @forgeyard/shipline ui` and use Setup.
+- **"Shipline <hook> hook crashed: ...".** One of the hooks (`guard`, `session-start`, `prompt-submit`,
+  `record-answer`) threw, usually because a file in `.shipline/bin/` was edited or half-upgraded. Claude keeps working
+  but that hook's checks are off for the call, and the message repeats until it is fixed. Run
+  `npx @forgeyard/shipline upgrade` (add `--force` to replace edited scripts), or fix the error it quotes.
+- **`upgrade` says ".shipline/bin/ has local edits".** The scripts in `.shipline/bin/` must be upgraded together.
+  Save your edits, run `upgrade --force`, then re-apply them. See [Upgrade and uninstall](install.md#upgrade-and-uninstall).
 - **A tool call was denied.** A `block` stage isn't done yet. Finish that stage or tell the developer; don't
   work around it.
 - **"Shipline is already initialized".** `init` found `.shipline/`, the `CLAUDE.md` block or the hooks. To
@@ -33,7 +39,7 @@ Common problems and what to do.
   from the old path. Also check you are on the same machine and `SHIPLINE_HOME` is unchanged.
 - **Windows.**
   - Install [Git for Windows](https://git-scm.com/download/win); Claude Code itself requires it.
-  - The hook command is `node "$CLAUDE_PROJECT_DIR/.shipline/bin/<x>.mjs"`, which relies on Claude Code
+  - The hook command is `node "$CLAUDE_PROJECT_DIR/.shipline/bin/run-hook.mjs" <hook>`, which relies on Claude Code
     running hooks through Git Bash. That is untested here; if hooks show an error, please report it.
   - `shipline ui` opens your browser with `start`, and stops a chat with `taskkill`. Stopping can take a few
     seconds.

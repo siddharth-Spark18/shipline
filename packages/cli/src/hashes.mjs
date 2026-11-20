@@ -1,5 +1,5 @@
 // What `init` and `upgrade` share: the template inventory, content hashes, and the parts of the shared
-// files (CLAUDE.md, .claude/settings.json) that Shipline owns. Node 18+, no dependencies.
+// files (CLAUDE.md, .claude/settings.json) that Shipline owns. Node 22+, no dependencies.
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';

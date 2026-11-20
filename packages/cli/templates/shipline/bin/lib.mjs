@@ -526,6 +526,14 @@ export function currentStage(manifest) {
   return manifest.stages.find((s) => !isDone(s.status)) || null;
 }
 
+// off | note | section | proof for this stage of this workflow: the configured level when the stage is Reproduce of a
+// listed workflow, else off. An unknown workflow id in the list never matches.
+export function failFirstLevel(cfg, stageId, wfId) {
+  const ff = cfg && cfg.fail_first;
+  if (!ff || ff.level === 'off' || stageId !== 'reproduce' || !Array.isArray(ff.workflows) || !ff.workflows.includes(wfId)) return 'off';
+  return ff.level;
+}
+
 // ---------- tasks and git ----------
 
 // Every task folder in the store whose manifest still has a stage that isn't done or skipped.
@@ -1774,11 +1782,13 @@ export function bashWriteTargets(parts, ctx) {
 
 // ---------- scope check (Verify) ----------
 
-const TEST_GLOBS = [
+// Test-file globs: the scope check's "test" kind and the Reproduce exception in guard.mjs share this one list.
+export const TEST_GLOBS = [
   '**/test/**', '**/tests/**', '**/Tests/**', '**/__tests__/**', '**/spec/**', '**/*.test.*', '**/*.spec.*', '**/*_test.go', '**/test_*.py',
   '**/*_test.py', '**/*_spec.rb', '**/*_test.rb', '**/*_test.exs', '**/*Test.java', '**/*Test.kt', '**/*Tests.cs', '**/*Test.cs',
   '**/*.Tests/**', '**/*Test.php', '**/*Tests.swift',
 ];
+export const isTestPath = (file) => TEST_GLOBS.some((g) => globMatches(g, file));
 const LINT_GLOBS = [
   '**/.eslintrc*', '**/eslint.config.*', '**/.prettierrc*', '**/prettier.config.*', '**/.stylelintrc*', '**/ruff.toml', '**/.ruff.toml',
   '**/.flake8', '**/setup.cfg', '**/.golangci*', '**/.rubocop*', '**/biome.json*', '**/.editorconfig', '**/.pylintrc', '**/pylintrc',
@@ -1791,7 +1801,7 @@ const LOCKFILES = new Set(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', '
 
 // 'test' | 'lint' | 'CI' | 'other' (a scope_check.sensitive_extra glob) | null when the file isn't sensitive.
 export function sensitiveKind(file, cfg) {
-  if (TEST_GLOBS.some((g) => globMatches(g, file))) return 'test';
+  if (isTestPath(file)) return 'test';
   if (LINT_GLOBS.some((g) => globMatches(g, file))) return 'lint';
   if (CI_GLOBS.some((g) => globMatches(g, file))) return 'CI';
   const extra = cfg && cfg.scope_check ? cfg.scope_check.sensitive_extra : [];

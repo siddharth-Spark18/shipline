@@ -1,6 +1,7 @@
 // Chat reliability plan (docs/plans/shipline-chat-reliability.md), G. The missing-Node warning: every Shipline hook
-// command in templates/settings-hooks.json checks for `node` first. Without it (or when the script fails),
-// SessionStart prints one systemMessage and the other hooks stay silent, all exiting 0, so no tool call fails.
+// command in templates/settings-hooks.json checks for `node` first. Without it, every hook prints the one
+// systemMessage and exits 0, so no tool call fails (2.2.0: not only SessionStart; the hooks also run through
+// run-hook.mjs and no longer end in `|| true`).
 // lib.mjs does the same on a Node older than 18. Node 18+, no dependencies.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +17,7 @@ const SESSION = 'np-session';
 // [{ event, script, command }] for every Shipline hook command in the template.
 const HOOKS = Object.entries(SETTINGS.hooks).flatMap(([event, entries]) =>
   entries.flatMap((e) =>
-    e.hooks.map((h) => ({ event, command: h.command, script: /\.shipline\/bin\/([a-z-]+\.mjs)/.exec(h.command)[1] })),
+    e.hooks.map((h) => ({ event, command: h.command, script: `${/run-hook\.mjs" ([a-z-]+)/.exec(h.command)[1]}.mjs` })),
   ),
 );
 
@@ -66,28 +67,27 @@ describe('the hook wrappers (sh -c)', { skip: process.platform === 'win32' && 'P
     assert.deepEqual(HOOKS.map((h) => h.script).sort(), ['guard.mjs', 'prompt-submit.mjs', 'record-answer.mjs', 'session-start.mjs']);
   });
 
-  test('no node on PATH: SessionStart prints the warning JSON, the others print nothing; all exit 0', () => {
+  test('no node on PATH: every hook prints the warning JSON and exits 0', () => {
     const empty = path.join(scratch, 'no-node');
     mkdirSync(empty, { recursive: true });
     for (const h of HOOKS) {
       const r = viaShell(h.command, h.event, empty);
       assert.equal(r.code, 0, `${h.event}: ${r.stderr}`);
-      if (h.event === 'SessionStart') assert.deepEqual(JSON.parse(r.stdout), { systemMessage: WARNING });
-      else assert.equal(r.stdout, '', h.event);
+      assert.deepEqual(JSON.parse(r.stdout), { systemMessage: WARNING }, h.event);
       assert.equal(r.stderr, '', `${h.event} is quiet on stderr`);
     }
   });
 
   // 1.0 plan, item 7: the "needs Node" warning is only for a missing node. A node that is there but fails
-  // prints nothing from the wrapper: SessionStart passes node's exit code on, the others still exit 0.
-  test('a node that exits 1: no "needs Node" warning; SessionStart passes the exit code on, the others exit 0', () => {
+  // prints nothing from the wrapper and its exit code is passed on (there is no `|| true`).
+  test('a node that exits 1: no "needs Node" warning; every hook passes the exit code on', () => {
     const bin = path.join(scratch, 'broken-node');
     mkdirSync(bin, { recursive: true });
     writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nexit 1\n');
     chmodSync(path.join(bin, 'node'), 0o755);
     for (const h of HOOKS) {
       const r = viaShell(h.command, h.event, bin);
-      assert.equal(r.code, h.event === 'SessionStart' ? 1 : 0, `${h.event}: ${r.stderr}`);
+      assert.equal(r.code, 1, `${h.event}: ${r.stderr}`);
       assert.equal(r.stdout, '', h.event);
       assert.ok(!r.stdout.includes('Shipline needs Node.js'), h.event);
     }

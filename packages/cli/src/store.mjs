@@ -1,6 +1,6 @@
 // The task store outside the repo ($SHIPLINE_HOME/projects/<encoded repo path>/). The helpers live in the
 // vendored lib.mjs template (the hooks must stay dependency-free); the CLI and UI reuse that one copy so the
-// path encoding is defined once. Node 18+, no dependencies.
+// path encoding is defined once. Node 22+, no dependencies.
 import path from 'node:path';
 import {
   encodePath,

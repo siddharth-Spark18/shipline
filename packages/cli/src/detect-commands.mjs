@@ -1,5 +1,5 @@
 // Detects the test, lint and build commands of a repo from the files at its root. Reads files only: it never runs
-// a project script or a package manager. Node 18+, no dependencies.
+// a project script or a package manager. Node 22+, no dependencies.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';

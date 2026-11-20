@@ -35,8 +35,8 @@ describe('init writes VERSION', () => {
     assert.deepEqual(v.excluded, excluded, '--yes leaves out the standalone reviewer and, with no UI, wireframe-proposer');
     assert.equal(v.package, PACKAGE_VERSION);
     assert.equal(v.interface, INTERFACE);
-    assert.equal(INTERFACE, 1);
-    assert.equal(PACKAGE_VERSION, '2.1.0');
+    assert.equal(INTERFACE, 2);
+    assert.equal(PACKAGE_VERSION, '2.2.0');
     assert.deepEqual(readRepoVersion(dir), { package: PACKAGE_VERSION, interface: INTERFACE, files: v.files, excluded });
   });
 
@@ -70,12 +70,12 @@ describe('init writes VERSION', () => {
     assert.equal(runInit(dir).code, 0);
     const s = JSON.parse(readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'));
     assert.deepEqual(s.permissions.allow, ['Bash(ls:*)', 'Read(~/.shipline/**)', 'Edit(~/.shipline/**)', 'Bash(node .shipline/bin/stage.mjs:*)']);
-    assert.ok(s.hooks.PreToolUse.some((e) => JSON.stringify(e).includes('.shipline/bin/guard.mjs')));
+    assert.ok(s.hooks.PreToolUse.some((e) => JSON.stringify(e).includes('.shipline/bin/run-hook.mjs')));
   });
 
   // Chat reliability plan, G: the hooks check for node first, so a machine without it gets one warning, not an
   // error on every tool call.
-  test('settings.json gets the hook form: each Shipline command checks for node; SessionStart warns only without node, the others || true', () => {
+  test('settings.json gets the hook form: each Shipline command checks for node and runs through run-hook.mjs; none ends in || true', () => {
     const dir = fresh();
     assert.equal(runInit(dir).code, 0);
     const s = JSON.parse(readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'));
@@ -88,13 +88,10 @@ describe('init writes VERSION', () => {
     const script = { SessionStart: 'session-start', UserPromptSubmit: 'prompt-submit', PostToolUse: 'record-answer', PreToolUse: 'guard' };
     for (const [event, cmds] of Object.entries(commands)) {
       assert.equal(cmds.length, 1, event);
-      const run = `node "$CLAUDE_PROJECT_DIR/.shipline/bin/${script[event]}.mjs"`;
-      if (event === 'SessionStart') {
-        // 1.0 plan, item 7: the warning is in the else branch of `command -v node`, so a failing node never prints it.
-        assert.match(cmds[0], new RegExp(`^if command -v node >/dev/null 2>&1; then ${run.replace(/[$.]/g, '\\$&')}; else echo '\\{"systemMessage":"Shipline needs Node\\.js 18 or newer.*'; fi$`), cmds[0]);
-      } else {
-        assert.equal(cmds[0], `command -v node >/dev/null 2>&1 && ${run} || true`, event);
-      }
+      const run = `node "$CLAUDE_PROJECT_DIR/.shipline/bin/run-hook.mjs" ${script[event]}`;
+      // 2.2.0: every event has the same shape; the warning is in the else branch of `command -v node`, so a failing node
+      // never prints it, and there is no `|| true`.
+      assert.match(cmds[0], new RegExp(`^if command -v node >/dev/null 2>&1; then ${run.replace(/[$.]/g, '\\$&')}; else echo '\\{"systemMessage":"Shipline needs Node\\.js 18 or newer.*'; fi$`), cmds[0]);
     }
     // The PreToolUse matcher covers the file tools, Bash, Read and Grep (1.0 plan, item 11); Glob stays outside.
     assert.equal(s.hooks.PreToolUse[0].matcher, 'Edit|Write|MultiEdit|NotebookEdit|Bash|Read|Grep');
@@ -232,10 +229,10 @@ describe('readRepoVersion', () => {
 describe('compareInterface', () => {
   test('same', () => {
     assert.equal(compareInterface(2, 2), 'same');
-    assert.equal(compareInterface({ package: '1.0.0', interface: 1 }, INTERFACE), 'same');
+    assert.equal(compareInterface({ package: '2.2.0', interface: INTERFACE }, INTERFACE), 'same');
     // 1.0 restarts the interface at 1, so a file with no VERSION reads as interface 1 too: `upgrade` refuses such a repo
     // by its package version (upgrade.test.mjs), not by the interface.
-    assert.equal(compareInterface({ legacy: true, interface: 1 }, { interface: INTERFACE }), 'same');
+    assert.equal(compareInterface({ legacy: true, interface: 1 }, { interface: 1 }), 'same');
   });
   test('repo older', () => {
     assert.equal(compareInterface(1, 2), 'repo-older');
@@ -259,7 +256,7 @@ describe('compareInterface', () => {
     assert.match(preOneMessage({ legacy: true, interface: 1 }), /pre-1\.0 Shipline \(unknown version\)/);
   });
 
-  test('MISSING_BEFORE is empty at interface 1 (the 1.0 baseline)', () => {
-    assert.deepEqual(MISSING_BEFORE, []);
+  test('MISSING_BEFORE has the interface-2 entry', () => {
+    assert.deepEqual(MISSING_BEFORE, [{ interface: 2, missing: 'hook crash warnings and Bash write blocking' }]);
   });
 });

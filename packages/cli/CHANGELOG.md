@@ -4,6 +4,39 @@ All notable changes to `@forgeyard/shipline` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.2.0] - 2026-11-20
+
+Fixes to enforcement: a bugfix can get past Reproduce, Verify no longer loops on checks that write files, a crashing
+hook says so, and `upgrade` keeps `.shipline/bin/` at one version. **The hook contract (INTERFACE) is now 2**:
+`upgrade` rewrites the hook entries in `.claude/settings.json`; restart running Claude Code sessions afterwards.
+
+### Fixed
+
+- **Bugfix couldn't get past Reproduce with `fail_first: proof`.** The Root cause stage blocked every edit, including
+  the failing test Reproduce asks for. At Reproduce of a workflow `fail_first` applies to, test files are now allowed
+  through the stage blocks (file tools and Bash).
+- **Verify looped forever when a check command wrote files git doesn't ignore** (coverage reports, `tsbuildinfo`,
+  `eslint --fix`). `check` (and `check --expect-fail`) now records the code as it is after the commands ran and lists
+  the files they changed.
+- **A crashing hook silently turned enforcement off.** Hooks now run through `.shipline/bin/run-hook.mjs`: a crash
+  (for example a syntax error in `lib.mjs`) still lets the call through, but prints "Shipline <hook> hook crashed" on
+  every affected call. The node-missing warning now shows on every hook event, not only at session start.
+- **`upgrade` could leave `.shipline/bin/` at mixed versions.** If any script there was edited, `upgrade` now refuses
+  before writing anything (exit 1) unless `--force`. It also warns when edited hook entries in `settings.json` still
+  run the scripts directly.
+- **Plan and Root cause blocks could be bypassed through Bash.** `cat > src/a.js`, `sed -i`, `tee`, `mv`, `cp` and `rm`
+  on repo files are now checked against stage `tools:` blocks like a Write. Indirect writes (interpreters, build
+  tools) are still not detected.
+
+### Changed
+
+- **INTERFACE 2** (hook entries run `run-hook.mjs`; Bash writes count against stage blocks).
+- The qa-bug-hunter agent runs `stage.mjs check` instead of the test, lint and build commands itself, so Verify no
+  longer runs the suite twice.
+- Node wording corrected: the hooks need Node 18+; the `shipline` CLI and UI need Node 22+. The dead "Node below 20"
+  branch of the init wizard was removed.
+- Docs: Glob isn't gated (it lists names, never contents).
+
 ## [2.1.0] - 2026-11-17
 
 A new guardrail against slopsquatted packages, an optional fail-first test requirement for bugfixes, and a redesigned

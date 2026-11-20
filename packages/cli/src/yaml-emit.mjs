@@ -1,5 +1,5 @@
 // Writes the YAML subset that the vendored hooks parse (templates/shipline/bin/lib.mjs `parseYaml`).
-// Node 18+, no dependencies. The parser is NOT imported: its line rules are copied here so this module
+// Node 22+, no dependencies. The parser is NOT imported: its line rules are copied here so this module
 // can scan the text on disk (rawScalars) and keep the quoting a team already uses.
 //
 // Rules (see the plan's "Saving setup changes"): two-space indent; keys follow the model's order; empty

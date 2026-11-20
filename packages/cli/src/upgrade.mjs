@@ -1,6 +1,6 @@
 // `shipline upgrade`: brings a repo that already has Shipline up to this version: refreshes the files Shipline
 // owns that the team has not edited, and the shared CLAUDE.md block and settings entries. Never commits.
-// Node 18+, no dependencies.
+// Node 22+, no dependencies.
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -192,6 +192,8 @@ function planShared(root, version, force) {
     if (record && record[SETTINGS_KEY]) shared.hashes[SETTINGS_KEY] = record[SETTINGS_KEY];
     // The read_credentials rail needs the PreToolUse matcher to include Read and Grep.
     const pre = settings && settings.hooks && Array.isArray(settings.hooks.PreToolUse) ? settings.hooks.PreToolUse.filter(isShiplineHookEntry) : [];
+    // Hook entries the team edited that still run the scripts directly get no crash warnings from run-hook.mjs.
+    shared.noRunHook = pre.some((e) => !JSON.stringify(e).includes('run-hook.mjs'));
     shared.readNotGuarded = !pre.some((e) => e && typeof e.matcher === 'string' && ['Read', 'Grep'].every((t) => e.matcher.split('|').includes(t)));
   }
   return shared;
@@ -300,6 +302,18 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     return 1;
   }
 
+  // The scripts in .shipline/bin/ must all be the same version (new ones may need new exports from lib.mjs), so an
+  // edited one stops the whole upgrade before anything is written, unless --force replaces them all.
+  const editedBin = force ? [] : files.skip.filter((f) => !f.removed && /^\.shipline\/bin\/[^/]+$/.test(f.to) && f.to !== VERSION_FILE);
+  if (editedBin.length) {
+    const lines = [
+      `shipline: .shipline/bin/ has local edits (${editedBin.map((f) => f.to.replace('.shipline/bin/', '')).join(', ')}). Its scripts must all be the same version, so upgrade won't replace only some of them. Save your edits, run \`shipline upgrade --force\`, then re-apply them. Nothing was changed.`,
+    ];
+    for (const f of editedBin) lines.push('', `  ${f.to}: changes it would get`, ...f.diff);
+    console.error(lines.join('\n'));
+    return 1;
+  }
+
   const excluded = [...(version.excluded || [])];
   const newVersion = { package: PACKAGE_VERSION, interface: INTERFACE, files: sortKeys({ ...files.hashes, ...shared.hashes }), excluded };
   const oldVersion = { package: version.package, interface: version.interface, files: version.files ? sortKeys(version.files) : null, excluded };
@@ -339,6 +353,9 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
   const warnings = [];
   if (shared.readNotGuarded) {
     warnings.push('Your Shipline hook entries in .claude/settings.json were edited, so reading credential files (the Read and Grep tools) is not guarded. Add Read and Grep to the PreToolUse matcher to enable it.');
+  }
+  if (shared.noRunHook) {
+    warnings.push('Your Shipline hook entries in .claude/settings.json were edited and still run the hook scripts directly, so a crashing hook turns its checks off without a warning. Change them to run `node "$CLAUDE_PROJECT_DIR/.shipline/bin/run-hook.mjs" <guard|session-start|prompt-submit|record-answer>`.');
   }
   if (warnings.length) out.push('', 'Warnings', ...warnings.map((w) => `  ! ${w}`));
   console.log(out.join('\n'));

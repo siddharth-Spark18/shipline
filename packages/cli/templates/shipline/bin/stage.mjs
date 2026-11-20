@@ -29,7 +29,7 @@ import {
   findRoot, loadConfig, needsAnswer, loadWorkflow, listWorkflows, readManifest, manifestPath, readSession, statePath,
   tasksDir, writeJson, isDone, currentStage, slugify, stageEnforcement, confirmQuestion, readApprovals,
   consumeApproval, CONFIRM_OPTIONS, sameStage, findStage, fingerprint, findSection, sectionProblems, scopeOf, scopeText,
-  listOpenTasks, currentBranch, draftsDir, draftsTmpDir, parseYaml, isInside,
+  listOpenTasks, currentBranch, draftsDir, draftsTmpDir, parseYaml, isInside, failFirstLevel,
 } from './lib.mjs';
 import { validateWorkflow } from './workflow-check.mjs';
 
@@ -166,22 +166,39 @@ function sections(sc) {
 
 // ---------- fail-first (config.yml `fail_first`) ----------
 
-// off | note | section | proof for this stage of this workflow: the configured level when the stage is Reproduce of a
-// listed workflow, else off. An unknown workflow id in the list never matches.
-function failFirstLevel(stageId, wf) {
-  const ff = cfg.fail_first;
-  if (!ff || ff.level === 'off' || stageId !== 'reproduce' || !ff.workflows.includes(wf.id)) return 'off';
-  return ff.level;
-}
+// failFirstLevel (lib.mjs) with this run's config and the workflow's id.
+const ffLevel = (stageId, wf) => failFirstLevel(cfg, stageId, wf.id);
 
 // The built-in note printed with Reproduce, before the repo's own rules; null when fail_first doesn't apply.
 function failFirstNote(stageId, wf) {
-  const level = failFirstLevel(stageId, wf);
+  const level = ffLevel(stageId, wf);
   if (level === 'off') return null;
   const lines = ['Shipline (fail-first): before changing any code, write a test that reproduces this bug and fails on the current code. Name it in reproduction.md.'];
   if (level === 'section') lines.push('reproduction.md must have a `## Failing test` section naming the test and showing its failing output.');
   if (level === 'proof') lines.push('Run `node .shipline/bin/stage.mjs check --expect-fail [test file or name]` to record that it fails. Reproduce can\'t finish until a failing run is recorded.');
   return lines.join('\n');
+}
+
+// The code after a check run: { fp, note }. When the commands changed files (coverage reports, tsbuildinfo,
+// `eslint --fix`), fp is the post-run fingerprint and note says which files; otherwise fp is the pre-run one.
+function afterRun(pre) {
+  if (pre === null) return { fp: pre, note: null };
+  const post = fingerprint(root);
+  if (post === null || post === pre) return { fp: pre, note: null };
+  let list = '';
+  try {
+    const names = execFileSync('git', ['diff-tree', '-r', '--name-only', pre, post], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .split('\n')
+      .filter(Boolean);
+    if (names.length) list = `: ${names.slice(0, 10).join(', ')}${names.length > 10 ? `, +${names.length - 10} more` : ''}`;
+  } catch {
+    // No list; the note is still printed.
+  }
+  return {
+    fp: post,
+    note: `Note: the checks changed these files${list}. The result is recorded for the code as it is now. Add generated files to .gitignore to keep them out of the diff.`,
+  };
 }
 
 // Arguments `check --expect-fail` may append to the test command: no spaces, quotes, shell characters or `..` segments.
@@ -643,13 +660,13 @@ switch (cmd) {
       }
       if (sc.artifact) {
         const wanted = sections(sc);
-        if (failFirstLevel(cur.id, wf) === 'section' && !wanted.some((h) => h.trim().replace(/:+$/, '').trim().toLowerCase() === 'failing test')) wanted.push('Failing test');
+        if (ffLevel(cur.id, wf) === 'section' && !wanted.some((h) => h.trim().replace(/:+$/, '').trim().toLowerCase() === 'failing test')) wanted.push('Failing test');
         if (wanted.length) {
           const problems = sectionProblems(readFileSync(path.join(taskDir, sc.artifact), 'utf8'), wanted);
           if (problems.length) die(`${sc.artifact} is missing: ${problems.join(', ')}.`);
         }
       }
-      if (failFirstLevel(cur.id, wf) === 'proof') {
+      if (ffLevel(cur.id, wf) === 'proof') {
         if (!configuredCommands().some(([n]) => n === 'test')) {
           die('fail_first is set to proof but no test command is configured. Set commands.test in .shipline/config.yml, or skip this stage with a reason (`stage.mjs skip --reason "..."`).');
         }
@@ -744,21 +761,23 @@ switch (cmd) {
       printScope(manifest.checks.scope, wf);
       break;
     }
-    // The fingerprint is taken before the commands run: it is the code they saw.
+    // The fingerprint is taken before the commands run; afterRun() replaces it if they changed any files.
     const fp = fingerprint(root);
     if (fp === null) console.log('Note: this is not a git repository (or git failed), so the checks cannot be tied to a version of the code.');
     const results = commands.map(([name, command]) => {
       console.log(`Running ${name}: ${command}`);
       return runCommand(name, command);
     });
-    manifest.checks = { fingerprint: fp, ran_at: now(), results };
+    const post = afterRun(fp);
+    manifest.checks = { fingerprint: post.fp, ran_at: now(), results };
     recordScope(taskDir, manifest, wf);
     save(taskDir, manifest);
     const failed = results.filter((r) => r.exit !== 0);
     console.log(`\n${checksLine(results)}`);
     printScope(manifest.checks.scope, wf);
     for (const r of failed) console.log(`\n--- ${r.name} (${r.exit === null ? 'did not run' : `exit ${r.exit}`}) last output ---\n${r.tail}`);
-    console.log(`\nFingerprint: ${fp ? fp.slice(0, 12) : 'none'}`);
+    if (post.note) console.log(`\n${post.note}`);
+    console.log(`\nFingerprint: ${post.fp ? post.fp.slice(0, 12) : 'none'}`);
     const ffFacts = failFirstFacts(manifest);
     if (ffFacts) console.log(failFirstLine(ffFacts));
     if (failed.length) process.exit(1);
@@ -792,7 +811,7 @@ switch (cmd) {
 // as manifest.fail_first. Valid only at Reproduce of a workflow fail_first applies to.
 function expectFail(taskDir, manifest, wf) {
   const cur = currentStage(manifest);
-  if (!cur || failFirstLevel(cur.id, wf) === 'off') {
+  if (!cur || ffLevel(cur.id, wf) === 'off') {
     die('check --expect-fail only applies at the Reproduce stage of a workflow listed in fail_first (and fail_first must not be off).');
   }
   const extras = expectFailExtras();
@@ -807,14 +826,16 @@ function expectFail(taskDir, manifest, wf) {
   const fp = fingerprint(root);
   console.log(`Running test: ${command}`);
   const r = runCommand('test', command);
+  const post = afterRun(fp);
   if (r.exit === null) die(`the test command did not run:\n${r.tail}`);
   if (r.exit === 0) {
     console.log('The test passed, so it doesn\'t reproduce the bug: nothing recorded.');
     process.exit(1);
   }
-  manifest.fail_first = { fingerprint: fp, ran_at: now(), command, exit: r.exit, tail: r.tail };
+  manifest.fail_first = { fingerprint: post.fp, ran_at: now(), command, exit: r.exit, tail: r.tail };
   save(taskDir, manifest);
   console.log(`${r.tail}\n\nFailing as expected (exit ${r.exit}): recorded.`);
+  if (post.note) console.log(`\n${post.note}`);
 }
 
 function uiWork(manifest) {

@@ -16,7 +16,7 @@ import {
   findRoot, loadConfig, loadWorkflow, readSession, readManifest, readStdinJson, stateDir, storeDir, shiplineHome,
   isInside, stageEnforcement, findStage, isDone, globToRegExp, listOpenTasks, currentBranch, safeId, out, failOpen,
   parseCommand, makeMatchCtx, matchAction, matchRail, matchInstallPackages, bashWriteTargets, isCredentialPath, resolveTarget, repoRelative,
-  globMatches, globMatchesCredential, defaultConfig, railReason, RAIL_IDS, ACTIONS,
+  globMatches, globMatchesCredential, defaultConfig, currentStage, failFirstLevel, isTestPath, railReason, RAIL_IDS, ACTIONS,
 } from './lib.mjs';
 
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -268,6 +268,21 @@ try {
   const parts = command !== null ? parseCommand(command) : [];
   const actx = makeMatchCtx(root, input.cwd || root, cfg0);
 
+  // Reproduce with fail-first on: the failing test has to be written there, so test files pass every tools block.
+  const cur = currentStage(manifest);
+  const testsAllowed = Boolean(cur) && failFirstLevel(cfg0, cur.id, wf.id) !== 'off';
+  // Does a tools block stop a write to this repo-relative path?
+  const pathBlocked = (b, p) => {
+    if (testsAllowed && isTestPath(p)) return false;
+    // {artifact_root} no longer exists (tasks live outside the repo), so old workflows' entries never match.
+    const allow = (Array.isArray(b.allow_paths) ? b.allow_paths : [])
+      .filter((g) => !String(g).includes('{artifact_root}'))
+      .map((g) => globToRegExp(vars(g)));
+    return !allow.some((re) => re.test(p));
+  };
+  let bashTargetsCache = null;
+  const bashTargets = () => (bashTargetsCache ??= bashWriteTargets(parts, actx).filter((t) => !path.isAbsolute(t)));
+
   for (const stage of wf.stages) {
     const mode = stageEnforcement(stage);
     if (mode === 'guide' || !Array.isArray(stage.blocks)) continue;
@@ -277,20 +292,23 @@ try {
     for (const b of stage.blocks) {
       if (!b) continue;
       let hit = false;
+      let bashPath = null;
       if (isFileTool && b.tools && anchored(b.tools).test(tool)) {
-        // {artifact_root} no longer exists (tasks live outside the repo), so old workflows' entries never match.
-        const allow = (Array.isArray(b.allow_paths) ? b.allow_paths : [])
-          .filter((g) => !String(g).includes('{artifact_root}'))
-          .map((g) => globToRegExp(vars(g)));
-        hit = !allow.some((re) => re.test(rel));
+        hit = pathBlocked(b, rel);
       } else if (command !== null && b.bash) {
         hit = new RegExp(b.bash).test(command);
       } else if (command !== null && Array.isArray(b.actions)) {
         const named = b.actions.filter((a) => ACTIONS.includes(a));
         hit = parts.some((part) => named.some((a) => matchAction(part, a, actx)));
       }
+      // A Bash command that writes a repo file is checked like a Write to it (a separate branch: a block with
+      // both `tools` and `bash`/`actions` still works). Writes outside the repo are not ours to gate.
+      if (!hit && command !== null && b.tools && anchored(b.tools).test('Write')) {
+        bashPath = bashTargets().find((t) => pathBlocked(b, t)) ?? null;
+        hit = bashPath !== null;
+      }
       if (!hit) continue;
-      const what = isFileTool ? `${tool} on ${rel}` : `"${command.slice(0, 80)}"`;
+      const what = isFileTool ? `${tool} on ${rel}` : bashPath !== null ? `writing ${bashPath} from Bash` : `"${command.slice(0, 80)}"`;
       const msg =
         `Shipline (${wf.name || wf.id} workflow, task ${manifest.task.slug}): ${what} needs the "${stage.name || stage.id}" stage to be done first. ` +
         `Finish it, then record it with: node .shipline/bin/stage.mjs advance.`;

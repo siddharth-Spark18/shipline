@@ -1,15 +1,16 @@
 // The version stamp written by `shipline init` (.shipline/bin/VERSION) and how it is compared.
-// Node 18+, no dependencies.
+// Node 22+, no dependencies.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 // Bump when stage.mjs commands or flags, the manifest or state file shape, the YAML subset, the hook
 // entry points in settings-hooks.json, or what the hooks print change.
 // 1 = the 1.0.0 shape.
-export const INTERFACE = 1;
+// 2 = hooks run through run-hook.mjs (crash warnings); Bash writes count against stage blocks.
+export const INTERFACE = 2;
 
-// What older interfaces lack, for banner text. Empty until interface 2.
-export const MISSING_BEFORE = [];
+// What repos older than an interface lack, for banner text: { interface, missing }, oldest first.
+export const MISSING_BEFORE = [{ interface: 2, missing: 'hook crash warnings and Bash write blocking' }];
 
 // Returns { package, interface, files, excluded }, or { legacy: true, interface: 1 } when the file is missing or unreadable.
 export function readRepoVersion(root) {

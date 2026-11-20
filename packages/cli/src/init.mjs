@@ -85,11 +85,9 @@ function warnings(root, commands, detected) {
 // { workflows, agents, repoAgents, repoSkills, detected, trackerDefault, uiDetected, agentUse, missingStageAgents(selection),
 //   defaultAgents(workflowIds, ui) }. A terminal run with questions (and no --yes) shows a review and asks
 // before writing; `confirm` (optional, an async (reviewText) => boolean) replaces that question. Without --terminal
-// or `prompts`, an interactive run on Node 20+ opens the browser wizard; `startUi` replaces that start (for tests),
-// and `nodeMajor` the Node version it checks.
+// or `prompts`, an interactive run opens the browser wizard; `startUi` replaces that start (for tests).
 export async function runInit({
   target, dryRun = false, yes = false, terminal = false, prompts = null, confirm = null, startUi = null,
-  nodeMajor = Number(process.versions.node.split('.')[0]),
 }) {
   const root = path.resolve(target);
   if (!existsSync(root) || !lstatSync(root).isDirectory()) {
@@ -116,11 +114,9 @@ export async function runInit({
     return 1;
   }
 
-  // An interactive run sets up in the browser wizard by default (the UI needs Node 20); --terminal, or an
-  // injected `prompts`, asks here instead.
+  // An interactive run sets up in the browser wizard by default; --terminal, or an injected `prompts`, asks here instead.
   if (!useDefaults && !dryRun && !terminal) {
-    if (nodeMajor < 20) console.log('The setup wizard needs Node 20+; asking here instead.');
-    else if (!prompts) {
+    if (!prompts) {
       // Hands the folder to the UI server that is already running, if there is one (see launchUi).
       const start = startUi || (async () => (await import('./ui/server-record.mjs')).launchUi({ dir: root, port: 0, open: true }, PACKAGE_VERSION));
       await start(root);

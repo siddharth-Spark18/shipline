@@ -85,6 +85,10 @@ fail_first:
 - When a failing run is recorded, Verify's output and `pr-summary` show "Fail-first: failed before (exit N on
   `<fingerprint>`), passed after (on `<fingerprint>`)", using the latest test result for the "after". The CI check shows
   it for information and never fails on it.
+- At Reproduce of a workflow `fail_first` applies to, test files (`test/`, `*.test.*`, `*_test.go`, and the other
+  patterns the scope check treats as tests) can be written even though the Root cause stage blocks edits, so Claude can
+  write the failing test. Source files stay blocked until Root cause is done. With `fail_first: off`, or for a workflow
+  not listed, nothing changes.
 - Skipping Reproduce with `stage.mjs skip --reason "..."` still works (with your confirmation when the stage is
   required): that is your override. The setting is read when you advance, so it applies from the next Reproduce advance
   of a task started earlier. Listing a workflow with no `reproduce` stage gives a warning in Setup and does nothing.
@@ -106,7 +110,16 @@ asks you an extra question, and `pr-summary` shows a Scope line and the two list
 information and never fails on it. Turn it off with `scope_check: { enabled: false }`; add globs with
 `scope_check.sensitive_extra`.
 
-**Failure modes.** If the code that protects the task store throws, only that step is skipped and the rails still run.
+**Stage blocks and Bash.** A stage's `tools:` blocks (for example "no source edits until Plan is done") also apply to
+Bash commands that write a repo file: `>` and `>>`, `tee`, `sed -i`, `mv`, `cp` and `rm` are checked like a Write to
+that path, with the same `allow_paths`. Writes outside the repo are not checked. Writes Bash makes indirectly
+(`python -c`, `node -e`, `npm run <script>`, editors, build tools) are not detected. Glob isn't gated: it lists file
+names, never their contents.
+
+**Failure modes.** A hook that crashes (for example a syntax error in `.shipline/bin/lib.mjs`) doesn't block your work,
+but it says so: every hook runs through `.shipline/bin/run-hook.mjs`, which prints "Shipline <hook> hook crashed: ..."
+on each affected call, and the Node-missing warning appears on every hook event. If the hook had already printed its
+decision before crashing, the warning goes to stderr only. If the code that protects the task store throws, only that step is skipped and the rails still run.
 If `config.yml` can't be read, the rails use their defaults (and ask before edits to `.shipline/config.yml`, which may
 be the file you are fixing); every call says so.
 

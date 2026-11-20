@@ -1,5 +1,5 @@
 // Detects whether a repo has a user interface, from the files at hand. Reads files only: it never runs a project
-// script or a package manager. Node 18+, no dependencies.
+// script or a package manager. Node 22+, no dependencies.
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 

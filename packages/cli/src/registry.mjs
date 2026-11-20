@@ -1,6 +1,6 @@
 // The machine-wide project registry: $SHIPLINE_HOME/projects.json lists every repo with Shipline, so one
 // `shipline ui` server can serve them all and `upgrade --all` can find them. Registered by `init`, `ui` and
-// `upgrade`, removed by `uninstall`; seeded once from the stores that already exist. Node 20+, no dependencies.
+// `upgrade`, removed by `uninstall`; seeded once from the stores that already exist. Node 22+, no dependencies.
 //
 //   { "version": 1, "projects": [ { "id", "root", "group", "addedAt" } ] }
 //

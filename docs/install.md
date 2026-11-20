@@ -104,6 +104,12 @@ question, `--force` also replaces Shipline files your team edited (they are skip
 workflows and rules are yours: only an untouched shipped rules file is replaced. It never commits: review and commit
 the result.
 
+**Edited scripts in `.shipline/bin/`.** The scripts there (`guard.mjs`, `stage.mjs`, `lib.mjs`, `run-hook.mjs` and
+the others) must all be the same version, because new ones can need new code from `lib.mjs`. If your team edited any of
+them, `upgrade` (and `--dry-run`) refuses before writing anything and exits 1, naming the files and what they would
+get. Save your edits, run `upgrade --force`, then re-apply them. Edited files elsewhere are still just skipped. With
+`--all`, that repo is reported as failed and the others continue.
+
 **`upgrade --all`** runs `upgrade` once for every repo in the project list (sorted by path, skipping any whose folder is
 gone), each with its own preview and confirmation, or with `--yes` / `--dry-run` / `--force` passed through. It can't be
 combined with `--dir`. A failure in one repo (for example a pre-1.0 one) is reported and the run goes on; the summary

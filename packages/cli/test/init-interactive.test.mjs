@@ -454,7 +454,7 @@ describe('the interactive path on old Node', () => {
   const old = Number(process.versions.node.split('.')[0]) < 20;
   test('src/init-prompts.mjs explains to use --yes when @inquirer/prompts cannot load', { skip: old ? false : 'needs Node < 20 (the CI test:hooks job)' }, async () => {
     const { askSelection } = await import('../src/init-prompts.mjs');
-    await assert.rejects(() => askSelection({ workflows: [], agents: [], repoAgents: [], repoSkills: [], missingStageAgents: () => [] }), /Node 20\.17 or newer; on older Node, run `init --yes`/);
+    await assert.rejects(() => askSelection({ workflows: [], agents: [], repoAgents: [], repoSkills: [], missingStageAgents: () => [] }), /needs Node 22 or newer; reinstall it, or run `init --yes`/);
   });
 });
 
@@ -646,20 +646,6 @@ describe('setup wizard: the new questions', () => {
     const r = await withTty(() => initWith(repo({ '.shipline/config.yml': 'tracker: jira\n' }), undefined, { nodeMajor: 24, startUi: mustNotStart }));
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /already initialized/);
-  });
-
-  test('Node below 20: asks here instead, after the note; --terminal, --yes and --dry-run print no note', async () => {
-    const dir = repo();
-    const r = await withTty(() => initWith(dir, selection(), { nodeMajor: 18, startUi: mustNotStart }));
-    assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.stdout.split('\n')[0], 'The setup wizard needs Node 20+; asking here instead.');
-    assert.equal(r.calls.length, 1);
-    assert.ok(exists(dir, '.shipline/config.yml'));
-    for (const extra of [{ terminal: true }, { yes: true }, { dryRun: true }]) {
-      const o = await withTty(() => initWith(repo(), selection(), { ...extra, nodeMajor: 18, startUi: mustNotStart }));
-      assert.equal(o.code, 0, o.stderr);
-      assert.ok(!/The setup wizard needs Node 20/.test(o.stdout), JSON.stringify(extra));
-    }
   });
 
   test('init --terminal without a terminal is refused like any interactive run; --terminal --yes installs the defaults', () => {

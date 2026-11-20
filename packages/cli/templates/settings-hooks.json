@@ -5,24 +5,24 @@
   "hooks": {
     "SessionStart": [
       {
-        "hooks": [{ "type": "command", "command": "if command -v node >/dev/null 2>&1; then node \"$CLAUDE_PROJECT_DIR/.shipline/bin/session-start.mjs\"; else echo '{\"systemMessage\":\"Shipline needs Node.js 18 or newer on this machine; its workflow hooks are off until it'\\''s installed.\"}'; fi" }]
+        "hooks": [{ "type": "command", "command": "if command -v node >/dev/null 2>&1; then node \"$CLAUDE_PROJECT_DIR/.shipline/bin/run-hook.mjs\" session-start; else echo '{\"systemMessage\":\"Shipline needs Node.js 18 or newer on this machine; its workflow hooks are off until it'\\''s installed.\"}'; fi" }]
       }
     ],
     "UserPromptSubmit": [
       {
-        "hooks": [{ "type": "command", "command": "command -v node >/dev/null 2>&1 && node \"$CLAUDE_PROJECT_DIR/.shipline/bin/prompt-submit.mjs\" || true" }]
+        "hooks": [{ "type": "command", "command": "if command -v node >/dev/null 2>&1; then node \"$CLAUDE_PROJECT_DIR/.shipline/bin/run-hook.mjs\" prompt-submit; else echo '{\"systemMessage\":\"Shipline needs Node.js 18 or newer on this machine; its workflow hooks are off until it'\\''s installed.\"}'; fi" }]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "AskUserQuestion",
-        "hooks": [{ "type": "command", "command": "command -v node >/dev/null 2>&1 && node \"$CLAUDE_PROJECT_DIR/.shipline/bin/record-answer.mjs\" || true" }]
+        "hooks": [{ "type": "command", "command": "if command -v node >/dev/null 2>&1; then node \"$CLAUDE_PROJECT_DIR/.shipline/bin/run-hook.mjs\" record-answer; else echo '{\"systemMessage\":\"Shipline needs Node.js 18 or newer on this machine; its workflow hooks are off until it'\\''s installed.\"}'; fi" }]
       }
     ],
     "PreToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|Read|Grep",
-        "hooks": [{ "type": "command", "command": "command -v node >/dev/null 2>&1 && node \"$CLAUDE_PROJECT_DIR/.shipline/bin/guard.mjs\" || true" }]
+        "hooks": [{ "type": "command", "command": "if command -v node >/dev/null 2>&1; then node \"$CLAUDE_PROJECT_DIR/.shipline/bin/run-hook.mjs\" guard; else echo '{\"systemMessage\":\"Shipline needs Node.js 18 or newer on this machine; its workflow hooks are off until it'\\''s installed.\"}'; fi" }]
       }
     ]
   }

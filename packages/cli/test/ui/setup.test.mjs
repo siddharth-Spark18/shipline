@@ -588,7 +588,7 @@ describe('agents and skills (prepublish plan, Setup -> Agents & skills)', () => 
     assert.deepEqual(v.excluded, [AGENT('researcher'), AGENT('reviewer')]);
     assert.ok(!(AGENT('researcher') in v.files));
     assert.equal(v.interface, INTERFACE);
-    assert.equal(INTERFACE, 1);
+    assert.equal(INTERFACE, 2);
     let s = await getSetup(x.ui);
     assert.deepEqual(s.agents.shipline.find((a) => a.name === 'researcher'), { name: 'researcher', installed: false, excluded: true, hash: null });
     assert.equal(s.versionHash, sha256(xread(x, '.shipline/bin/VERSION')));

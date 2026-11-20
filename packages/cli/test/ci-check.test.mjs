@@ -757,3 +757,40 @@ describe('fail-first in the summary', () => {
     assert.ok(!r.summary.includes('Fail-first'), r.summary);
   });
 });
+
+describe('ci.allow_non_interactive (2.2.0, part D8)', () => {
+  const headlessSummary = () => featureSummary({ verify: { confirmed: 'non_interactive' } });
+  test('by default a stage a headless run advanced fails as needing the developer\'s confirmation', () => {
+    setCi(null);
+    const r = check(body(headlessSummary()));
+    assert.equal(r.code, 1, r.stdout);
+    assert.ok(r.stdout.includes('Stage "verify" needs the developer\'s confirmation, but the summary doesn\'t show their answer.'), r.stdout);
+    setCi({ allow_non_interactive: false });
+    assert.equal(check(body(headlessSummary())).code, 1);
+  });
+
+  test('with allow_non_interactive: true it passes, and the check line says nothing was answered by a developer', () => {
+    setCi({ allow_non_interactive: true });
+    try {
+      const r = check(body(headlessSummary()));
+      assert.equal(r.code, 0, r.stdout);
+      assert.ok(r.summary.includes('Advanced without a developer answer (checks passed): verify'), r.summary);
+      assert.ok(r.summary.includes('| verify | done | auto (non-interactive) |'), r.summary);
+      // Other stages still need their answers.
+      const bad = check(body(featureSummary({ verify: { confirmed: 'non_interactive' }, plan: { confirmed: 'auto' } })));
+      assert.equal(bad.code, 1);
+      assert.ok(bad.stdout.includes('Stage "plan" needs the developer\'s confirmation'), bad.stdout);
+      // A normal summary prints no such line.
+      assert.ok(!check(body(featureSummary())).summary.includes('Advanced without a developer answer'));
+    } finally {
+      setCi(null);
+    }
+  });
+
+  test('a block stage confirmed non-interactively counts as done', () => {
+    setCi(null);
+    // verify is a block stage: with the default it fails only on the confirmation, not as "not done".
+    const r = check(body(headlessSummary()));
+    assert.ok(!r.stdout.includes('is a block stage and is not done'), r.stdout);
+  });
+});

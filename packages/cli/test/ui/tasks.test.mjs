@@ -6,7 +6,7 @@ import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { git, makeRepo, removeDir, runInit, stage, storeOf, tmpDir } from '../helpers.mjs';
+import { git, hook, makeRepo, removeDir, runInit, stage, storeOf, tmpDir } from '../helpers.mjs';
 import { api, openEvents, sleep, startUi } from './helpers.mjs';
 import { changeStatus, parseNumstatZ, parseStatusZ } from '../../src/ui/tasks.mjs';
 
@@ -88,6 +88,63 @@ describe('GET /api/tasks', () => {
     rmSync(path.join(storeOf(dir), 'tasks', 'quick'), { recursive: true });
     r = await api(ui, 'GET', '/api/tasks');
     assert.deepEqual(r.json.tasks.map((t) => t.slug), ['add-export']);
+  });
+});
+
+describe('abandoned tasks and owners (2.2.0, part D)', () => {
+  const answerQ = (session, question, label) =>
+    hook(dir, 'record-answer.mjs', {
+      session_id: session,
+      cwd: dir,
+      hook_event_name: 'PostToolUse',
+      tool_name: 'AskUserQuestion',
+      tool_input: { questions: [{ question, header: 'Shipline', options: [{ label }], multiSelect: false }] },
+      tool_response: { answers: { [question]: label } },
+    });
+
+  test('owner.json is not a task file; the task carries its owner, active within 10 minutes', async () => {
+    let r = await api(ui, 'GET', '/api/tasks');
+    const t = r.json.tasks.find((x) => x.slug === 'add-export');
+    assert.ok(!t.files.some((f) => f.name === 'owner.json'));
+    assert.equal(t.owner.session, 's1');
+    assert.equal(t.owner.active, true);
+    assert.equal(t.abandoned, null);
+    writeFileSync(path.join(TASK, 'owner.json'), JSON.stringify({ session: 's1', last_seen: new Date(Date.now() - 11 * 60 * 1000).toISOString() }));
+    r = await api(ui, 'GET', '/api/tasks');
+    assert.equal(r.json.tasks.find((x) => x.slug === 'add-export').owner.active, false);
+    unlinkSync(path.join(TASK, 'owner.json'));
+    r = await api(ui, 'GET', '/api/tasks');
+    assert.equal(r.json.tasks.find((x) => x.slug === 'add-export').owner, null, 'a missing owner.json is no owner');
+  });
+
+  test('an abandoned task leaves the unfinished list and carries abandoned; resume brings it back', async () => {
+    assert.equal(stage(dir, ['start', '--workflow', 'hotfix', '--title', 'Dropped'], 's9').code, 0);
+    let r = await api(ui, 'GET', '/api/tasks');
+    assert.ok(r.json.tasks.some((t) => t.slug === 'dropped'));
+    const first = stage(dir, ['abandon', '--reason', 'not needed'], 's9');
+    assert.equal(first.code, 1);
+    answerQ('s9', 'Abandon task dropped? Reason: not needed', 'Abandon');
+    const done = stage(dir, ['abandon', '--reason', 'not needed'], 's9');
+    assert.equal(done.code, 0, done.stderr);
+    r = await api(ui, 'GET', '/api/tasks');
+    assert.ok(!r.json.tasks.some((t) => t.slug === 'dropped'), 'hidden from the unfinished list');
+    // The chat view of a task (readTask) still shows it, marked.
+    const { readTask, makeTaskView } = await import('../../src/ui/tasks.mjs');
+    const saved = process.env.SHIPLINE_HOME;
+    try {
+      const view = makeTaskView({ repo: { root: dir, lib: await import('../../templates/shipline/bin/lib.mjs') } });
+      const t = view(readTask(dir, path.join(storeOf(dir), 'tasks', 'dropped')));
+      assert.equal(t.abandoned.reason, 'not needed');
+      assert.ok(Date.parse(t.abandoned.at) > 0);
+    } finally {
+      process.env.SHIPLINE_HOME = saved;
+    }
+    assert.equal(stage(dir, ['resume', 'dropped'], 's9').code, 0);
+    r = await api(ui, 'GET', '/api/tasks');
+    const back = r.json.tasks.find((t) => t.slug === 'dropped');
+    assert.ok(back);
+    assert.equal(back.abandoned, null);
+    rmSync(path.join(storeOf(dir), 'tasks', 'dropped'), { recursive: true });
   });
 });
 

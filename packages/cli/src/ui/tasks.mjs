@@ -59,6 +59,19 @@ function checksView(root, manifest) {
 
 const isDone = (status) => status === 'done' || status === 'skipped';
 
+// The task's owner.json ({ session, last_seen }) as { session, last_seen, active } (active: seen in the last 10
+// minutes), or null when missing or unreadable.
+function readOwnerOf(dir) {
+  try {
+    const o = JSON.parse(readFileSync(path.join(dir, 'owner.json'), 'utf8'));
+    if (!o || typeof o.session !== 'string') return null;
+    const seen = Date.parse(o.last_seen);
+    return { session: o.session, last_seen: o.last_seen, active: Number.isFinite(seen) && Date.now() - seen < 10 * 60 * 1000 };
+  } catch {
+    return null;
+  }
+}
+
 function readManifest(dir) {
   try {
     return JSON.parse(readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
@@ -91,6 +104,7 @@ export function readOpenTasks(root) {
     const m = readManifest(dir);
     if (!m || !m.task || !Array.isArray(m.stages) || m.stages.every((s) => isDone(s.status)))
       continue;
+    if (m.abandoned) continue; // abandoned tasks are not unfinished work (`stage.mjs resume` brings one back)
     const cur = m.stages.find((s) => !isDone(s.status));
     open.push({
       dir,
@@ -263,7 +277,7 @@ export async function collectChanges(root) {
 function taskFiles(dir) {
   try {
     return readdirSync(dir, { withFileTypes: true })
-      .filter((d) => d.isFile())
+      .filter((d) => d.isFile() && d.name !== 'owner.json') // owner.json is Shipline's own heartbeat, not a task file
       .map((d) => {
         const st = statSync(path.join(dir, d.name));
         return { name: d.name, size: st.size, mtime: Math.floor(st.mtimeMs) };
@@ -323,6 +337,11 @@ export function makeTaskView(app) {
       }),
       files: taskFiles(t.dir),
       checks: checksView(root, t.manifest),
+      abandoned:
+        t.manifest.abandoned && typeof t.manifest.abandoned === 'object'
+          ? { at: t.manifest.abandoned.at ?? null, reason: t.manifest.abandoned.reason ?? '' }
+          : null,
+      owner: readOwnerOf(t.dir),
     };
   };
 }

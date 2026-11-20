@@ -120,8 +120,9 @@ describe('fixtures (item 14)', () => {
     // The shipped config has `skills: []` after the commands block, then the ci block (Trust plan; stale_checks since Teams Phase 2), then the comment
     // documenting `setup` (Teams Phase 1), which has no key until /shipline-setup writes `setup: done`. Teams Phase 3
     // put the guardrail keys (rails, rails_commands, protected_paths, scope_check) between ci and that comment. 1.0 added
-    // the note on the base branch's checker above ci.
-    assert.match(out, /\ncommands:\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\n# stale_checks:[^\n]*\n# The check runs the checker and reads this file from the PR's base branch[^\n]*\n# \(the PR that first adds Shipline[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n {2}stale_checks: warn\n\n# Guardrails:[^]*\nrails:\n[^]*\nscope_check:\n {2}enabled: true\n {2}sensitive_extra: \[\]\n\n# Set to `done`[^\n]*\n# Until then[^\n]*\n$/);
+    // the note on the base branch's checker above ci. 2.2.0 added the headless note (ci.allow_non_interactive) and the
+    // non_interactive and stale_task_days keys after scope_check.
+    assert.match(out, /\ncommands:\n\n# Optional[^\n]*\nskills: \[\]\n\n# Optional[^\n]*\n# missing_block:[^\n]*\n# stale_checks:[^\n]*\n# allow_non_interactive:[^\n]*\n# The check runs the checker and reads this file from the PR's base branch[^\n]*\n# \(the PR that first adds Shipline[^\n]*\nci:\n {2}missing_block: fail-unless-label\n {2}# The PR label[^\n]*\n {2}skip_label: shipline:skip\n {2}stale_checks: warn\n\n# Guardrails:[^]*\nrails:\n[^]*\nscope_check:\n {2}enabled: true\n {2}sensitive_extra: \[\]\n\n# Optional\. Headless runs[^\n]*\n(?:#[^\n]*\n)*non_interactive: deny\n# Session start[^\n]*\nstale_task_days: 14\n\n# Set to `done`[^\n]*\n# Until then[^\n]*\n$/);
     assert.equal(parseYaml(out).commands, null);
   });
 

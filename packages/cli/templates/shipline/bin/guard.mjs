@@ -7,6 +7,8 @@
 // Then, with an active task: stage block patterns (regexes, tool/path blocks and named actions). No active task =>
 // nothing more, except one warning per session when the current git branch belongs to an unfinished task this
 // session isn't tracking. The strictest decision wins: deny over ask over a stage warning.
+// Every deny/ask is also written to state/<session>.decision.json (for `stage.mjs explain`). With
+// SHIPLINE_NONINTERACTIVE=1 an ask is returned as a deny (nobody is there to answer).
 // A config.yml that can't be read => the rails use their built-in defaults, and every call says so.
 // Any other unexpected error => fails open with a visible warning.
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
@@ -16,7 +18,7 @@ import {
   findRoot, loadConfig, loadWorkflow, readSession, readManifest, readStdinJson, stateDir, storeDir, shiplineHome,
   isInside, stageEnforcement, findStage, isDone, globToRegExp, listOpenTasks, currentBranch, safeId, out, failOpen,
   parseCommand, makeMatchCtx, matchAction, matchRail, matchInstallPackages, bashWriteTargets, isCredentialPath, resolveTarget, repoRelative,
-  globMatches, globMatchesCredential, defaultConfig, currentStage, failFirstLevel, isTestPath, railReason, RAIL_IDS, ACTIONS,
+  globMatches, globNamesCredential, credentialTier, matchRailTier, defaultConfig, activeSidePass, touchOwner, writeJson, decisionPath, currentStage, failFirstLevel, isTestPath, railReason, RAIL_IDS, ACTIONS,
 } from './lib.mjs';
 
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -37,8 +39,26 @@ function quit() {
   process.exit(0);
 }
 
-const deny = (reason) =>
+// Where decisions are recorded, and what the call was about (set once the input is read).
+const rec = { root: null, sessionId: null, tool: '', target: '' };
+const NON_INTERACTIVE = () => process.env.SHIPLINE_NONINTERACTIVE === '1';
+
+// meta: { kind: 'stage' | 'rail' | 'protected' | 'store', id }. Never throws.
+function recordDecision(decision, reason, meta) {
+  try {
+    if (!rec.root || !rec.sessionId || !meta) return;
+    writeJson(decisionPath(rec.root, rec.sessionId), {
+      at: new Date().toISOString(), tool: rec.tool, target: rec.target, kind: meta.kind, id: meta.id, decision, reason,
+    });
+  } catch {
+    // Recording never blocks a call.
+  }
+}
+
+const deny = (reason, meta) => {
+  recordDecision('deny', reason, meta);
   emit({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });
+};
 
 // The real path of p, resolving symlinks in the part that exists (the file itself may not exist yet).
 function realish(p) {
@@ -92,26 +112,37 @@ function bashReachesProgress(command, store) {
   return mentionsStore && (/approvals/.test(command) || /manifest\.json/.test(command) || /\/state\//.test(flat));
 }
 
-const ask = (reason) =>
+const ask = (reason, meta) => {
+  if (NON_INTERACTIVE()) {
+    deny(`${reason} (non-interactive run: this needs a developer's approval)`, meta);
+    return;
+  }
+  recordDecision('ask', reason, meta);
   emit({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: reason } });
+};
 
 // Paths the agent's own configuration lives in: .claude/**, .shipline/**, CLAUDE.md, .mcp.json (repo-relative, any case).
-const isAgentConfigPath = (rel) => /^(\.claude|\.shipline)(\/|$)/i.test(rel) || /^(CLAUDE\.md|\.mcp\.json)$/i.test(rel);
+// Claude Code's own worktrees (.claude/worktrees/**) hold ordinary repo files, not configuration.
+const isAgentConfigPath = (rel) =>
+  (/^(\.claude|\.shipline)(\/|$)/i.test(rel) && !/^\.claude\/worktrees(\/|$)/i.test(rel)) || /^(CLAUDE\.md|\.mcp\.json)$/i.test(rel);
 
 // The guardrails for one tool call: { deny, ask } (the first reason of each, or null). A rail set to `off` is skipped.
 function railDecisions(input, root, cfg) {
   const tool = String(input.tool_name || '');
   const ti = input.tool_input || {};
   const ctx = makeMatchCtx(root, input.cwd || root, cfg);
+  ctx.commandText = tool === 'Bash' ? ti.command : '';
   const denies = [];
   const asks = [];
-  const raise = (id, what) => (cfg.rails[id] === 'deny' ? denies : asks).push(railReason(id, what, cfg.rails[id]));
+  // soft: a finding that always asks, even for a rail set to deny (env consumers, `.env.<name>` reads).
+  const raise = (id, what, soft = false) => (cfg.rails[id] === 'deny' && !soft ? denies : asks).push({ text: railReason(id, what, soft ? 'ask' : cfg.rails[id]), kind: 'rail', id });
   const on = (id) => cfg.rails[id] !== 'off';
   const protectedPath = (rel) => {
     if (isAgentConfigPath(rel)) {
       if (on('agent_config')) raise('agent_config', `${rel} is Claude Code or Shipline configuration`);
     } else if (cfg.protected_paths.some((g) => globMatches(g, rel) || globMatches(g, `${rel}/`))) {
-      asks.push(`Shipline: ${rel} is protected in this repo (protected_paths in .shipline/config.yml)`);
+      const g = cfg.protected_paths.find((x) => globMatches(x, rel) || globMatches(x, `${rel}/`));
+      asks.push({ text: `Shipline: ${rel} is protected in this repo (protected_paths in .shipline/config.yml)`, kind: 'protected', id: g });
     }
   };
 
@@ -123,12 +154,14 @@ function railDecisions(input, root, cfg) {
     }
   } else if (tool === 'Read') {
     const p = ti.file_path;
-    if (on('read_credentials') && typeof p === 'string' && p && isCredentialPath(p, ctx, null)) raise('read_credentials', `${p} holds credentials`);
+    const tier = typeof p === 'string' && p ? credentialTier(p, ctx, null) : null;
+    if (on('read_credentials') && tier) raise('read_credentials', `${p} holds credentials`, tier === 'ask');
   } else if (tool === 'Grep') {
     // Searching a credential file prints its lines: Grep goes through the same rail as Read.
     if (on('read_credentials')) {
-      if (typeof ti.path === 'string' && ti.path && isCredentialPath(ti.path, ctx, null)) raise('read_credentials', `${ti.path} holds credentials`);
-      else if (typeof ti.glob === 'string' && globMatchesCredential(ti.glob)) raise('read_credentials', `the glob ${ti.glob} matches credential files`);
+      const tier = typeof ti.path === 'string' && ti.path ? credentialTier(ti.path, ctx, null) : null;
+      if (tier) raise('read_credentials', `${ti.path} holds credentials`, tier === 'ask');
+      else if (typeof ti.glob === 'string' && globNamesCredential(ti.glob)) raise('read_credentials', `the glob ${ti.glob} names credential files`, true);
     }
   } else if (tool === 'Bash' && typeof ti.command === 'string') {
     const parts = parseCommand(ti.command);
@@ -141,16 +174,16 @@ function railDecisions(input, root, cfg) {
         continue;
       }
       for (const part of parts) {
-        const what = matchRail(part, id, ctx);
-        if (what) {
-          raise(id, what);
+        const hit = matchRailTier(part, id, ctx);
+        if (hit) {
+          raise(id, hit.what, hit.ask);
           break;
         }
       }
     }
     for (const t of bashWriteTargets(parts, ctx)) if (!path.isAbsolute(t)) protectedPath(t);
   }
-  return { deny: denies[0] || null, ask: asks[0] || null };
+  return { deny: denies[0] || null, ask: asks[0] || null };  // each { text, kind, id }
 }
 
 function anchored(src) {
@@ -181,10 +214,17 @@ function warnIfLostTask(root, sessionId) {
 
 // A rail's ask, kept until the stage blocks have had their say. Outside the try, so an error after the rails decided
 // (for example a store that can't be read for the session) still shows it.
-let pendingAsk = null;
+let pendingAsk = null; // { text, kind, id }
 try {
   const input = await readStdinJson();
   const root = findRoot(input.cwd);
+  rec.root = root;
+  rec.sessionId = input.session_id || null;
+  rec.tool = String(input.tool_name || '');
+  {
+    const ti = input.tool_input || {};
+    rec.target = String(ti.file_path || ti.notebook_path || ti.path || ti.command || ti.pattern || '').slice(0, 200);
+  }
 
   // A config.yml that can't be read does not turn the guardrails off: they use the built-in defaults.
   let cfg0 = null;
@@ -208,12 +248,12 @@ try {
         if (typeof p === 'string' && p) {
           if (p === '~' || p.startsWith('~/')) p = path.join(os.homedir(), p.slice(1));
           if (isProtectedStorePath(storeDir(root), path.resolve(input.cwd || root, p))) {
-            deny(STORE_DENY);
+            deny(STORE_DENY, { kind: 'store', id: 'store' });
             process.exit(0);
           }
         }
       } else if (tool0 === 'Bash' && typeof ti0.command === 'string' && bashReachesProgress(ti0.command, storeDir(root))) {
-        deny(STORE_DENY);
+        deny(STORE_DENY, { kind: 'store', id: 'store' });
         process.exit(0);
       }
     } catch {
@@ -226,13 +266,13 @@ try {
   if (root && cfg0) {
     const d = railDecisions(input, root, cfg0);
     if (d.deny) {
-      deny(d.deny);
+      deny(d.deny.text, d.deny);
       process.exit(0);
     }
     pendingAsk = d.ask;
   }
   const finishAsk = () => {
-    if (pendingAsk) ask(pendingAsk);
+    if (pendingAsk) ask(pendingAsk.text, pendingAsk);
     quit();
   };
 
@@ -243,8 +283,10 @@ try {
     quit();
   }
 
+  touchOwner(session.task_dir, input.session_id);
   const manifest = readManifest(root, session.task_dir);
   if (!manifest) finishAsk();
+  if (manifest.abandoned) finishAsk(); // an abandoned task enforces nothing
   const wf = loadWorkflow(root, session.workflow);
 
   const tool = String(input.tool_name || '');
@@ -265,15 +307,19 @@ try {
   const vars = (s) => String(s).replaceAll('{task_dir}', session.task_dir);
   const denies = [];
   const warns = [];
+  let stageHit = null;
   const parts = command !== null ? parseCommand(command) : [];
   const actx = makeMatchCtx(root, input.cwd || root, cfg0);
 
   // Reproduce with fail-first on: the failing test has to be written there, so test files pass every tools block.
   const cur = currentStage(manifest);
+  // A side pass lets named files through the stage blocks (rails and protected paths still apply).
+  const side = activeSidePass(session);
   const testsAllowed = Boolean(cur) && failFirstLevel(cfg0, cur.id, wf.id) !== 'off';
   // Does a tools block stop a write to this repo-relative path?
   const pathBlocked = (b, p) => {
     if (testsAllowed && isTestPath(p)) return false;
+    if (side && side.files.includes(p)) return false;
     // {artifact_root} no longer exists (tasks live outside the repo), so old workflows' entries never match.
     const allow = (Array.isArray(b.allow_paths) ? b.allow_paths : [])
       .filter((g) => !String(g).includes('{artifact_root}'))
@@ -309,6 +355,7 @@ try {
       }
       if (!hit) continue;
       const what = isFileTool ? `${tool} on ${rel}` : bashPath !== null ? `writing ${bashPath} from Bash` : `"${command.slice(0, 80)}"`;
+      if (mode === 'block' && !stageHit) stageHit = { kind: 'stage', id: stage.id };
       const msg =
         `Shipline (${wf.name || wf.id} workflow, task ${manifest.task.slug}): ${what} needs the "${stage.name || stage.id}" stage to be done first. ` +
         `Finish it, then record it with: node .shipline/bin/stage.mjs advance.`;
@@ -318,15 +365,9 @@ try {
   }
 
   if (denies.length) {
-    emit({
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
-        permissionDecisionReason: denies[0] + ' Do not work around this; tell the developer what is missing.',
-      },
-    });
+    deny(denies[0] + ' Do not work around this; tell the developer what is missing.', stageHit);
   } else if (pendingAsk) {
-    ask(pendingAsk);
+    ask(pendingAsk.text, pendingAsk);
   } else if (warns.length) {
     emit({
       systemMessage: `Shipline reminder: ${warns[0]}`,
@@ -336,10 +377,12 @@ try {
   quit();
 } catch (e) {
   if (pendingAsk) {
-    emit({
-      systemMessage: `Shipline: ignoring a problem and continuing without enforcement. ${e && e.message ? e.message : e}`,
-      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: pendingAsk },
-    });
+    const note = `Shipline: ignoring a problem and continuing without enforcement. ${e && e.message ? e.message : e}`;
+    if (NON_INTERACTIVE()) {
+      emit({ systemMessage: note, hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `${pendingAsk.text} (non-interactive run: this needs a developer's approval)` } });
+    } else {
+      emit({ systemMessage: note, hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: pendingAsk.text } });
+    }
     process.exit(0);
   }
   failOpen(e);

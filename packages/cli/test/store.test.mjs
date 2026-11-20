@@ -192,7 +192,7 @@ describe('success criterion 2: a fresh install leaves the repo clean', () => {
     assert.equal(adv.code, 0, adv.stderr);
     const m = JSON.parse(readFileSync(path.join(taskDir, 'manifest.json'), 'utf8'));
     assert.deepEqual(m.stages.slice(0, 2).map((s) => s.status), ['skipped', 'done']);
-    assert.deepEqual(readdirSync(taskDir).sort(), ['feasibility.md', 'manifest.json']);
+    assert.deepEqual(readdirSync(taskDir).sort(), ['feasibility.md', 'manifest.json', 'owner.json']); // owner.json: who last worked on the task (D3)
     // Hooks ran too (state and a lost-task check) and wrote only to the store.
     hook(repo, 'session-start.mjs', { session_id: 's2', cwd: repo });
     hook(repo, 'guard.mjs', { session_id: 's2', cwd: repo, tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'src/a.js') } });
@@ -208,10 +208,12 @@ describe('success criterion 2: a fresh install leaves the repo clean', () => {
     const abs = path.join(storeOf(repo), 'tasks', 'fix-crash');
     const byName = stage(repo, ['resume', 'fix-crash'], 's2');
     assert.equal(byName.code, 0, byName.stderr);
-    assert.ok(byName.stdout.startsWith(`Resumed ${abs} (bugfix workflow).`), byName.stdout);
+    // s1 worked on the task a moment ago, so resume warns first (D3), then reports.
+    assert.ok(byName.stdout.startsWith('Another Claude session (s1)'), byName.stdout);
+    assert.ok(byName.stdout.includes(`Resumed ${abs} (bugfix workflow).`), byName.stdout);
     const byPath = stage(repo, ['resume', `${abs}/`], 's3');
     assert.equal(byPath.code, 0, byPath.stderr);
-    assert.ok(byPath.stdout.startsWith(`Resumed ${abs} (bugfix workflow).`), byPath.stdout);
+    assert.ok(byPath.stdout.includes(`Resumed ${abs} (bugfix workflow).`), byPath.stdout);
     assert.equal(JSON.parse(readFileSync(path.join(storeOf(repo), 'state', 's3.json'), 'utf8')).task_dir, abs);
     // The short status names the task; --verbose adds the full store path.
     const st = stage(repo, ['status', '--verbose'], 's3');

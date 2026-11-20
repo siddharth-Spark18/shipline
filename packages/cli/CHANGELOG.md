@@ -31,6 +31,41 @@ hook says so, and `upgrade` keeps `.shipline/bin/` at one version. **The hook co
   on repo files are now checked against stage `tools:` blocks like a Write. Indirect writes (interpreters, build
   tools) are still not detected.
 
+### Added (task lifecycle and dev-loop, part D)
+
+- **`/clear`, a new session or a second terminal keeps enforcement.** SessionStart binds a session that has no task to
+  the single open task on the current branch (not on a detached HEAD; several matches are listed and asked about). If
+  another Claude session worked on the task in the last 10 minutes, both are told.
+- **`stage.mjs abandon [--reason "..."]`** (the developer confirms). Abandoned tasks leave every list and the UI's
+  unfinished counts; `resume` brings one back. A title that matches an existing folder now gets `-2`, `-3`, ... instead
+  of failing.
+- **`stage.mjs side --files a,b --reason "..."`** (the developer confirms): a 30-minute pass that lets exactly those
+  files through the stage blocks. Rails and protected paths still apply. `side done` ends it.
+- **`stage.mjs explain`** prints the last denial or question of the session, the rule behind it and the way past it.
+- **`stage.mjs status --all`** lists every task in the store with its age; session start shows task ages and collapses
+  tasks idle longer than `stale_task_days` (default 14) into one count.
+- **Headless runs:** with `SHIPLINE_NONINTERACTIVE=1`, `non_interactive: deny` (the default) makes every command that
+  needs an answer fail with an explanation; `checks_pass` lets `advance` pass a `confirm_to_advance` stage when the
+  latest check passed on the current code (recorded as `approved_by: non_interactive`, noted in the PR summary).
+  Skip, accept, scope, abandon and side are never auto-approved, and guardrail asks become denies.
+- Setup: `non_interactive` and `stale_task_days` in the config form; the task panel shows abandoned tasks and another
+  active session.
+
+### Changed (part D)
+
+- When a task's last stage finishes, the session stops tracking it.
+- Credentials rail: names ending in `.example`, `.sample`, `.template` or `.dist` are never credentials; commands that
+  load a credential file into the environment (`source .env`, `--env-file .env`, `dotenv -e`, `export $(cat .env)`) and
+  reads of `.env.<name>` files other than local/prod ask instead of deny; `printenv NAME` and `env | grep NAME` are
+  allowed for non-secret names; Grep asks only when its glob names a credential file.
+- The Verify scope check diffs from the merge-base with the default branch (so a rebased branch shows only its own
+  files), and a newly added test file is not "sensitive".
+- One list of commit-creating git commands (`commit`, `merge --commit`, `cherry-pick`, `revert`, `am`); finishing a
+  conflicted merge, rebase or cherry-pick is allowed.
+- Worktrees: the repo root is the git toplevel of the call's cwd, and `.claude/worktrees/**` is not agent config. A
+  worktree has its own task store until the store is shared.
+- Small change no longer suggests the builder and qa-bug-hunter agents.
+
 ### Changed
 
 - **INTERFACE 2** (hook entries run `run-hook.mjs`; Bash writes count against stage blocks).

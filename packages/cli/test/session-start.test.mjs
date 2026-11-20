@@ -52,20 +52,20 @@ before(() => {
 
 after(() => removeDir(dir));
 
-test('a new session with two open tasks: output is byte-equal to the interface-1 hook', () => {
-  const { now, v1 } = both({ session_id: 'fresh', cwd: dir, hook_event_name: 'SessionStart' });
-  assert.equal(now.stdout, v1.stdout);
+test('a new session on the branch of exactly one open task is bound to it (D1) and told about the other session (D3)', () => {
+  const now = hook(dir, 'session-start.mjs', { session_id: 'fresh', cwd: dir, hook_event_name: 'SessionStart', source: 'clear' });
+  assert.equal(now.code, 0, now.stderr);
   const ctx = now.json.hookSpecificOutput.additionalContext;
   assert.equal(now.json.hookSpecificOutput.hookEventName, 'SessionStart');
   const lines = ctx.split('\n');
   assert.equal(lines[0], 'Shipline is installed. Session id: fresh (stage commands read $SHIPLINE_SESSION, or pass --session fresh).');
-  assert.equal(lines[1], 'Unfinished Shipline tasks (offer to resume; if several, list them and ask which):');
-  assert.deepEqual(lines.slice(2, 4).sort(), [
-    '- LL-12-add-export [feature]: feasibility done, next: questions (matches the current git branch, likely this one)',
-    '- fix-crash [bugfix]: nothing done yet, next: ticket', // the shipped workflows' stage is `ticket` since 0.10.0
-  ]);
-  assert.equal(lines[4], 'To resume: node .shipline/bin/stage.mjs resume <task folder>');
-  assert.equal(lines.length, 5);
+  assert.equal(lines[1], 'Shipline: continuing task LL-12-add-export (feature workflow), current stage "questions". Run: node .shipline/bin/stage.mjs status');
+  assert.match(lines[2], /^Another Claude session \(s1\) was working on this task \d+ min ago\. Both sessions now see it; avoid editing the same files\.$/);
+  assert.equal(lines.length, 3);
+  const state = JSON.parse(readFileSync(path.join(storeOf(dir), 'state', 'fresh.json'), 'utf8'));
+  assert.equal(state.task_dir, path.join(tasks, 'LL-12-add-export'));
+  assert.equal(state.workflow, 'feature');
+  assert.equal(JSON.parse(readFileSync(path.join(tasks, 'LL-12-add-export', 'owner.json'), 'utf8')).session, 'fresh');
 });
 
 test('a session already bound to a task: byte-equal', () => {
@@ -77,11 +77,12 @@ test('a session already bound to a task: byte-equal', () => {
   );
 });
 
-test('an odd session id and a branch no task uses: byte-equal', () => {
+test('an odd session id and a branch no task uses: the v1 listing, plus each task\'s age (D4)', () => {
   git(dir, 'switch', '-q', '-c', 'other');
   try {
     const { now, v1 } = both({ session_id: 'x/y z', cwd: dir });
-    assert.equal(now.stdout, v1.stdout);
+    assert.equal(now.stdout.replace(/ \(\d+d ago\)/g, ''), v1.stdout);
+    assert.match(now.json.hookSpecificOutput.additionalContext, /- fix-crash \[bugfix\]: nothing done yet, next: ticket \(0d ago\)/);
     assert.ok(!now.stdout.includes('matches the current git branch'));
   } finally {
     git(dir, 'switch', '-q', 'feature/LL-12-add-export');
@@ -89,18 +90,23 @@ test('an odd session id and a branch no task uses: byte-equal', () => {
 });
 
 test('the current hook reads the store, not artifact_root: with the mirror gone it still lists both tasks', () => {
-  const r = hook(dir, 'session-start.mjs', { session_id: 'fresh2', cwd: dir });
+  git(dir, 'switch', '-q', 'other');
   const saved = path.join(dir, 'docs');
   const tmp = path.join(dir, 'docs-moved');
-  cpSync(saved, tmp, { recursive: true });
   try {
+    const r = hook(dir, 'session-start.mjs', { session_id: 'fresh2', cwd: dir });
+    cpSync(saved, tmp, { recursive: true });
     run('rm', ['-rf', saved]);
     const again = hook(dir, 'session-start.mjs', { session_id: 'fresh2', cwd: dir });
     assert.equal(again.stdout, r.stdout);
     assert.match(again.json.hookSpecificOutput.additionalContext, /- fix-crash \[bugfix\]/);
+    assert.match(again.json.hookSpecificOutput.additionalContext, /- LL-12-add-export \[feature\]/);
   } finally {
-    cpSync(tmp, saved, { recursive: true });
-    run('rm', ['-rf', tmp]);
+    if (existsSync(tmp)) {
+      cpSync(tmp, saved, { recursive: true });
+      run('rm', ['-rf', tmp]);
+    }
+    git(dir, 'switch', '-q', 'feature/LL-12-add-export');
   }
 });
 

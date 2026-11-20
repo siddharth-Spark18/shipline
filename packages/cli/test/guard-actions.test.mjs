@@ -6,7 +6,7 @@ import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { hook, makeRepo, removeDir, stage, storeOf } from './helpers.mjs';
+import { git, hook, makeRepo, removeDir, run, stage, storeOf } from './helpers.mjs';
 import { ACTIONS, makeMatchCtx, matchAction, parseCommand } from '../templates/shipline/bin/lib.mjs';
 
 // `hold` (block) holds back every action until it is done; `soft` (warn) holds back deploys; `regex` (block)
@@ -352,5 +352,82 @@ stages:
     const r = sh('tw-s', 'cat > src/a.js');
     assert.ok(!denied(r));
     assert.match(r.json.systemMessage, /Shipline reminder: .*writing src\/a\.js from Bash/);
+  });
+});
+
+// ---------- 2.2.0, part D11: one list of commit-creating commands; concluding a conflicted operation is allowed ----------
+
+describe('D11: commit-creating git commands', () => {
+  let repo;
+  const SESSION = 'd11-s';
+  const sh = (command) => hook(repo, 'guard.mjs', { session_id: SESSION, cwd: repo, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } });
+  const isCommit = (command, r = repo) => {
+    const ctx = makeMatchCtx(r, r, {});
+    return parseCommand(command).some((p) => matchAction(p, 'commit', ctx));
+  };
+
+  before(() => {
+    repo = makeRepo({ commitInit: true });
+    writeFileSync(path.join(repo, '.shipline', 'workflows', 'acts.yml'), ACTIONS_WF);
+    const r = stage(repo, ['start', '--workflow', 'acts', '--title', 'held'], SESSION);
+    assert.equal(r.code, 0, r.stderr);
+  });
+  after(() => removeDir(repo));
+
+  test('commit, merge --commit, cherry-pick <rev>, revert <rev> and am create commits; a plain merge does not', () => {
+    for (const c of ['git commit -m x', 'git commit --amend', 'git merge --commit topic', 'git cherry-pick abc123', 'git cherry-pick -x abc123', 'git revert abc123', 'git am fix.patch', 'git -C sub commit -m x', 'cd sub && git am p.patch']) {
+      assert.ok(isCommit(c), c);
+    }
+    for (const c of ['git merge main', 'git merge topic', 'git cherry-pick --no-commit abc', 'git cherry-pick -n abc', 'git revert --no-commit abc', 'git cherry-pick --abort', 'git cherry-pick --continue', 'git revert --continue', 'git rebase --continue', 'git merge --continue', 'git am --continue', 'git am --abort', 'git status']) {
+      assert.ok(!isCommit(c), c);
+    }
+  });
+
+  test('held back by a stage actions block: cherry-pick, revert and am are denied; the --continue forms pass', () => {
+    for (const c of ['git cherry-pick abc123', 'git revert abc123', 'git am fix.patch', 'git commit -m x']) {
+      const r = sh(c);
+      assert.equal(decision(r), 'deny', c);
+    }
+    for (const c of ['git rebase --continue', 'git cherry-pick --continue', 'git revert --continue']) assert.equal(decision(sh(c)), null, c);
+  });
+
+  test('during a conflicted merge any `git commit` (including -m) is allowed; the rest stay held', () => {
+    git(repo, 'switch', '-q', '-c', 'topic');
+    writeFileSync(path.join(repo, 'src', 'a.js'), 'export const a = "topic";\n');
+    git(repo, 'commit', '-q', '-am', 'topic change');
+    git(repo, 'switch', '-q', 'main');
+    writeFileSync(path.join(repo, 'src', 'a.js'), 'export const a = "main";\n');
+    git(repo, 'commit', '-q', '-am', 'main change');
+    const merge = run('git', ['merge', 'topic'], { cwd: repo });
+    assert.notEqual(merge.code, 0, 'the merge conflicts');
+    try {
+      assert.ok(!isCommit('git commit --no-edit'));
+      assert.ok(!isCommit('git commit -m "Merge topic"'));
+      assert.equal(decision(sh('git commit --no-edit')), null);
+      assert.equal(decision(sh('git commit -am "Merge topic, resolved"')), null);
+      assert.equal(decision(sh('git merge --continue')), null);
+      assert.equal(decision(sh('git cherry-pick abc123')), 'deny', 'only `git commit` concludes an operation');
+    } finally {
+      git(repo, 'merge', '--abort');
+    }
+    // Not in progress any more: held back again.
+    assert.ok(isCommit('git commit -m x'));
+    assert.equal(decision(sh('git commit -m x')), 'deny');
+  });
+
+  test('the markers are read from the worktree\'s own git dir (a linked worktree)', () => {
+    const wt = path.join(repo, '..', `${path.basename(repo)}-wt`);
+    git(repo, 'worktree', 'add', '-q', wt, '-b', 'wt-branch');
+    try {
+      writeFileSync(path.join(wt, 'src', 'a.js'), 'export const a = "wt";\n');
+      git(wt, 'commit', '-q', '-am', 'wt change');
+      const r = run('git', ['merge', 'topic'], { cwd: wt });
+      assert.notEqual(r.code, 0, 'conflict in the worktree');
+      assert.ok(!isCommit('git commit -m x', wt), 'in progress in the worktree');
+      assert.ok(isCommit('git commit -m x', repo), 'not in progress in the main checkout');
+    } finally {
+      run('git', ['merge', '--abort'], { cwd: wt });
+      git(repo, 'worktree', 'remove', '--force', wt);
+    }
   });
 });

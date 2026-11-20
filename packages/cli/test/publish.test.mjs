@@ -220,8 +220,8 @@ describe('known-hashes.json', () => {
   // workflow designer: new files (the skill, workflow-check.mjs, bin/shipped/*) and new hashes for stage.mjs, lib.mjs,
   // the shipline-setup skill and the CLAUDE.md block. 2.1.0 adds the install_packages rail and fail_first: new hashes
   // for ci-check.mjs, guard.mjs, lib.mjs, stage.mjs and the shipline-setup skill (the CLAUDE.md block is unchanged). 2.2.0 adds
-  // run-hook.mjs and new hashes for guard.mjs, lib.mjs, stage.mjs, the qa-bug-hunter agent, the settings part and the
-  // CLAUDE.md block.
+  // run-hook.mjs and new hashes for guard.mjs, lib.mjs, stage.mjs, ci-check.mjs, session-start.mjs, prompt-submit.mjs, the
+  // qa-bug-hunter agent, the shipline-workflow skill, the shipped small workflow, the settings part and the CLAUDE.md block.
   test('keeps one 1.0.0 hash per path that existed in 1.0.0, and records the later changes', () => {
     const current = templateHashes();
     assert.deepEqual(Object.keys(KNOWN).sort(), Object.keys(current).sort());
@@ -229,12 +229,19 @@ describe('known-hashes.json', () => {
     const LIB = '.shipline/bin/lib.mjs';
     const NEW_IN_2 = (p) => /^\.shipline\/bin\/(shipped\/|workflow-check\.mjs$)|^\.claude\/skills\/shipline-workflow-designer\//.test(p);
     const CHANGED_IN_2 = ['CLAUDE.md#shipline'];
-    const CHANGED_IN_22 = ['.claude/agents/qa-bug-hunter.md', '.claude/settings.json#shipline'];
+    const CHANGED_IN_22 = ['.claude/agents/qa-bug-hunter.md', '.claude/settings.json#shipline', '.claude/skills/shipline-workflow/SKILL.md', '.shipline/bin/prompt-submit.mjs', '.shipline/bin/session-start.mjs'];
     const CHANGED_IN_21 = ['.shipline/bin/ci-check.mjs', '.shipline/bin/guard.mjs', '.shipline/bin/stage.mjs'];
     for (const [p, byHash] of Object.entries(KNOWN)) {
       assert.ok(Object.values(byHash).every((v) => ['1.0.0', '1.1.0', '1.3.0', '2.0.0', '2.1.0', '2.2.0'].includes(v)), p);
       if (p === '.shipline/bin/run-hook.mjs') {
         assert.deepEqual(byHash, { [current[p]]: '2.2.0' }, p);
+        continue;
+      }
+      if (p === '.shipline/bin/shipped/small.yml') {
+        // 2.0.0 shipped it; 2.2.0 dropped the agents from its stages.
+        assert.equal(Object.keys(byHash).length, 2, p);
+        assert.equal(byHash[current[p]], '2.2.0', p);
+        assert.ok(Object.values(byHash).includes('2.0.0'), p);
         continue;
       }
       if (NEW_IN_2(p)) {
@@ -251,8 +258,9 @@ describe('known-hashes.json', () => {
       assert.equal(Object.keys(KNOWN[p]).length, 2, p);
       assert.equal(KNOWN[p][current[p]], '2.2.0', p);
     }
-    assert.equal(Object.keys(KNOWN['.shipline/bin/ci-check.mjs']).length, 2);
-    assert.equal(KNOWN['.shipline/bin/ci-check.mjs'][current['.shipline/bin/ci-check.mjs']], '2.1.0');
+    assert.equal(Object.keys(KNOWN['.shipline/bin/ci-check.mjs']).length, 3);
+    assert.equal(KNOWN['.shipline/bin/ci-check.mjs'][current['.shipline/bin/ci-check.mjs']], '2.2.0');
+    assert.ok(Object.values(KNOWN['.shipline/bin/ci-check.mjs']).includes('2.1.0'));
     assert.equal(Object.keys(KNOWN['.shipline/bin/guard.mjs']).length, 3);
     assert.equal(KNOWN['.shipline/bin/guard.mjs'][current['.shipline/bin/guard.mjs']], '2.2.0');
     assert.equal(Object.keys(KNOWN['.shipline/bin/stage.mjs']).length, 4);
@@ -278,7 +286,7 @@ describe('known-hashes.json', () => {
       let checked = 0;
       for (const [p, h] of Object.entries(v.files)) {
         if (!KNOWN[p]) continue; // files known-hashes.json doesn't track (none expected beyond the team-owned ones)
-        const since22 = /^\.shipline\/bin\/(stage|lib|guard|run-hook)\.mjs$|^\.claude\/agents\/qa-bug-hunter\.md$|^\.claude\/settings\.json#shipline$|^CLAUDE\.md#shipline$/.test(p);
+        const since22 = /^\.shipline\/bin\/(stage|lib|guard|run-hook|ci-check|session-start|prompt-submit)\.mjs$|^\.shipline\/bin\/shipped\/small\.yml$|^\.claude\/skills\/shipline-workflow\/SKILL\.md$|^\.claude\/agents\/qa-bug-hunter\.md$|^\.claude\/settings\.json#shipline$|^CLAUDE\.md#shipline$/.test(p);
         const since21 = /^\.shipline\/bin\/(stage|lib|guard|ci-check)\.mjs$|^\.claude\/skills\/shipline-setup\//.test(p);
         const since2 = /^\.shipline\/bin\/(shipped\/|workflow-check\.mjs$)|^\.claude\/skills\/shipline-workflow-designer\/|^CLAUDE\.md#shipline$/.test(p);
         assert.equal(KNOWN[p][h], since22 ? '2.2.0' : since21 ? '2.1.0' : since2 ? '2.0.0' : '1.0.0', p);

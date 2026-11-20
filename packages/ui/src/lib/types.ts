@@ -231,6 +231,10 @@ export interface ConfigModel {
   tracker?: string | null;
   /** `standard` (the default) asks at every confirm_to_advance stage; `light` only at checkpoint stages. */
   confirmations?: 'standard' | 'light' | null;
+  /** What a SHIPLINE_NONINTERACTIVE=1 run does at a question: `deny` (the default) or `checks_pass`. */
+  non_interactive?: 'deny' | 'checks_pass' | null;
+  /** Session start lists tasks idle longer than this many days as a count only (default 14). */
+  stale_task_days?: number | null;
   commands?: {
     test?: string | null;
     lint?: string | null;
@@ -505,6 +509,10 @@ export interface Task {
   stages: TaskStage[];
   files: TaskFile[];
   checks: TaskChecks | null;
+  /** Set when the task was abandoned (`stage.mjs abandon`); `resume` clears it. */
+  abandoned?: { at: string | null; reason: string } | null;
+  /** From the task's owner.json; `active` means seen in the last 10 minutes. */
+  owner?: { session: string; last_seen: string; active: boolean } | null;
 }
 
 export type ChangeStatus = 'added' | 'modified' | 'deleted' | 'renamed';

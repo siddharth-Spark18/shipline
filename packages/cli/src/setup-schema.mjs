@@ -14,9 +14,9 @@ const TEMPLATES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 
 // Keys the form edits. Anything else in a file is shown as "other fields (kept)".
 export const KNOWN_FIELDS = {
   config: {
-    top: ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup', 'rails', 'rails_commands', 'protected_paths', 'scope_check', 'confirmations', 'fail_first'],
+    top: ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup', 'rails', 'rails_commands', 'protected_paths', 'scope_check', 'confirmations', 'fail_first', 'non_interactive', 'stale_task_days'],
     commands: ['test', 'lint', 'build'],
-    ci: ['missing_block', 'skip_label', 'stale_checks'],
+    ci: ['missing_block', 'skip_label', 'stale_checks', 'allow_non_interactive'],
     rails: ['force_push_default', 'push_default', 'pipe_to_shell', 'print_credentials', 'read_credentials', 'deploy', 'migrate', 'install_packages', 'agent_config'],
     rails_commands: ['deploy', 'migrate', 'install_packages'],
     scope_check: ['enabled', 'sensitive_extra'],
@@ -37,6 +37,7 @@ export const DEFAULT_CI = { missing_block: 'fail-unless-label', skip_label: 'shi
 const SKIP_LABEL_MAX = 50;
 export const TRACKERS = ['none', 'jira', 'github'];
 export const CONFIRMATIONS = ['standard', 'light'];
+export const NON_INTERACTIVE = ['deny', 'checks_pass'];
 export const RAIL_IDS = KNOWN_FIELDS.config.rails;
 export const RAIL_LEVELS = ['deny', 'ask', 'off'];
 export const FAIL_FIRST_LEVELS = ['off', 'note', 'section', 'proof'];
@@ -76,6 +77,12 @@ export function validateConfig(model, { skills = null, workflows = null } = {}) 
   if (model.confirmations !== undefined && model.confirmations !== null && model.confirmations !== '' && !CONFIRMATIONS.includes(model.confirmations)) {
     out.push(err('confirmations', `must be one of ${CONFIRMATIONS.join(', ')}`));
   }
+  if (model.non_interactive !== undefined && model.non_interactive !== null && model.non_interactive !== '' && !NON_INTERACTIVE.includes(model.non_interactive)) {
+    out.push(err('non_interactive', `must be one of ${NON_INTERACTIVE.join(', ')}`));
+  }
+  if (model.stale_task_days !== undefined && model.stale_task_days !== null && model.stale_task_days !== '' && !(Number.isInteger(model.stale_task_days) && model.stale_task_days >= 1)) {
+    out.push(err('stale_task_days', 'must be a whole number, 1 or more'));
+  }
   const sk = model.skills;
   if (sk !== undefined && sk !== null) {
     if (!Array.isArray(sk)) out.push(err('skills', 'must be a list of skill names'));
@@ -99,6 +106,8 @@ export function validateConfig(model, { skills = null, workflows = null } = {}) 
       if (sc !== undefined && sc !== null && !CI_STALE_CHECKS.includes(sc)) {
         out.push(err('ci.stale_checks', `must be one of ${CI_STALE_CHECKS.join(', ')}`));
       }
+      const ani = ci.allow_non_interactive;
+      if (ani !== undefined && ani !== null && typeof ani !== 'boolean') out.push(err('ci.allow_non_interactive', 'must be true or false'));
       const sl = ci.skip_label;
       if (sl !== undefined && sl !== null) {
         if (typeof sl !== 'string' || sl.trim() === '') out.push(err('ci.skip_label', 'must be a non-empty label name'));

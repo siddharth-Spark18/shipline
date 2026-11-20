@@ -257,6 +257,6 @@ describe('compareInterface', () => {
   });
 
   test('MISSING_BEFORE has the interface-2 entry', () => {
-    assert.deepEqual(MISSING_BEFORE, [{ interface: 2, missing: 'hook crash warnings and Bash write blocking' }]);
+    assert.deepEqual(MISSING_BEFORE, [{ interface: 2, missing: 'hook crash warnings, Bash write blocking, task auto-bind, abandon, side pass, explain and status --all' }]);
   });
 });

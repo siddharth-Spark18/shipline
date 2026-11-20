@@ -114,13 +114,17 @@ const STALE_TEXT =
 for (const sc of wf.stages) {
   const s = findStage(ranStages, sc.id);
   const finished = s && (s.status === 'done' || (s.status === 'skipped' && (s.confirmed === 'answer' || s.confirmed === 'auto')));
+  const headless = s && s.confirmed === 'non_interactive' && cfg.ci.allow_non_interactive === true;
   if (stageEnforcement(sc) === 'block' && !finished) {
     problems.push(`Stage "${sc.id}" is a block stage and is not done${s ? ` (it is ${s.status})` : ' (it is missing from the summary)'}.`);
   }
-  if (needsAnswer(sc, cfg) && s && s.status === 'done' && s.confirmed !== 'answer') {
+  if (needsAnswer(sc, cfg) && s && s.status === 'done' && s.confirmed !== 'answer' && !headless) {
     problems.push(`Stage "${sc.id}" needs the developer's confirmation, but the summary doesn't show their answer.`);
   }
 }
+
+// Stages a headless run advanced on passing checks (accepted only with ci.allow_non_interactive).
+const headlessStages = cfg.ci.allow_non_interactive === true ? ranStages.filter((s) => s.confirmed === 'non_interactive').map((s) => s.id) : [];
 
 // ---------- checks (v2 summaries) ----------
 const checks = data.checks && typeof data.checks === 'object' && Array.isArray(data.checks.results) ? data.checks : null;
@@ -187,7 +191,7 @@ if (data.v === 1 || data.v === undefined) {
 if (staleMessage && cfg.ci.stale_checks === 'fail') problems.push(staleMessage);
 else if (staleMessage) warning(staleMessage);
 
-const label = { answer: 'your answer', auto: 'auto' };
+const label = { answer: 'your answer', auto: 'auto', non_interactive: 'auto (non-interactive)' };
 function cell0(v) {
   return v === undefined || v === null ? '?' : String(v).replace(/[|\r\n]/g, ' ');
 }
@@ -203,6 +207,7 @@ summaryOut(
     ...(failFirstCell !== null ? [`| Fail-first | ${cell(failFirstCell)} | \u2014 |`] : []),
     ...(scopeSensitive.length ? ['', '<details><summary>Test, lint and CI files edited</summary>', '', ...scopeSensitive.map((f) => `- \`${cell(f)}\``), '', '</details>'] : []),
     ...(scopeOutside && scopeOutside.length ? ['', '<details><summary>Files outside the plan</summary>', '', ...scopeOutside.map((f) => `- \`${cell(f)}\``), '', '</details>'] : []),
+    ...(headlessStages.length ? ['', `Advanced without a developer answer (checks passed): ${headlessStages.map(cell).join(', ')}`] : []),
     ...(problems.length ? ['', ...problems.map((p) => `- ${p}`)] : []),
   ].join('\n'),
 );

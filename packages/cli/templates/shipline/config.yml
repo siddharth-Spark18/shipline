@@ -27,6 +27,7 @@ skills: []
 # Optional. The pull-request check (.github/workflows/shipline.yml, added from `init` or Setup, CI check) reads this.
 # missing_block: what happens when the PR description has no Shipline summary: fail-unless-label | warn | fail
 # stale_checks: what happens when the checks in the summary ran on different code than the PR's: warn | fail
+# allow_non_interactive: true accepts stages that a headless run advanced on passing checks (non_interactive: checks_pass); default false
 # The check runs the checker and reads this file from the PR's base branch, so a PR can't relax its own check
 # (the PR that first adds Shipline runs its own copy). Branch protection and CODEOWNERS close the rest (README, CI check).
 ci:
@@ -110,6 +111,14 @@ fail_first:
 scope_check:
   enabled: true
   sensitive_extra: []
+
+# Optional. Headless runs (`claude -p`, CI): set SHIPLINE_NONINTERACTIVE=1 and nothing can ask the developer.
+# non_interactive: deny (the default) refuses every command that needs an answer; checks_pass lets `advance` go through
+# on a confirm_to_advance stage when the latest `check` passed on the current code. skip, accept, scope, abandon and
+# side are never auto-approved. Guardrail asks become denies in such a run.
+non_interactive: deny
+# Session start lists tasks idle longer than this many days as a count only (`stage.mjs status --all` shows them).
+stale_task_days: 14
 
 # Set to `done` by /shipline-setup (a top-level key `setup: done`) once the rules have been tailored to this repo.
 # Until then Shipline reminds you that it is using its default rules.

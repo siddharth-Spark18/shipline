@@ -24,8 +24,17 @@ const readText = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : null
 
 // Line diff (LCS) of two texts, printed with 2 lines of context. Returns indented lines.
 function lineDiff(a, b) {
-  const x = a.split('\n');
-  const y = b.split('\n');
+  let x = a.split('\n');
+  let y = b.split('\n');
+  // Lines both texts share at the start and end are context only: trim them so a few edits in a long file still diff.
+  let head = 0;
+  while (head < x.length && head < y.length && x[head] === y[head]) head++;
+  let tail = 0;
+  while (tail < x.length - head && tail < y.length - head && x[x.length - 1 - tail] === y[y.length - 1 - tail]) tail++;
+  const pre = x.slice(Math.max(0, head - 2), head);
+  const post = x.slice(x.length - tail, x.length - tail + 2);
+  x = x.slice(head, x.length - tail);
+  y = y.slice(head, y.length - tail);
   if (x.length * y.length > 4_000_000) return ['    (diff too large to show)'];
   const w = y.length + 1;
   const dp = new Uint32Array((x.length + 1) * w);
@@ -34,7 +43,7 @@ function lineDiff(a, b) {
       dp[i * w + j] = x[i] === y[j] ? dp[(i + 1) * w + j + 1] + 1 : Math.max(dp[(i + 1) * w + j], dp[i * w + j + 1]);
     }
   }
-  const ops = [];
+  const ops = pre.map((l) => [' ', l]);
   let i = 0;
   let j = 0;
   while (i < x.length && j < y.length) {
@@ -44,6 +53,7 @@ function lineDiff(a, b) {
   }
   while (i < x.length) ops.push(['-', x[i++]]);
   while (j < y.length) ops.push(['+', y[j++]]);
+  for (const l of post) ops.push([' ', l]);
   const show = new Array(ops.length).fill(false);
   ops.forEach(([t], k) => {
     if (t === ' ') return;

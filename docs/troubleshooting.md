@@ -13,8 +13,11 @@ Common problems and what to do.
   `npx @forgeyard/shipline upgrade` (add `--force` to replace edited scripts), or fix the error it quotes.
 - **`upgrade` says ".shipline/bin/ has local edits".** The scripts in `.shipline/bin/` must be upgraded together.
   Save your edits, run `upgrade --force`, then re-apply them. See [Upgrade and uninstall](install.md#upgrade-and-uninstall).
-- **A tool call was denied.** A `block` stage isn't done yet. Finish that stage or tell the developer; don't
-  work around it.
+- **A tool call was denied.** A `block` stage isn't done yet, or a guardrail fired. Run
+  `node .shipline/bin/stage.mjs explain`: it shows the last denial or question of the session, the rule behind it and the
+  way past it. Finish that stage, use a side pass for an unrelated edit, or tell the developer; don't work around it.
+- **A task started in the main checkout isn't visible in a Claude Code worktree.** Each worktree has its own task store
+  until the store is shared between worktrees; start or resume the task from the worktree.
 - **"Shipline is already initialized".** `init` found `.shipline/`, the `CLAUDE.md` block or the hooks. To
   change agents and skills use the UI (Setup, Agents & skills); to update use `upgrade`; to start over use
   `uninstall`, then `init`.

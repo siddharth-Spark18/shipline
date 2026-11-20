@@ -137,7 +137,39 @@ export function parseYaml(text) {
 
 // ---------- repo and config ----------
 
+// The repo root: the git toplevel of `start` (the call's cwd) when it holds .shipline/config.yml (so a worktree is its own
+// root), else the walk up from CLAUDE_PROJECT_DIR (or `start`). The git call is skipped when `start` is CLAUDE_PROJECT_DIR.
+// The root keeps the spelling of `start` (a symlinked cwd stays symlinked), so paths under it still compare.
+function cwdToplevel(start) {
+  const cwd = path.resolve(start);
+  const proj = process.env.CLAUDE_PROJECT_DIR;
+  if (proj && path.resolve(proj) === cwd) return null;
+  const top = gitOut(cwd, ['rev-parse', '--show-toplevel']);
+  if (!top) return null;
+  let realTop;
+  let realCwd;
+  try {
+    realTop = realpathSync(top);
+    realCwd = realpathSync(cwd);
+  } catch {
+    return null;
+  }
+  const rel = path.relative(realTop, realCwd);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  let dir = cwd;
+  for (let n = rel ? rel.split(path.sep).length : 0; n > 0; n--) dir = path.dirname(dir);
+  return existsSync(path.join(dir, '.shipline', 'config.yml')) ? dir : null;
+}
+
 export function findRoot(start) {
+  if (start) {
+    try {
+      const top = cwdToplevel(start);
+      if (top) return top;
+    } catch {
+      // Fall back to the walk below.
+    }
+  }
   let dir = path.resolve(process.env.CLAUDE_PROJECT_DIR || start || process.cwd());
   for (;;) {
     if (existsSync(path.join(dir, '.shipline', 'config.yml'))) return dir;
@@ -158,7 +190,7 @@ const DEFAULT_CONFIG = {
 export const CI_MISSING_BLOCK = ['fail-unless-label', 'warn', 'fail'];
 // stale_checks: what ci-check does when the checks in the summary ran on different code than the PR's.
 export const CI_STALE_CHECKS = ['warn', 'fail'];
-export const DEFAULT_CI = { missing_block: 'fail-unless-label', skip_label: 'shipline:skip', stale_checks: 'warn' };
+export const DEFAULT_CI = { missing_block: 'fail-unless-label', skip_label: 'shipline:skip', stale_checks: 'warn', allow_non_interactive: false };
 
 // Guardrails (config.yml `rails`, `rails_commands`, `protected_paths`, `scope_check`). A rail is deny | ask | off.
 export const RAIL_IDS = ['force_push_default', 'push_default', 'pipe_to_shell', 'print_credentials', 'read_credentials', 'deploy', 'migrate', 'install_packages', 'agent_config'];
@@ -185,6 +217,7 @@ export const DEFAULT_PROTECTED_PATHS = [
   'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb', 'poetry.lock', 'uv.lock', 'Pipfile.lock',
   'Cargo.lock', 'go.sum', 'Gemfile.lock', 'composer.lock',
 ];
+export const NON_INTERACTIVE_POLICIES = ['deny', 'checks_pass'];
 // The named actions a stage block can hold back (`blocks: [{ actions: [...] }]`).
 export const ACTIONS = ['commit', 'push', 'pr', 'merge', 'release', 'deploy', 'migrate'];
 
@@ -223,6 +256,7 @@ function normalizeConfig(raw) {
     missing_block: CI_MISSING_BLOCK.includes(ci.missing_block) ? ci.missing_block : DEFAULT_CI.missing_block,
     skip_label: typeof ci.skip_label === 'string' && ci.skip_label.trim() ? ci.skip_label.trim() : DEFAULT_CI.skip_label,
     stale_checks: CI_STALE_CHECKS.includes(ci.stale_checks) ? ci.stale_checks : DEFAULT_CI.stale_checks,
+    allow_non_interactive: ci.allow_non_interactive === true,
   };
   // Guardrails: a missing or unknown rail or value uses its default (`setup-schema` warns about those).
   const rails = isObj(cfg.rails) ? cfg.rails : {};
@@ -236,6 +270,10 @@ function normalizeConfig(raw) {
     workflows: Array.isArray(ff.workflows) ? strList(ff.workflows) : [...DEFAULT_FAIL_FIRST.workflows],
   };
   cfg.protected_paths = strList(cfg.protected_paths);
+  // non_interactive: what a SHIPLINE_NONINTERACTIVE=1 run does at a question (deny | checks_pass); stale_task_days: session
+  // start lists tasks idle longer than this as a count only.
+  cfg.non_interactive = NON_INTERACTIVE_POLICIES.includes(cfg.non_interactive) ? cfg.non_interactive : 'deny';
+  cfg.stale_task_days = Number.isInteger(cfg.stale_task_days) && cfg.stale_task_days >= 1 ? cfg.stale_task_days : 14;
   const sc = isObj(cfg.scope_check) ? cfg.scope_check : {};
   cfg.scope_check = { enabled: sc.enabled !== false, sensitive_extra: strList(sc.sensitive_extra) };
   return cfg;
@@ -432,9 +470,12 @@ export const CONFIRM_OPTIONS = {
   skip: { yes: 'Skip', no: "Don't skip" },
   accept: { yes: 'Finish anyway', no: 'Not yet' },
   scope: { yes: 'Finish anyway', no: 'Not yet' },
+  abandon: { yes: 'Abandon', no: 'Keep it' },
+  side: { yes: 'Allow', no: "Don't allow" },
 };
 
-// The single source of the exact AskUserQuestion text. kind is 'advance', 'skip', 'accept' or 'scope'.
+// The single source of the exact AskUserQuestion text. kind is 'advance', 'skip', 'accept', 'scope', 'abandon' or 'side'.
+// For 'abandon', extra is { reason }; for 'side', { files, reason } (slug is the task folder name).
 // For 'accept', extra is { names: [failed command names], fingerprint, ran_at } of the check run in question.
 // For 'scope', extra is { sensitive: n, outside: m, fingerprint, ran_at } (counts of test/lint/CI files and files outside the plan).
 export function confirmQuestion(stage, kind, slug, extra = {}) {
@@ -446,6 +487,12 @@ export function confirmQuestion(stage, kind, slug, extra = {}) {
   else if (kind === 'scope') {
     const run = extra.fingerprint ? String(extra.fingerprint).slice(0, 8) : extra.ran_at || '';
     question = `Finish "${stage}" in task ${slug}? This change edits ${extra.sensitive || 0} test/lint/CI files and ${extra.outside || 0} files outside the plan (run ${run}).`;
+  } else if (kind === 'abandon') {
+    // The question embeds its arguments, so an answer only authorises the identical rerun.
+    question = `Abandon task ${slug}? Reason: ${extra.reason || 'none'}`;
+  } else if (kind === 'side') {
+    const files = Array.isArray(extra.files) ? [...extra.files].sort().join(', ') : '';
+    question = `Allow edits to ${files} outside the stages of task ${slug}? Reason: ${extra.reason || 'none'}`;
   } else {
     const names = Array.isArray(extra.names) ? extra.names.join(', ') : '';
     const run = extra.fingerprint ? String(extra.fingerprint).slice(0, 8) : extra.ran_at || '';
@@ -536,31 +583,113 @@ export function failFirstLevel(cfg, stageId, wfId) {
 
 // ---------- tasks and git ----------
 
-// Every task folder in the store whose manifest still has a stage that isn't done or skipped.
-export function listOpenTasks(root) {
-  const open = [];
+// Every task folder in the store, open, done or abandoned: { dir, slug, workflow, branch, done, next, state, abandoned,
+// newest (ms of the latest stage update, task update or owner heartbeat; 0 when unknown), owner }.
+export function listAllTasks(root) {
+  const all = [];
   const base = tasksDir(root);
-  if (!existsSync(base)) return open;
+  if (!existsSync(base)) return all;
   for (const d of readdirSync(base, { withFileTypes: true })) {
     if (!d.isDirectory()) continue;
     let m;
+    const dir = path.join(base, d.name);
     try {
-      m = readManifest(root, path.join(base, d.name));
+      m = readManifest(root, dir);
     } catch {
       continue; // unreadable manifest: skip, stage.mjs status will report it
     }
-    if (!m || !Array.isArray(m.stages) || m.stages.every((s) => isDone(s.status))) continue;
+    if (!m || !Array.isArray(m.stages) || !m.task) continue;
     const cur = currentStage(m);
-    open.push({
-      dir: path.join(base, d.name),
+    const owner = readOwner(dir);
+    const times = [...m.stages.map((s) => Date.parse(s && s.updated)), Date.parse(m.task.updated), owner ? Date.parse(owner.last_seen) : NaN].filter((n) => Number.isFinite(n));
+    const abandoned = m.abandoned && typeof m.abandoned === 'object' ? m.abandoned : null;
+    all.push({
+      dir,
       slug: d.name,
       workflow: m.task.workflow,
       branch: m.task.branch,
       done: m.stages.filter((s) => s.status === 'done').map((s) => s.id),
       next: cur ? cur.id : null,
+      state: abandoned ? 'abandoned' : cur ? 'open' : 'done',
+      abandoned,
+      newest: times.length ? Math.max(...times) : 0,
+      owner,
     });
   }
-  return open;
+  return all;
+}
+
+// Every task folder in the store whose manifest still has a stage that isn't done or skipped, and that isn't abandoned.
+export function listOpenTasks(root) {
+  return listAllTasks(root).filter((t) => t.state === 'open');
+}
+
+// ---------- ownership, decisions, binding ----------
+
+export const OWNER_ACTIVE_MS = 10 * 60 * 1000;
+export const OWNER_THROTTLE_MS = 60 * 1000;
+
+// tasks/<dir>/owner.json: { session, last_seen }. Missing or unreadable means no owner.
+export function readOwner(taskDir) {
+  try {
+    const o = JSON.parse(readFileSync(path.join(taskDir, 'owner.json'), 'utf8'));
+    return isObj(o) && typeof o.session === 'string' ? o : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeOwner(taskDir, sessionId) {
+  writeJson(path.join(taskDir, 'owner.json'), { session: safeId(sessionId), last_seen: new Date().toISOString() });
+}
+
+// The recorded owner when it is another session that was seen in the last 10 minutes: { session, minutes }, else null.
+export function activeOtherOwner(taskDir, sessionId) {
+  const o = readOwner(taskDir);
+  if (!o || o.session === safeId(sessionId)) return null;
+  const age = Date.now() - Date.parse(o.last_seen);
+  return Number.isFinite(age) && age < OWNER_ACTIVE_MS ? { session: o.session, minutes: Math.max(0, Math.round(age / 60000)) } : null;
+}
+
+export function ownerWarning(other) {
+  return `Another Claude session (${other.session.slice(0, 8)}) was working on this task ${other.minutes} min ago. Both sessions now see it; avoid editing the same files.`;
+}
+
+// Writes the heartbeat only when the recorded one is older than 60 s (or absent). Never throws.
+export function touchOwner(taskDir, sessionId) {
+  try {
+    const o = readOwner(taskDir);
+    if (o && Date.now() - Date.parse(o.last_seen) < OWNER_THROTTLE_MS) return;
+    writeOwner(taskDir, sessionId);
+  } catch {
+    // A heartbeat never blocks a call.
+  }
+}
+
+// Binds a session to a task: the state file `stage.mjs resume` writes.
+export function bindSession(root, sessionId, taskDir, workflow) {
+  writeJson(statePath(root, sessionId), { session_id: sessionId, workflow, task_dir: taskDir, started: new Date().toISOString() });
+}
+
+export function decisionPath(root, sessionId) {
+  return path.join(stateDir(root), `${safeId(sessionId)}.decision.json`);
+}
+
+// The last guard deny/ask of a session, or null (missing or corrupt).
+export function readDecision(root, sessionId) {
+  try {
+    const d = JSON.parse(readFileSync(decisionPath(root, sessionId), 'utf8'));
+    return isObj(d) ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+// The session's side pass when it has one that hasn't expired, else null.
+export function activeSidePass(session) {
+  const sp = session && session.side_pass;
+  if (!isObj(sp) || !Array.isArray(sp.files)) return null;
+  return Date.parse(sp.expires_at) > Date.now() ? sp : null;
 }
 
 // The current git branch, or '' when this isn't a git repo, has no commits yet, or git fails.
@@ -927,6 +1056,7 @@ function parseInner(text, depth, cd0) {
       psubShell.psubFrom = made[0];
       psubShell = null;
     }
+    if (piped && made.length) piped.pipedTo = made[0];
     for (const p of made) {
       if (p.tool === 'cd' && p.args[0] && !p.args[0].startsWith('-')) cd = composeCd(cd, p.args[0]);
       parts.push(p);
@@ -1013,21 +1143,31 @@ export function repoRelative(root, abs) {
   return rel.split(path.sep).join('/');
 }
 
-// Credential files, matched without regard to case: .env (not the .example/.sample/.template ones), .envrc, keys,
-// certificate bundles, ssh/aws/docker/gcloud/kube config, and the token files .netrc, .git-credentials, .pgpass,
-// .npmrc, .pypirc and credentials.json. An argument inside ~/.ssh, ~/.aws or ~/.docker, or the folder itself, counts.
-export function isCredentialPath(file, ctx, part) {
-  if (typeof file !== 'string' || !file) return false;
+// Credential files, matched without regard to case: .env, .envrc, keys, certificate bundles, ssh/aws/docker/gcloud/kube
+// config, and the token files .netrc, .git-credentials, .pgpass, .npmrc, .pypirc and credentials.json. A name ending in
+// .example, .sample, .template or .dist is a sample, never a credential. An argument inside ~/.ssh, ~/.aws or ~/.docker,
+// or the folder itself, counts.
+// credentialTier: 'deny' for a credential path, 'ask' for a `.env.<name>` file that is probably not a real secret
+// (not local, prod or production), null for anything else.
+const SAMPLE_SUFFIX = /\.(example|sample|template|dist)$/;
+export function credentialTier(file, ctx, part) {
+  if (typeof file !== 'string' || !file) return null;
   const abs = resolveTarget(ctx, part || null, file).replace(/\\/g, '/').toLowerCase();
   const name = path.posix.basename(abs);
-  if (/^\.env(\..+)?$/.test(name) && !/^\.env\.(example|sample|template)$/.test(name)) return true;
-  if (/\.(pem|key)$/.test(name) || /^id_(rsa|ed25519)/.test(name)) return !/\.pub$/.test(name);
-  if (/\.(p12|pfx)$/.test(name)) return true;
-  if (['.envrc', '.netrc', '.git-credentials', '.pgpass', '.npmrc', '.pypirc', 'credentials.json'].includes(name)) return true;
-  if (abs.endsWith('/.docker/config.json')) return true;
+  if (!SAMPLE_SUFFIX.test(name)) {
+    if (/^\.env(\..+)?$/.test(name)) return name === '.env' || /local|prod/.test(name.slice(5)) ? 'deny' : 'ask';
+    if (/\.(pem|key)$/.test(name) || /^id_(rsa|ed25519)/.test(name)) return /\.pub$/.test(name) ? null : 'deny';
+    if (/\.(p12|pfx)$/.test(name)) return 'deny';
+    if (['.envrc', '.netrc', '.git-credentials', '.pgpass', '.npmrc', '.pypirc', 'credentials.json'].includes(name)) return 'deny';
+    if (abs.endsWith('/.docker/config.json')) return 'deny';
+  }
   const home = homeOf().replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
   const inHome = (sub) => abs === `${home}/${sub}` || abs.startsWith(`${home}/${sub}/`);
-  return inHome('.ssh') || inHome('.aws') || inHome('.docker') || inHome('.config/gcloud') || abs === `${home}/.kube/config`;
+  return inHome('.ssh') || inHome('.aws') || inHome('.docker') || inHome('.config/gcloud') || abs === `${home}/.kube/config` ? 'deny' : null;
+}
+
+export function isCredentialPath(file, ctx, part) {
+  return credentialTier(file, ctx, part) !== null;
 }
 
 // Does a glob (a Grep tool's `glob`) match a credential file name, in the folder it names or any below it?
@@ -1035,6 +1175,24 @@ const CREDENTIAL_SAMPLES = ['.env', '.env.local', '.env.production', 'id_rsa', '
 export function globMatchesCredential(glob) {
   if (typeof glob !== 'string' || !glob) return false;
   return CREDENTIAL_SAMPLES.some((name) => ['', 'a/', 'a/b/'].some((prefix) => globMatches(glob, prefix + name)));
+}
+
+// Does a Grep glob itself name a credential pattern (`.env*`, `*.pem`, `*credentials*`, `id_rsa*`, ...)? True when the
+// glob text contains a name stem of CREDENTIAL_SAMPLES (or its extension). A broad wildcard such as `**/*` does not.
+const CREDENTIAL_STEMS = (() => {
+  const stems = new Set(CREDENTIAL_SAMPLES.map((n) => n.toLowerCase()));
+  for (const n of CREDENTIAL_SAMPLES) {
+    const m = /(\.(?:pem|key|p12|pfx))$/.exec(n);
+    if (m) stems.add(m[1]);
+    if (n.startsWith('credentials')) stems.add('credentials');
+  }
+  return [...stems];
+})();
+export function globNamesCredential(glob) {
+  if (typeof glob !== 'string' || !glob) return false;
+  const g = glob.toLowerCase();
+  if (SAMPLE_SUFFIX.test(g)) return false;
+  return CREDENTIAL_STEMS.some((stem) => g.includes(stem));
 }
 
 const globCache = new Map();
@@ -1091,10 +1249,19 @@ export function defaultBranches(root) {
   return [branch];
 }
 
+// True when the git dir of `dir` holds a marker of an unfinished merge, cherry-pick, revert, rebase or am.
+function gitOpInProgress(dir) {
+  const gd = gitOut(dir, ['rev-parse', '--git-dir']);
+  if (!gd) return false;
+  const base = path.resolve(dir, gd);
+  return ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply'].some((n) => existsSync(path.join(base, n)));
+}
+
 // The context the matchers share. Git is only asked (and package.json only read) when a command needs it.
 export function makeMatchCtx(root, cwd, cfg) {
   let branches = null;
   let branch = null;
+  let inProgress = null;
   const pkgs = new Map();
   const deps = new Map();
   const bins = new Map();
@@ -1109,6 +1276,11 @@ export function makeMatchCtx(root, cwd, cfg) {
     branch() {
       if (branch === null) branch = currentBranch(root);
       return branch;
+    },
+    // Is a conflicted merge, cherry-pick, revert, rebase or am in progress? The markers live in this worktree's git dir.
+    opInProgress() {
+      if (inProgress === null) inProgress = gitOpInProgress(cwd || root);
+      return inProgress;
     },
     // The body of package.json script `name`, from the nearest package.json at or above the part's folder.
     scriptBody(part, name) {
@@ -1337,18 +1509,35 @@ function scriptNameOf(p) {
 
 const SCRIPT_NAME = { deploy: /^(deploy|release)/i, release: /^(release|publish)/i, migrate: /^(migrate|db:)/i };
 
+// The one list of git commands that create a commit: commit, merge --commit, cherry-pick <rev>, revert <rev>, am.
+// A plain `git merge <x>` is not one. The --continue/--abort/--quit/--skip forms never are. While a conflicted
+// operation is in progress (merge, rebase, cherry-pick, revert, am), any `git commit` concludes it and is allowed.
+const CONCLUDING = ['--continue', '--abort', '--quit', '--skip', '--resolved', '-r', '--show-current-patch'];
+const COMMIT_CREATING = (p, ctx) => {
+  if (p.tool !== 'git') return false;
+  if (p.args.some((a) => CONCLUDING.includes(a))) return false;
+  switch (p.sub) {
+    case 'commit':
+      return !(typeof ctx.opInProgress === 'function' && ctx.opInProgress());
+    case 'merge':
+      return p.args.includes('--commit');
+    case 'cherry-pick':
+    case 'revert':
+      return !p.args.some((a) => a === '--no-commit' || a === '-n');
+    case 'am':
+      return true;
+    default:
+      return false;
+  }
+};
+
 function directAction(p, action, ctx) {
   const git = p.tool === 'git';
   const pos = positionals(p.args, ['-R', '--repo']);
   switch (action) {
     case 'commit':
       if (!git) return false;
-      if (p.sub === 'commit') return true;
-      if (p.sub === 'merge') return p.args.includes('--commit');
-      if (p.sub === 'cherry-pick' || p.sub === 'revert') {
-        return !p.args.some((a) => a === '--no-commit' || a === '-n' || a === '--abort' || a === '--continue' || a === '--quit' || a === '--skip');
-      }
-      return false;
+      return COMMIT_CREATING(p, ctx);
     case 'push':
       return git && p.sub === 'push';
     case 'pr':
@@ -1655,6 +1844,70 @@ const INTERPRETER = /^(sh|bash|zsh|dash|python[\d.]*|node|perl|ruby)$/;
 // Does this simple command trip rail `rail`? -> a short description of what it does, or null. Covers the rails
 // that read a command's words; read_credentials and agent_config look at paths (isCredentialPath, bashWriteTargets).
 export function matchRail(part, rail, ctx) {
+  const r = matchRailInner(part, rail, ctx);
+  return r && typeof r === 'object' ? r.what : r;
+}
+
+// Like matchRail, but { what, ask } (ask: true when the finding is one of the softer tiers that always asks, even for a
+// rail set to deny: env consumers and `.env.<name>` reads), or null.
+export function matchRailTier(part, rail, ctx) {
+  const r = matchRailInner(part, rail, ctx);
+  return r && typeof r === 'object' ? r : r ? { what: r, ask: false } : null;
+}
+
+// Names (or grep patterns) that suggest a secret: printenv/env of anything else is fine.
+const SECRETISH = /KEY|TOKEN|SECRET|PASS|PWD|CREDENTIAL|AUTH|PRIVATE|SESSION|COOKIE/i;
+const GREPS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack']);
+
+// The patterns a grep part searches for: its -e values, else its first non-option word.
+function grepPatterns(g) {
+  const pats = [];
+  for (let i = 0; i < g.args.length; i++) if ((g.args[i] === '-e' || g.args[i] === '--regexp') && g.args[i + 1]) pats.push(g.args[++i]);
+  if (pats.length) return pats;
+  const pos = positionals(g.args, ['-A', '-B', '-C', '-m', '-f']);
+  return pos.length ? [pos[0]] : [];
+}
+
+// `printenv NAME...` or `env | grep NAME` / `printenv | grep NAME` for non-secret names: safe to print.
+function harmlessEnvDump(part) {
+  if (part.tool === 'printenv' && part.args.some((a) => !a.startsWith('-'))) {
+    const names = positionals(part.args);
+    return names.length > 0 && !names.some((n) => SECRETISH.test(n));
+  }
+  const g = part.pipedTo;
+  if (g && GREPS.has(g.tool)) {
+    const pats = grepPatterns(g);
+    return pats.length > 0 && !pats.some((x) => SECRETISH.test(x));
+  }
+  return false;
+}
+
+// A credential file this command loads into the environment, or null: `source f`, `. f`, `--env-file f`, `--env-file=f`,
+// `dotenv -e f`, and (from the command text) the file of `export $(cat f ...)` / `env $(cat f ...)`.
+function envConsumerFile(part, ctx) {
+  const cred = (f) => typeof f === 'string' && isCredentialPath(f, ctx, part);
+  if (part.tool === 'source' || part.tool === '.') {
+    const f = positionals(part.args)[0];
+    if (cred(f)) return f;
+  }
+  for (let i = 0; i < part.args.length; i++) {
+    const a = part.args[i];
+    if (a === '--env-file' && cred(part.args[i + 1])) return part.args[i + 1];
+    if (a.startsWith('--env-file=') && cred(a.slice(11))) return a.slice(11);
+    if (part.tool === 'dotenv' && a === '-e' && cred(part.args[i + 1])) return part.args[i + 1];
+  }
+  return null;
+}
+
+// Files named by `export $(cat f)`-style substitutions in the whole command text.
+function substitutedEnvFiles(text) {
+  const files = new Set();
+  if (typeof text !== 'string') return files;
+  for (const m of text.matchAll(/\b(?:export|env|set\s+-a)\b[^;&|\n]*?(?:\$\(|`)\s*cat\s+(?:--\s+)?["']?([^\s"')`|;&]+)/g)) files.add(m[1]);
+  return files;
+}
+
+function matchRailInner(part, rail, ctx) {
   if (!part || !part.tool) return null;
   switch (rail) {
     case 'force_push_default':
@@ -1697,7 +1950,11 @@ export function matchRail(part, rail, ctx) {
     }
     case 'print_credentials': {
       const t = part.tool;
-      if (t === 'printenv' || (t === 'env' && part.argv.length === 1)) return 'printing the environment (it may hold secrets)';
+      const loaded = envConsumerFile(part, ctx);
+      if (loaded) return { what: `loads ${loaded} into the environment`, ask: true };
+      if (t === 'printenv' || (t === 'env' && part.argv.length === 1)) {
+        return harmlessEnvDump(part) ? null : 'printing the environment (it may hold secrets)';
+      }
       if ((t === 'echo' || t === 'printf') && part.args.some((a) => SECRET_VAR.test(a))) return `printing a secret variable with ${brief(part)}`;
       if (t === 'sed' && part.args.some((a) => a === '--in-place' || /^-[a-zA-Z]*i/.test(a))) return null; // a write: the write rules apply
       if (t === 'cp' || t === 'mv') {
@@ -1718,7 +1975,10 @@ export function matchRail(part, rail, ctx) {
       if (t === 'git') files = files.map((f) => (f.includes(':') ? f.slice(f.lastIndexOf(':') + 1) : f)); // git show HEAD:.env
       const reads = part.redirects.filter((r) => r.op === '<').map((r) => r.target);
       const hit = [...files, ...reads].find((f) => isCredentialPath(f, ctx, part));
-      return hit ? `reading ${hit} with ${t === 'git' ? `git ${part.sub}` : t}` : null;
+      if (!hit) return null;
+      const what = `reading ${hit} with ${t === 'git' ? `git ${part.sub}` : t}`;
+      if (t === 'cat' && substitutedEnvFiles(ctx.commandText).has(hit)) return { what: `loads ${hit} into the environment`, ask: true };
+      return credentialTier(hit, ctx, part) === 'ask' ? { what, ask: true } : what;
     }
     case 'deploy':
       return matchAction(part, 'deploy', ctx) ? `running a deploy command (${brief(part)})` : null;
@@ -1838,31 +2098,82 @@ function plannedPaths(planText) {
 const inPlan = (file, planned) =>
   planned.some((g) => (g.endsWith('/') ? file.startsWith(g) : /[*?]/.test(g) ? globMatches(g, file) : file === g || file.startsWith(`${g}/`)));
 
-// What changed since the task started and what that touches: { changed, sensitive, outside_plan, note? }.
+const COMMIT_ID = /^[0-9a-f]{40,64}$/;
+
+// The commit the scope diff starts from: the merge-base with the default branch when the current branch isn't a default
+// branch and one resolves (origin/<name> and <name> are both tried for each name from defaultBranches; the most recent
+// merge-base wins), else the task's base_commit. -> { commit, label } (label is set for a merge-base).
+function scopeBase(root, baseCommit) {
+  const branch = currentBranch(root);
+  const names = defaultBranches(root);
+  if (branch && branch !== 'HEAD' && !names.includes(branch)) {
+    for (const n of names) {
+      let best = null;
+      for (const ref of [`origin/${n}`, n]) {
+        const mb = gitOut(root, ['merge-base', 'HEAD', ref]);
+        if (!COMMIT_ID.test(mb)) continue;
+        if (!best) best = mb;
+        else if (mb !== best && gitOut(root, ['rev-parse', '--verify', '--quiet', mb]) && isAncestor(root, best, mb)) best = mb;
+      }
+      if (best) return { commit: best, label: `merge-base with ${n} ${best.slice(0, 7)}` };
+    }
+  }
+  return { commit: baseCommit, label: null };
+}
+
+function isAncestor(root, a, b) {
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', a, b], { cwd: root, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// What changed since the task started (or since the merge-base with the default branch) and what that touches:
+// { changed, sensitive, outside_plan, base?, note? }. A test file that was added (or is untracked) is not sensitive.
 // changed is null when it can't be told (not git, no base commit, a task from before 0.13.0); outside_plan is null
 // when it is unknown (no plan, or no "Files to touch" in it).
 export function scopeOf(root, manifest, planText, cfg) {
-  const base = manifest && manifest.task ? manifest.task.base_commit : undefined;
-  if (base === undefined) return { changed: null, sensitive: [], outside_plan: null, note: 'unknown (task started before 0.13.0)' };
-  if (!base) return { changed: null, sensitive: [], outside_plan: null, note: 'unknown (not a git repository, or it had no commits when the task started)' };
+  const taskBase = manifest && manifest.task ? manifest.task.base_commit : undefined;
+  if (taskBase === undefined) return { changed: null, sensitive: [], outside_plan: null, note: 'unknown (task started before 0.13.0)' };
+  if (!taskBase) return { changed: null, sensitive: [], outside_plan: null, note: 'unknown (not a git repository, or it had no commits when the task started)' };
   const opts = { cwd: root, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 };
+  const { commit: base, label } = scopeBase(root, taskBase);
   let changed;
+  const added = new Set();
   try {
     const run = (args) => execFileSync('git', args, opts).toString().split('\0').filter(Boolean);
-    changed = [...new Set([...run(['diff', '--name-only', '--no-renames', '--relative', '-z', base]), ...run(['ls-files', '--others', '--exclude-standard', '-z'])])].sort();
+    const st = run(['diff', '--name-status', '--no-renames', '--relative', '-z', base]);
+    const names = [];
+    for (let i = 0; i + 1 < st.length; i += 2) {
+      names.push(st[i + 1]);
+      if (st[i] === 'A') added.add(st[i + 1]);
+    }
+    const untracked = run(['ls-files', '--others', '--exclude-standard', '-z']);
+    for (const f of untracked) added.add(f);
+    changed = [...new Set([...names, ...untracked])].sort();
   } catch {
     return { changed: null, sensitive: [], outside_plan: null, note: 'unknown (git could not list the changes)' };
   }
-  const sensitive = changed.filter((f) => sensitiveKind(f, cfg));
+  const sensitive = changed.filter((f) => {
+    const kind = sensitiveKind(f, cfg);
+    return kind && !(kind === 'test' && added.has(f));
+  });
   const planned = plannedPaths(planText);
   const ignored = (f) => LOCKFILES.has(path.posix.basename(f)) || f.startsWith('.shipline/') || f.startsWith('.claude/');
   const outside_plan = planned ? changed.filter((f) => !ignored(f) && !inPlan(f, planned)) : null;
-  return { changed, sensitive, outside_plan };
+  return { changed, sensitive, outside_plan, ...(label ? { base: label } : {}) };
 }
 
 // "2 test files, 1 file outside the plan", or a note when there is nothing to report. hasPlan false (the workflow has
 // no plan stage) leaves the plan out of the text.
 export function scopeText(scope, cfg, hasPlan = true) {
+  const t = scopeTextBody(scope, cfg, hasPlan);
+  return scope && scope.changed !== null && scope.base ? `${t} (since ${scope.base})` : t;
+}
+
+function scopeTextBody(scope, cfg, hasPlan) {
   if (!scope || scope.changed === null) return (scope && scope.note) || 'unknown';
   const kinds = {};
   for (const f of scope.sensitive) {

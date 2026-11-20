@@ -6,8 +6,8 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { git, hook, homeFor, makeRepo, removeDir, storeOf, tmpDir } from './helpers.mjs';
-import { RAIL_DEFAULTS, RAIL_IDS, defaultBranches, isCredentialPath, loadConfig, matchInstallPackages, matchRail, parseCommand } from '../templates/shipline/bin/lib.mjs';
+import { git, hook, homeFor, makeRepo, removeDir, run, storeOf, tmpDir } from './helpers.mjs';
+import { RAIL_DEFAULTS, RAIL_IDS, credentialTier, defaultBranches, globNamesCredential, isCredentialPath, loadConfig, matchInstallPackages, matchRail, matchRailTier, parseCommand } from '../templates/shipline/bin/lib.mjs';
 import { validateConfig } from '../src/setup-schema.mjs';
 
 // ---------- matchers, with a stub context ----------
@@ -777,5 +777,168 @@ describe('defaultBranches(root)', () => {
     assert.equal(push('git push origin trunk').json.hookSpecificOutput.permissionDecision, 'ask');
     assert.equal(push('git push origin main').stdout, '');
     assert.equal(JSON.parse(readFileSync(path.join(storeOf(dir), 'state', 'default-branch.json'), 'utf8')).branch, 'trunk');
+  });
+});
+
+// ---------- 2.2.0, part D9: fewer false positives in the credentials rails ----------
+
+describe('D9: sample suffixes and the .env.<name> tiers', () => {
+  const c = ctx();
+  test('a name ending in .example, .sample, .template or .dist is never a credential (any case)', () => {
+    for (const f of ['.env.local.example', '.env.production.sample', '.env.dist', 'config/.ENV.TEMPLATE', 'server.key.example', 'id_rsa.sample', 'credentials.json.template', 'cert.pem.dist', '.npmrc.example']) {
+      assert.equal(credentialTier(f, c, null), null, f);
+      assert.ok(!isCredentialPath(f, c, null), f);
+    }
+    assert.ok(!trips('cat .env.local.example', 'print_credentials'));
+    assert.ok(!trips('cat .env.production.template', 'print_credentials'));
+    assert.ok(isCredentialPath(path.join(os.homedir(), '.ssh', 'whatever.example'), c, null), 'the ~/.ssh folder still counts');
+  });
+
+  test('.env, .env.local and anything with prod or local in the name deny; other .env.<name> files ask', () => {
+    for (const f of ['.env', 'a/.env', '.env.local', '.env.production', '.env.prod', '.env.production.local', '.env.prod.eu', '.env.development.local']) {
+      assert.equal(credentialTier(f, c, null), 'deny', f);
+    }
+    for (const f of ['.env.development', '.env.test', '.env.staging', 'web/.env.ci']) assert.equal(credentialTier(f, c, null), 'ask', f);
+    assert.equal(credentialTier('id_rsa', c, null), 'deny');
+    assert.equal(credentialTier('src/a.js', c, null), null);
+  });
+
+  test('reading a .env.<name> file with cat is an ask-tier finding; .env and .env.production.local stay hard', () => {
+    const tier = (text) => {
+      const c2 = ctx();
+      c2.commandText = text;
+      for (const part of parseCommand(text)) {
+        const t = matchRailTier(part, 'print_credentials', c2);
+        if (t) return t;
+      }
+      return null;
+    };
+    assert.deepEqual(tier('cat .env.development'), { what: 'reading .env.development with cat', ask: true });
+    assert.equal(tier('head -n 2 .env.test').ask, true);
+    assert.equal(tier('cat .env').ask, false);
+    assert.equal(tier('cat .env.production.local').ask, false);
+    assert.equal(tier('cat .env.local').ask, false);
+    assert.equal(tier('cat README.md'), null);
+  });
+});
+
+describe('D9: commands that load an env file ask (never deny)', () => {
+  const tier = (text) => {
+    const c = ctx();
+    c.commandText = text;
+    for (const part of parseCommand(text)) {
+      const t = matchRailTier(part, 'print_credentials', c);
+      if (t) return t;
+    }
+    return null;
+  };
+  test('source, dot, --env-file, dotenv -e and export/env $(cat file)', () => {
+    for (const text of [
+      'source .env && npm start',
+      '. ./.env',
+      'source .env.local',
+      'docker compose --env-file .env up',
+      'docker run --env-file=.env.production img',
+      'dotenv -e .env -- node server.js',
+      'export $(cat .env | xargs)',
+      'env $(cat .env) npm start',
+      'export $(cat .env.local | grep -v "^#" | xargs)',
+    ]) {
+      const t = tier(text);
+      assert.ok(t && t.ask === true, `${text} -> ${JSON.stringify(t)}`);
+      assert.match(t.what, /^loads \S*\.env\S* into the environment$/, text);
+    }
+  });
+  test('sample files and non-credential files are not consumers', () => {
+    for (const text of ['source .env.example', 'docker compose --env-file .env.sample up', 'source venv/bin/activate', '. ./scripts/setup.sh', 'export FOO=$(cat VERSION)', 'dotenv -e config/settings.json -- node x']) {
+      assert.equal(tier(text), null, text);
+    }
+  });
+});
+
+describe('D9: printenv and env', () => {
+  const printing = (text) => trips(text, 'print_credentials');
+  test('printenv NAME and env | grep NAME are allowed for non-secret names', () => {
+    for (const text of ['printenv PATH', 'printenv HOME USER', 'printenv NODE_ENV', 'env | grep NODE', 'printenv | grep ^PATH', 'env | grep -i lang', 'env | grep -e HOME -e SHELL']) {
+      assert.ok(!printing(text), text);
+    }
+  });
+  test('a secret-looking name, a bare dump and an unrelated pipe still deny', () => {
+    for (const text of [
+      'printenv AWS_SECRET_ACCESS_KEY',
+      'printenv GITHUB_TOKEN',
+      'printenv DB_PASSWORD',
+      'printenv SSH_AUTH_SOCK',
+      'printenv PWD_FILE',
+      'printenv PATH API_KEY',
+      'env | grep -i token',
+      'env | grep -e HOME -e SESSION',
+      'printenv | grep COOKIE',
+      'printenv | grep PRIVATE',
+      'printenv',
+      'env',
+      'env | sort',
+      'printenv | head',
+    ]) {
+      assert.ok(printing(text), text);
+    }
+  });
+});
+
+describe('D9: Grep only asks when the glob names a credential pattern', () => {
+  test('globNamesCredential', () => {
+    for (const g of ['.env*', '**/.env.*', '*.pem', '**/*.key', '*credentials*', 'id_rsa*', '.npmrc', '.netrc', '**/.git-credentials']) assert.ok(globNamesCredential(g), g);
+    for (const g of ['**/*', '*.js', 'src/**', '**/*.test.*', '*.md', '.env.example', '']) assert.ok(!globNamesCredential(g), g);
+  });
+
+  describe('in the guard', () => {
+    let dir;
+    const guardCall = (tool, toolInput, session = 'grep-s', env = {}) => {
+      const r = run(process.execPath, [path.join(dir, '.shipline', 'bin', 'guard.mjs')], {
+        cwd: dir,
+        input: JSON.stringify({ session_id: session, cwd: dir, hook_event_name: 'PreToolUse', tool_name: tool, tool_input: toolInput }),
+        env,
+      });
+      assert.equal(r.code, 0, r.stderr);
+      const h = r.stdout.trim() ? JSON.parse(r.stdout).hookSpecificOutput : null;
+      return { decision: h ? h.permissionDecision || null : null, reason: h ? h.permissionDecisionReason || '' : '' };
+    };
+    before(() => {
+      dir = makeRepo({ commitInit: true });
+    });
+    after(() => removeDir(dir));
+
+    test('Grep with **/* is not asked about; a credential glob or path is', () => {
+      assert.equal(guardCall('Grep', { pattern: 'TODO', glob: '**/*' }).decision, null);
+      assert.equal(guardCall('Grep', { pattern: 'TODO' }).decision, null);
+      const g = guardCall('Grep', { pattern: 'KEY', glob: '.env*' });
+      assert.equal(g.decision, 'ask');
+      assert.match(g.reason, /the glob \.env\* names credential files/);
+      assert.equal(guardCall('Grep', { pattern: 'KEY', path: path.join(dir, '.env') }).decision, 'ask', 'read_credentials is ask by default');
+    });
+
+    test('the Read tool: .env.development asks even when read_credentials is deny; .env denies', () => {
+      const f = path.join(dir, '.shipline', 'config.yml');
+      const orig = readFileSync(f, 'utf8');
+      writeFileSync(f, orig.replace(/^( {2}read_credentials:) \w+$/m, '$1 deny'));
+      try {
+        assert.equal(guardCall('Read', { file_path: path.join(dir, '.env.development') }).decision, 'ask');
+        assert.equal(guardCall('Read', { file_path: path.join(dir, '.env') }).decision, 'deny');
+        assert.equal(guardCall('Read', { file_path: path.join(dir, '.env.local.example') }).decision, null);
+      } finally {
+        writeFileSync(f, orig);
+      }
+    });
+
+    test('Bash: source .env asks (print_credentials is deny), cat .env denies, printenv PATH passes', () => {
+      assert.equal(guardCall('Bash', { command: 'source .env && npm start' }).decision, 'ask');
+      assert.match(guardCall('Bash', { command: 'source .env && npm start' }).reason, /loads \.env into the environment/);
+      assert.equal(guardCall('Bash', { command: 'docker compose --env-file .env up' }).decision, 'ask');
+      assert.equal(guardCall('Bash', { command: 'cat .env.development' }).decision, 'ask');
+      assert.equal(guardCall('Bash', { command: 'cat .env' }).decision, 'deny');
+      assert.equal(guardCall('Bash', { command: 'cat .env.production.local' }).decision, 'deny');
+      assert.equal(guardCall('Bash', { command: 'printenv PATH' }).decision, null);
+      assert.equal(guardCall('Bash', { command: 'printenv AWS_SECRET_ACCESS_KEY' }).decision, 'deny');
+    });
   });
 });

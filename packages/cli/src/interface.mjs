@@ -10,7 +10,7 @@ import path from 'node:path';
 export const INTERFACE = 2;
 
 // What repos older than an interface lack, for banner text: { interface, missing }, oldest first.
-export const MISSING_BEFORE = [{ interface: 2, missing: 'hook crash warnings and Bash write blocking' }];
+export const MISSING_BEFORE = [{ interface: 2, missing: 'hook crash warnings, Bash write blocking, task auto-bind, abandon, side pass, explain and status --all' }];
 
 // Returns { package, interface, files, excluded }, or { legacy: true, interface: 1 } when the file is missing or unreadable.
 export function readRepoVersion(root) {

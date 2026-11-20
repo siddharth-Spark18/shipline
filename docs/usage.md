@@ -66,6 +66,36 @@ write the failing test at Reproduce (test files are allowed there; see [Guardrai
 
 Outside a Claude Code session (no session id), `status` lists the unfinished tasks on the current branch.
 
+**Staying on a task.** A session with no task that starts on the branch of exactly one open task is bound to it
+automatically, so `/clear`, a new session or a second terminal keep enforcement without `resume`. (Not on a detached
+HEAD; with several matching tasks Claude lists them and asks.) If another Claude session touched the task in the last
+10 minutes, you are both told; both keep working, so avoid editing the same files. Session start shows each task's age
+and collapses tasks idle longer than `stale_task_days` (default 14) into one line; `stage.mjs status --all` lists
+everything, finished and abandoned included. When the last stage finishes, the session stops tracking the task (it remembers it as the last task, so `pr-summary` and `status` still work for it and say
+`(task <dir>, finished in this session)`).
+
+**Dropping a task, side edits and denials.**
+
+```
+node .shipline/bin/stage.mjs abandon [--reason "..."]  # you confirm; hides the task, `resume` brings it back
+node .shipline/bin/stage.mjs side --files README.md --reason "typo"   # you confirm; those files pass the stage rules for 30 min
+node .shipline/bin/stage.mjs side done                 # end the side pass early
+node .shipline/bin/stage.mjs explain                   # why was my last call denied, and what do I do
+```
+
+A title that matches an existing task folder now gets `-2`, `-3`, ... A side pass never lifts a guardrail or a
+protected path, and `abandon`/`side` need your recorded answer like `skip` does.
+
+**Headless runs (`claude -p`, CI).** Claude Code gives hooks no headless signal, so set `SHIPLINE_NONINTERACTIVE=1` in
+the launcher. Then every command that needs your answer fails with an explanation, and guardrail asks become denies.
+With `non_interactive: checks_pass` in `config.yml`, `advance` on a `confirm_to_advance` stage goes through when the
+latest `check` passed on the current code (the PR summary notes it). Skip, accept, scope, abandon and side are never
+auto-approved, and a stage without checks (Feature's Plan) can't auto-advance, so headless runs suit Small change and
+Verify.
+
+**Worktrees.** The repo root is the git toplevel of the call's folder, so a Claude Code worktree is its own root. Until
+the task store is shared between worktrees, tasks started in the main checkout aren't visible in a worktree.
+
 ## The browser UI
 
 ```bash

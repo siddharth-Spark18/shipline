@@ -1,6 +1,6 @@
 // Shared helpers for the Shipline hook and stage scripts. Node 18+, no dependencies.
 // Vendored into .shipline/bin/ by `shipline init`; teams may edit it.
-import { copyFileSync, existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, statSync, utimesSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -587,7 +587,14 @@ export function fingerprint(root) {
     // changed, instead of every file in the repo. The real index itself is never written.
     try {
       const real = path.resolve(root, execFileSync('git', ['rev-parse', '--git-path', 'index'], opts).toString().trim());
-      if (existsSync(real)) copyFileSync(real, tmpIndex);
+      if (existsSync(real)) {
+        copyFileSync(real, tmpIndex);
+        // Keep the real index's mtime on the copy. Git re-reads "racily clean" entries (a file whose mtime is not
+        // older than the index) instead of trusting their stat cache; a copy with a fresh mtime would make git trust
+        // them and miss a same-size edit made in the same second as the last index write.
+        const st = statSync(real);
+        utimesSync(tmpIndex, st.atime, st.mtime);
+      }
     } catch {
       // No real index (fresh repo): start empty; the result is the same tree.
     }

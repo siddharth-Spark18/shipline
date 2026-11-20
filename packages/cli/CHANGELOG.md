@@ -12,6 +12,9 @@ hook says so, and `upgrade` keeps `.shipline/bin/` at one version. **The hook co
 
 ### Fixed
 
+- **Verify could trust a stale check run after a same-size edit.** The code fingerprint copies git's index to reuse its
+  stat cache, but the copy got a fresh mtime, so git trusted "racily clean" entries and missed a same-size edit made
+  in the same second as the last index write. The copy now keeps the index's mtime.
 - **Bugfix couldn't get past Reproduce with `fail_first: proof`.** The Root cause stage blocked every edit, including
   the failing test Reproduce asks for. At Reproduce of a workflow `fail_first` applies to, test files are now allowed
   through the stage blocks (file tools and Bash).

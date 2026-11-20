@@ -5,7 +5,7 @@
 // `"<node>" "<script>"` with absolute paths, which both shells read the same way.
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { IS_WIN, git, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
 import { fingerprint } from '../templates/shipline/bin/lib.mjs';
@@ -209,6 +209,31 @@ describe('stage.mjs check', () => {
     const before = git(dir, 'status', '--porcelain', '--untracked-files=all');
     assert.equal(check().code, 0);
     assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=all'), before);
+  });
+});
+
+// A "racily clean" index entry: the file was rewritten with the same size and its mtime is not older than the index
+// itself. Git re-reads such entries instead of trusting the stat cache, but only if the index it reads keeps its
+// original mtime. fingerprint() copies the index, so the copy must keep that mtime (a same-size edit made in the same
+// second as the last index write was otherwise missed, and Verify trusted a stale check run).
+describe('fingerprint(root) with a racily clean index entry', () => {
+  test('a same-size edit whose mtime equals the index mtime still changes the fingerprint', () => {
+    const repo = makeRepo({ init: false });
+    try {
+      git(repo, 'config', 'core.trustctime', 'false'); // the rewrite changes ctime; only mtime and size may decide
+      const file = path.join(repo, 'racy.txt');
+      writeFileSync(file, 'one\n');
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-q', '-m', 'racy');
+      const before = fingerprint(repo);
+      const cached = statSync(file);
+      writeFileSync(file, 'two\n'); // same size
+      utimesSync(file, cached.atime, cached.mtime); // same mtime as the cached stat
+      utimesSync(path.join(repo, '.git', 'index'), cached.atime, cached.mtime); // index no newer than the entry
+      assert.notEqual(fingerprint(repo), before);
+    } finally {
+      removeDir(repo);
+    }
   });
 });
 

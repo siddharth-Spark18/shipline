@@ -1,4 +1,5 @@
-import { existsSync, lstatSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { createInterface } from 'node:readline/promises';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { toolOnPath } from './detect-commands.mjs';
@@ -7,7 +8,9 @@ import {
   COMMAND_KEYS, applyInstall, checkSelection, clashOf, defaultAgents, defaultSelection, fillSelection, installInfo,
   missingStageAgents, nextSteps, planInstall,
 } from './install.mjs';
+import { readRepoVersion } from './interface.mjs';
 import { registerQuietly } from './registry.mjs';
+import { sameRoot } from './store.mjs';
 
 // Other modules (upgrade, uninstall) still import these from here.
 export { mergeSettingsObject, parseSettings, shippedAgents, shippedWorkflows } from './install.mjs';
@@ -66,6 +69,28 @@ const insideGit = (root) => {
   }
 };
 
+// The git work tree root when `root` is a real subfolder of it (a monorepo package), else null.
+function enclosingRepo(root) {
+  try {
+    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    if (!top) return null;
+    const realTop = realpathSync(path.resolve(root, top));
+    return sameRoot(realTop, realpathSync(root)) ? null : realTop;
+  } catch {
+    return null;
+  }
+}
+
+async function askYesNo(question) {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const a = (await rl.question(question)).trim().toLowerCase();
+    return a === 'y' || a === 'yes';
+  } finally {
+    rl.close();
+  }
+}
+
 // Warnings printed after the summary; they never block. Each detected command's first word is checked against PATH
 // (plain program names only: a path like ./gradlew or an assignment is left alone).
 function warnings(root, commands, detected) {
@@ -85,9 +110,10 @@ function warnings(root, commands, detected) {
 // { workflows, agents, repoAgents, repoSkills, detected, trackerDefault, uiDetected, agentUse, missingStageAgents(selection),
 //   defaultAgents(workflowIds, ui) }. A terminal run with questions (and no --yes) shows a review and asks
 // before writing; `confirm` (optional, an async (reviewText) => boolean) replaces that question. Without --terminal
-// or `prompts`, an interactive run opens the browser wizard; `startUi` replaces that start (for tests).
+// or `prompts`, an interactive run opens the browser wizard; `startUi` replaces that start (for tests). `ask` (optional,
+// an async (question) => boolean) replaces the "Install here anyway?" question for a subfolder of a git repo.
 export async function runInit({
-  target, dryRun = false, yes = false, terminal = false, prompts = null, confirm = null, startUi = null,
+  target, dryRun = false, yes = false, terminal = false, prompts = null, confirm = null, startUi = null, ask = askYesNo,
 }) {
   const root = path.resolve(target);
   if (!existsSync(root) || !lstatSync(root).isDirectory()) {
@@ -100,11 +126,30 @@ export async function runInit({
 
   // Already initialized? Checked before any prompt, with or without --yes.
   if (info.state !== 'clean') {
-    console.log(`Shipline is already initialized in this repo (found .shipline/, the CLAUDE.md block or the hooks). Nothing was written.
+    const v = readRepoVersion(root);
+    console.log(`Shipline is already set up in ${root}${v.package ? ` (version ${v.package})` : ''}. Nothing was written.
+To update it, run: npx @forgeyard/shipline@latest upgrade
   - Change which agents and skills are installed: \`npx @forgeyard/shipline ui\`, then Setup, Agents & skills.
-  - Update to this version: \`npx @forgeyard/shipline upgrade\`.
   - Start over: \`npx @forgeyard/shipline uninstall\`, then \`init\` again.`);
     return 0;
+  }
+
+  // A subfolder of a git repo (a monorepo package): the hooks only load when Claude Code starts in this folder.
+  const outer = enclosingRepo(root);
+  if (outer) {
+    const text = `This folder is inside the git repo at ${outer}. Shipline's hooks only load when Claude Code starts in ${root}; most teams install at the repo root.`;
+    if (dryRun) console.log(`Note: ${text}\n`);
+    else if (yes) console.log(`Note: ${text}\nContinuing because of --yes.\n`);
+    else if (!prompts && !process.stdin.isTTY) {
+      console.error(`shipline: ${text}\nRun it from ${outer}, or pass --yes to install here anyway.`);
+      return 1;
+    } else {
+      console.log(text);
+      if (!(await ask('Install here anyway? [y/N] '))) {
+        console.error('Cancelled, nothing was written.');
+        return 1;
+      }
+    }
   }
 
   // A dry run needs no answers: without a terminal it previews the defaults that --yes would install.

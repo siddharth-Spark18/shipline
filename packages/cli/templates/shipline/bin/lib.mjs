@@ -2,6 +2,7 @@
 // Vendored into .shipline/bin/ by `shipline init`; teams may edit it.
 import { copyFileSync, existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, statSync, utimesSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -331,7 +332,7 @@ export function needsAnswer(stageCfg, config) {
 }
 
 // ---------- task store (outside the repo) ----------
-// $SHIPLINE_HOME (default ~/.shipline)/projects/<encoded repo path>/{repo.json, tasks/, state/, ui/}.
+// $SHIPLINE_HOME (default ~/.shipline)/projects/<key>/{repo.json, tasks/, state/, ui/}; see the store keys below.
 
 // Same encoding Claude Code uses for ~/.claude/projects: every non-alphanumeric character becomes "-".
 export function encodePath(p) {
@@ -379,35 +380,200 @@ function realRoot(root) {
   }
 }
 
-// Creates the store directory when needed and checks repo.json: a store whose repo.json names another root
-// means two different paths encode the same way, so it throws instead of sharing the store.
-export function storeDir(root) {
+// ---- store keys (interface 2) ----
+// The 2.1 key was encodePath(realpath), which collides ("my-app" vs "my/app") and can outgrow a file name. Interface 2
+// names the store <last 80 characters of the encoded main checkout path>-<10 hex of sha256 of that path>, and the main
+// checkout (not each worktree) is the key, so every worktree of one repo shares one store.
+
+const KEY_READABLE_MAX = 80;
+const MAIN_ROOTS = new Map(); // real root -> main checkout root (one git call per process)
+const NEW_SCHEME_ROOTS = new Set(); // real roots known to have interface >= 2 (that never goes back)
+const MIGRATION_DONE = new Set(); // `${home}\0${real root}` whose old-scheme store was already looked for
+
+// The store folder name for a main checkout path.
+export function storeKey(main) {
+  const real = String(main);
+  const hash = createHash('sha256').update(process.platform === 'win32' ? real.toLowerCase() : real).digest('hex').slice(0, 10);
+  return `${encodePath(real).slice(-KEY_READABLE_MAX)}-${hash}`;
+}
+
+// The checkout that names the store: for a git repo the main checkout (also when `root` is a linked worktree), else
+// the real path of `root`. A subfolder install, a submodule, a bare repo or a --separate-git-dir layout (common dir
+// not named .git, or root not the top of its work tree) keeps its own real path.
+export function mainRoot(root) {
   const real = realRoot(root);
-  const dir = path.join(shiplineHome(), 'projects', encodePath(real));
+  const cached = MAIN_ROOTS.get(real);
+  if (cached) return cached;
+  let main = real;
+  try {
+    const out = execFileSync('git', ['rev-parse', '--show-toplevel', '--git-common-dir'], { cwd: real, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .split(/\r?\n/);
+    const top = realpathSync(path.resolve(real, out[0].trim()));
+    const common = path.resolve(real, out[1].trim());
+    if (sameRoot(top, real) && path.basename(common) === '.git') main = realpathSync(path.dirname(common));
+  } catch {
+    // Not a git repo, bare, or git is missing: the checkout is its own main root.
+  }
+  MAIN_ROOTS.set(real, main);
+  return main;
+}
+
+// 2 when this checkout's .shipline/bin/VERSION names interface >= 2 (the vendored hooks of an upgraded checkout), else 1
+// (missing, unreadable or 1.x: the old key, no migration). Read per call until it is 2, then remembered.
+export function storeScheme(root) {
+  const real = realRoot(root);
+  if (NEW_SCHEME_ROOTS.has(real)) return 2;
+  try {
+    const v = JSON.parse(readFileSync(path.join(real, '.shipline', 'bin', 'VERSION'), 'utf8'));
+    if (v && Number.isInteger(v.interface) && v.interface >= 2) {
+      NEW_SCHEME_ROOTS.add(real);
+      return 2;
+    }
+  } catch {
+    // Missing or unreadable VERSION: a 1.x layout.
+  }
+  return 1;
+}
+
+function readJsonQuiet(file) {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+// Creates the store directory when needed and checks repo.json: a store whose repo.json names another root
+// (a hash collision or a hand-copied folder) throws instead of sharing the store.
+function ensureStore(dir, owner, extra) {
   const meta = path.join(dir, 'repo.json');
   try {
     mkdirSync(dir, { recursive: true });
-    let existing = null;
-    try {
-      existing = JSON.parse(readFileSync(meta, 'utf8'));
-    } catch {
-      // Missing or unreadable repo.json: it is (re)written below.
-    }
+    const existing = readJsonQuiet(meta);
     if (existing && typeof existing.root === 'string') {
-      if (!sameRoot(existing.root, real)) {
+      if (!sameRoot(existing.root, owner)) {
         throw Object.assign(
-          new Error(`Shipline store collision at ${dir}: it belongs to ${existing.root}, but this repo is ${real}. Nothing was shared.`),
+          new Error(`Shipline store collision at ${dir}: it belongs to ${existing.root}, but this repo is ${owner}. Nothing was shared.`),
           { code: 'STORE_COLLISION' },
         );
       }
     } else {
-      writeFileSync(meta, JSON.stringify({ root: real, created: new Date().toISOString() }, null, 2) + '\n');
+      writeFileSync(meta, JSON.stringify({ root: owner, ...extra, created: new Date().toISOString() }, null, 2) + '\n');
     }
   } catch (e) {
     if (e.code === 'STORE_COLLISION') throw e;
     throw new Error(`Shipline can't write its task store at ${dir} (${e.message})`);
   }
   return dir;
+}
+
+const today = () => new Date().toISOString().slice(0, 10);
+const SUFFIX_DIRS = new Set(['tasks', 'state']); // merged entry by entry; a clash gets -2, -3, ...
+const MERGE_DIRS = new Set(['approvals', 'drafts', 'drafts-tmp']); // merged entry by entry; a clash stays in the old folder
+
+function tryRename(from, to) {
+  try {
+    renameSync(from, to);
+    return true;
+  } catch {
+    return false; // gone (another process moved it) or the target appeared
+  }
+}
+
+// Moves `from` into `toDir` as `name`, or `name-2`, `name-3`... when that is taken. Nothing is overwritten.
+function moveUnique(from, toDir, name, isFile) {
+  const ext = isFile ? path.extname(name) : '';
+  const stem = name.slice(0, name.length - ext.length);
+  for (let n = 1; n < 1000; n++) {
+    const target = path.join(toDir, n === 1 ? name : `${stem}-${n}${ext}`);
+    if (existsSync(target)) continue;
+    if (tryRename(from, target)) return;
+    if (!existsSync(from)) return; // moved by someone else
+  }
+}
+
+// Merges the old-scheme store `oldDir` into `newDir`, then renames the (possibly not empty) old folder to
+// `<old>.migrated-<date>`. Task data is never deleted: what can't be moved stays in the renamed folder.
+function mergeStore(oldDir, newDir) {
+  mkdirSync(newDir, { recursive: true });
+  let entries = [];
+  try {
+    entries = readdirSync(oldDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const e of entries) {
+    if (e.name === 'repo.json') continue;
+    const from = path.join(oldDir, e.name);
+    const to = path.join(newDir, e.name);
+    if (e.isDirectory() && (SUFFIX_DIRS.has(e.name) || MERGE_DIRS.has(e.name))) {
+      mkdirSync(to, { recursive: true });
+      let kids = [];
+      try {
+        kids = readdirSync(from, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const k of kids) {
+        if (SUFFIX_DIRS.has(e.name)) moveUnique(path.join(from, k.name), to, k.name, !k.isDirectory());
+        else if (!existsSync(path.join(to, k.name))) tryRename(path.join(from, k.name), path.join(to, k.name));
+      }
+    } else if (!existsSync(to)) tryRename(from, to);
+  }
+  for (let n = 1; n < 1000; n++) {
+    const target = `${oldDir}.migrated-${today()}${n === 1 ? '' : `-${n}`}`;
+    if (existsSync(target)) continue;
+    if (tryRename(oldDir, target) || !existsSync(oldDir)) return;
+  }
+}
+
+// Brings this checkout's 2.1 store (encodePath(real root), when its repo.json names this checkout) into the new key.
+function migrateOldStore(real, main, newDir) {
+  const projects = path.dirname(newDir);
+  const oldDir = path.join(projects, encodePath(real));
+  if (oldDir === newDir) return;
+  const meta = readJsonQuiet(path.join(oldDir, 'repo.json'));
+  if (!meta || typeof meta.root !== 'string' || !sameRoot(meta.root, real)) return;
+  if (!existsSync(newDir)) {
+    if (tryRename(oldDir, newDir)) {
+      try {
+        writeFileSync(path.join(newDir, 'repo.json'), JSON.stringify({ ...meta, root: main, main_root: main, key_version: 2 }, null, 2) + '\n');
+      } catch {
+        // ensureStore rewrites a missing or unreadable repo.json.
+      }
+      return;
+    }
+  }
+  mergeStore(oldDir, newDir);
+}
+
+// The store of `root` under a given scheme: 1 is the 2.1 key (encodePath of the real path, the checkout's own store),
+// 2 the collision-proof key shared by every worktree (after a one-time, never-destructive migration of this
+// checkout's old store). The CLI uses it where a repo's interface isn't installed yet (init); everything else calls
+// storeDir, which picks the scheme from the checkout's installed interface.
+export function storeDirFor(root, scheme) {
+  const real = realRoot(root);
+  const projects = path.join(shiplineHome(), 'projects');
+  if (scheme < 2) return ensureStore(path.join(projects, encodePath(real)), real, {});
+  const main = mainRoot(real);
+  const dir = path.join(projects, storeKey(main));
+  const done = `${shiplineHome()}\0${real}`;
+  if (!MIGRATION_DONE.has(done)) {
+    try {
+      migrateOldStore(real, main, dir);
+    } catch {
+      // A migration that can't finish must not stop the hooks; the old folder is untouched or already renamed.
+    }
+    MIGRATION_DONE.add(done);
+  }
+  return ensureStore(dir, main, { main_root: main, key_version: 2 });
+}
+
+// Creates the store directory when needed (see storeDirFor). Single argument: the scheme comes from the checkout's
+// installed interface (storeScheme), so every caller (hooks, stage.mjs, the CLI, the UI) agrees.
+export function storeDir(root) {
+  return storeDirFor(root, storeScheme(root));
 }
 
 export function tasksDir(root) {

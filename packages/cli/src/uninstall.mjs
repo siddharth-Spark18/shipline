@@ -1,6 +1,6 @@
 // `shipline uninstall`: removes everything `init` installed from a repo. Only deletes files from disk (never
 // runs git), so the developer commits the removal. Node 18+, no dependencies.
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, rmSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -8,26 +8,14 @@ import {
   CI_WORKFLOW, CLAUDE_MD_KEY, SETTINGS_KEY, VERSION_FILE, ownedTemplateFiles, removeClaudeMdBlock, removeShiplineFromSettings, sha256,
 } from './hashes.mjs';
 import { parseSettings } from './init.mjs';
-import { unregisterQuietly } from './registry.mjs';
-import { encodePath, isInside, shiplineHome } from './store.mjs';
+import { listProjects, unregisterQuietly } from './registry.mjs';
+import { isInside, peekStore } from './store.mjs';
 import { pidAlive, readLock } from './ui/sessions.mjs';
 
 const readText = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : null);
 const posix = (p) => p.split(path.sep).join('/');
 
-// Read-only: the repo's store folder (nothing is created), or null when it doesn't exist yet.
-function peekStore(root) {
-  let real = root;
-  try {
-    real = realpathSync(root);
-  } catch {
-    // Keep the given path.
-  }
-  const dir = path.join(shiplineHome(), 'projects', encodePath(real));
-  return existsSync(dir) ? dir : null;
-}
-
-function dirSize(dir) {
+export function dirSize(dir) {
   let total = 0;
   try {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -41,7 +29,7 @@ function dirSize(dir) {
   return total;
 }
 
-function human(bytes) {
+export function human(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -99,6 +87,15 @@ export async function runUninstall({ target, yes = false, dryRun = false, purge 
   // A live UI chat holds the repo's lock; a stale one (dead process, other host) only gets a note.
   const store = peekStore(root);
   const notes = [];
+  // Worktrees of one repo share a store: another registered checkout that still has Shipline keeps it alive.
+  let sharedBy = [];
+  if (store) {
+    try {
+      sharedBy = listProjects().filter((p) => p.root !== root && existsSync(path.join(p.root, '.shipline', 'config.yml')) && peekStore(p.root) === store).map((p) => p.root);
+    } catch {
+      // No readable registry: nothing known to share it.
+    }
+  }
   if (store) {
     const lock = readLock(root);
     if (lock && typeof lock === 'object') {
@@ -143,6 +140,13 @@ export async function runUninstall({ target, yes = false, dryRun = false, purge 
         }
       }
     }
+  }
+  // Side files `shipline upgrade --yes` wrote next to Shipline-owned files (<file>.shipline-new). Under .shipline/ they go with it.
+  for (const rel of new Set([...candidates, CI_WORKFLOW])) {
+    if (rel === CLAUDE_MD_KEY || rel === SETTINGS_KEY || rel.includes('#') || rel.split('/').includes('..') || excluded.has(rel)) continue;
+    const side = `${rel}.shipline-new`;
+    const abs = path.join(root, side);
+    if (/^\.(claude|github)\//.test(side) && existsSync(abs) && lstatSync(abs).isFile()) files.push(side);
   }
   files.sort();
   const gone = new Set(files.map((f) => path.join(root, f)));
@@ -192,7 +196,8 @@ export async function runUninstall({ target, yes = false, dryRun = false, purge 
     out.push('', 'Kept (your own, recorded in VERSION.excluded)');
     for (const p of keptExcluded) out.push(`  = ${p}`);
   }
-  if (store) out.push('', `Task data for this repo (asked about separately): ${store} (${human(dirSize(store))})`);
+  if (store && sharedBy.length) out.push('', `Task data at ${store} (${human(dirSize(store))}) is shared with other checkouts of this repo (${sharedBy.join(', ')}); it is kept.`);
+  else if (store) out.push('', `Task data for this repo (asked about separately): ${store} (${human(dirSize(store))})`);
   if (notes.length) out.push('', 'Notes', ...notes.map((n) => `  ! ${n}`));
   console.log(out.join('\n'));
 
@@ -211,8 +216,8 @@ export async function runUninstall({ target, yes = false, dryRun = false, purge 
       console.log('Cancelled, nothing was changed.');
       return 1;
     }
-    if (store) deleteStore = await ask(`Also delete this repo's task data at ${store}? [y/N] `);
-  } else deleteStore = Boolean(store) && purge;
+    if (store && !sharedBy.length) deleteStore = await ask(`Also delete this repo's task data at ${store}? [y/N] `);
+  } else deleteStore = Boolean(store) && purge && !sharedBy.length;
 
   // ---- apply: shared files, then Shipline's files, then .shipline/ last, then the store ----
   try {

@@ -63,6 +63,8 @@ export interface Project {
   chatRunning: boolean;
   /** The card text for a state other than `ok`. */
   message: string | null;
+  /** A hint for a project that is served, e.g. a worktree whose hooks are older than the shared task store. */
+  note?: string | null;
 }
 
 export type WaitingReason = 'permission' | 'question' | 'error';

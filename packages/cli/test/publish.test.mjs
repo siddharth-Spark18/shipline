@@ -377,6 +377,41 @@ describe('.github/workflows/publish.yml', () => {
   });
 });
 
+describe('.github/workflows/publish.yml safety guards (Plan E, E9)', () => {
+  const yml = readFileSync(path.join(REPO, '.github', 'workflows', 'publish.yml'), 'utf8');
+
+  test('one publish per tag at a time, never cancelled midway', () => {
+    assert.match(yml, /concurrency:\n\s+group: publish-\$\{\{ github\.ref_name \}\}\n\s+cancel-in-progress: false/);
+  });
+
+  test('reads pull requests and checks, and the checkout has full history', () => {
+    assert.match(yml, /pull-requests: read/);
+    assert.match(yml, /checks: read/);
+    assert.match(yml, /fetch-depth: 0/);
+  });
+
+  test('the tag commit must be an ancestor of origin/main, before anything is published', () => {
+    const i = yml.indexOf('git merge-base --is-ancestor "$GITHUB_SHA" origin/main');
+    assert.ok(i > 0 && i < yml.indexOf('npm publish'));
+  });
+
+  test('the merged PR of the tag commit must have a successful `ci` check run on its head; no merged PR fails', () => {
+    assert.match(yml, /GH_TOKEN: \$\{\{ github\.token \}\}/);
+    assert.match(yml, /commits\/\$\{GITHUB_SHA\}\/pulls/);
+    assert.match(yml, /select\(\.merged_at != null and \.base\.ref == "main"\)/);
+    assert.match(yml, /commits\/\$\{head\}\/check-runs\?check_name=ci/);
+    assert.match(yml, /\[ "\$conclusion" != "success" \]/);
+    assert.match(yml, /No merged pull request found/);
+    assert.ok(yml.indexOf('check_name=ci') < yml.indexOf('npm publish'));
+  });
+
+  test('the existing tag, CHANGELOG and hash checks and the test run are still there', () => {
+    for (const s of ['does not match packages/cli/package.json version', "has no '## [", 'known-hashes.json must record', 'pnpm --filter ./packages/cli test']) {
+      assert.ok(yml.includes(s), s);
+    }
+  });
+});
+
 describe('LICENSE and CHANGELOG.md', () => {
   test('MIT, 2026 Siddharth Paneri, at the repo root and in the package (same text)', () => {
     const root = readFileSync(path.join(REPO, 'LICENSE'), 'utf8');

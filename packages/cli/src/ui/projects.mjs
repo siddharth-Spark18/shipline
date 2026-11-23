@@ -1,7 +1,7 @@
 // The projects one `shipline ui` server serves: a lazily created context per repo, the install contexts for folders
 // that have no Shipline yet, and the server-wide routes that list them (/api/projects, /api/overview, the CLI
 // handoff). Node 20+, no dependencies.
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { INTERFACE, semverGt } from '../interface.mjs';
 import {
@@ -12,7 +12,7 @@ import {
   registerQuietly,
   unregisterProject,
 } from '../registry.mjs';
-import { storeDir, uiDir } from '../store.mjs';
+import { mainRoot, storeDir, uiDir } from '../store.mjs';
 import { routes as diagnosticsRoutes } from './diagnostics.mjs';
 import { createChats } from './chat.mjs';
 import { routes as chatRoutes } from './chat-routes.mjs';
@@ -309,6 +309,18 @@ export function createProjects(app) {
 
   const versionOf = (v) => (v ? { package: v.package ?? null, interface: v.interface } : null);
 
+  // A worktree whose branch still carries pre-2.2 hooks keeps its own task store (they don't know the shared one).
+  function sharedStoreNote(root, probe) {
+    if (probe.state !== 'ok' || !probe.version || probe.version.interface >= 2) return null;
+    try {
+      return mainRoot(root) !== realpathSync(root)
+        ? "Older Shipline hooks: tasks aren't shared with other worktrees until this branch is upgraded."
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
   async function describe(entry) {
     const ctx = contexts.get(entry.id);
     const probe = probeRepo(entry.root);
@@ -327,6 +339,7 @@ export function createProjects(app) {
       waiting: w.count,
       chatRunning: w.chatRunning,
       message: probe.message,
+      note: sharedStoreNote(entry.root, probe),
     };
   }
 

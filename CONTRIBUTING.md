@@ -19,8 +19,10 @@ After changing anything under `packages/cli/templates/`, run `node packages/cli/
 record the new template hashes. When a rules template changes, also keep the old text's hash in
 `packages/cli/src/known-stub-rules.mjs`, so `upgrade` can still tell an untouched copy from an edited one.
 
-**CI** (`.github/workflows/cli.yml`) runs the full suite, the UI typecheck and the bundle-size check on Node 22, 24
-and 26 on Ubuntu, and on Node 22 and 26 on macOS and Windows.
+**CI** (`.github/workflows/cli.yml`) runs on pull requests only. It reports one required check, `ci`; the test jobs
+(the full suite, the UI typecheck and the bundle-size check on Node 22, 24 and 26 on Ubuntu, and on Node 22 and 26 on
+macOS and Windows) are skipped when a PR changes no CLI or UI code, and `ci` still passes. The publish workflow
+requires the tag commit to be on `main` and its merged PR's `ci` check to have succeeded.
 
 **Releasing.** Bump the version in `packages/cli/package.json`, add a `## [<version>]` entry to
 `packages/cli/CHANGELOG.md`, run the hash script, commit, then push a tag `v<version>` (for example `v1.0.0`).

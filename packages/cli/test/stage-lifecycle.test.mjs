@@ -786,13 +786,14 @@ describe('D12: worktrees', () => {
     assert.equal(settings.decision, 'ask');
   });
 
-  test('stage.mjs run from the worktree uses the worktree as its root (its own store)', () => {
+  test('stage.mjs run from the worktree uses the worktree as its root (config from it) and the main checkout\'s shared store', () => {
     const r = run(process.execPath, [path.join(wt, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'one', '--title', 'In worktree', '--session', 'wt-stage'], { cwd: wt, env: { CLAUDE_PROJECT_DIR: repo } });
     // The workflow `one` doesn't exist in this repo; the point is the root: the error names the worktree's workflow list.
     assert.equal(r.code, 1);
     const ok = run(process.execPath, [path.join(wt, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'small', '--title', 'In worktree', '--session', 'wt-stage'], { cwd: wt, env: { CLAUDE_PROJECT_DIR: repo } });
     assert.equal(ok.code, 0, ok.stderr);
-    assert.ok(existsSync(path.join(storeOf(wt), 'tasks', 'in-worktree', 'manifest.json')));
-    assert.ok(!existsSync(path.join(storeOf(repo), 'tasks', 'in-worktree')), 'not in the main checkout\'s store');
+    // Plan E: every worktree of a repo shares the main checkout's store.
+    assert.equal(storeOf(wt), storeOf(repo));
+    assert.ok(existsSync(path.join(storeOf(repo), 'tasks', 'in-worktree', 'manifest.json')), 'in the shared store');
   });
 });

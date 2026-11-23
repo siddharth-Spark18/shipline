@@ -80,6 +80,15 @@ With `ci.stale_checks` in `config.yml` set to `warn` (the default) it warns
 when they differ, with `fail` it fails. A command that failed and wasn't accepted fails the check either way. A hand-edited
 summary can still lie: this is evidence for reviewers, not a signature.
 
+**The `ci:` block.** Optional; it sets what the PR check (`ci-check.mjs`) does. The values shown are the defaults:
+
+```yaml
+ci:
+  missing_block: fail-unless-label   # fail-unless-label | warn | fail: a PR without the Shipline summary block
+  skip_label: shipline:skip          # the PR label that skips the check under fail-unless-label
+  stale_checks: warn                 # warn | fail: the summary's checks ran on different code than the PR's
+```
+
 **Confirmations.** `confirmations` in `config.yml` sets how often Claude asks before moving to the next stage, for the
 whole repo.
 

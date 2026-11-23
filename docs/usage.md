@@ -144,6 +144,8 @@ terminal, port or browser tab per repo.
   `npx @forgeyard/shipline@<version> ui`.
 - Chats can run in two repos at once; each repo still runs one chat at a time.
 
+**Worktrees share tasks.** Every `git worktree` of a repo uses the main checkout's task store, so a task started in one is listed in the others (`stage.mjs status --all` shows each task's branch). Config and workflows still come from the worktree you are in, and Plan ownership stays per task, so two worktrees can work on different tasks at once. A worktree whose branch still has older Shipline hooks keeps its own store until it is upgraded (the UI notes this). To clean up after deleted repos, run `npx @forgeyard/shipline prune`; after moving a repo, `npx @forgeyard/shipline relink --from <old path>`.
+
 To update every repo at once: `npx @forgeyard/shipline upgrade --all` (see [Upgrade and uninstall](install.md#upgrade-and-uninstall)).
 
 - **Chat:** talk to Claude in the repo. While Claude works, a row at the end of the messages shows what it is

@@ -37,14 +37,20 @@ Common problems and what to do.
   `shipline ui` in the new location.
 - **A repo shows "Newer Shipline" or "Needs reinstall".** That repo isn't served by this server; the others are. For a
   newer one, stop the server and run the version it names, for example `npx @forgeyard/shipline@<version> ui`.
-- **A task seems lost.** Tasks are stored per repo path under `~/.shipline/projects/`. If you moved or renamed
-  the repo folder, the store key changed and the old folder is still on disk; move it to the new key or work
-  from the old path. Also check you are on the same machine and `SHIPLINE_HOME` is unchanged.
+- **A task seems lost.** Tasks are stored outside the repo under `~/.shipline/projects/`, keyed by the repo's main
+  checkout path. If you moved or renamed the repo folder, run `npx @forgeyard/shipline relink --from <old path>` in
+  it (`--dry-run` previews); it moves the old store to the new key. It refuses if the new location already has tasks.
+  Also check you are on the same machine and `SHIPLINE_HOME` is unchanged.
+- **Old task data piling up.** `npx @forgeyard/shipline prune` lists (and, after you confirm, removes) the stores of
+  repos that no longer exist and `*.migrated-<date>` backups older than 30 days. It never touches a store whose repo
+  still has Shipline, or one that a worktree you still have uses.
+- **Installed in a monorepo package.** `init` warns when the folder is inside a larger git repo: Claude Code loads the
+  hooks only when it starts in the folder that has `.claude/settings.json`, so start it there, or install at the repo root.
 - **Windows.**
   - Install [Git for Windows](https://git-scm.com/download/win); Claude Code itself requires it.
   - The hook command is `node "$CLAUDE_PROJECT_DIR/.shipline/bin/run-hook.mjs" <hook>`, which relies on Claude Code
     running hooks through Git Bash. That is untested here; if hooks show an error, please report it.
   - `shipline ui` opens your browser with `start`, and stops a chat with `taskkill`. Stopping can take a few
     seconds.
-  - Task data is in `%USERPROFILE%\.shipline`. A repo at `C:\Users\you\repo` is stored as `C--Users-you-repo`.
+  - Task data is in `%USERPROFILE%\.shipline`. A repo at `C:\Users\you\repo` is stored in a folder named like `C--Users-you-repo-<hash>`.
   - Existing CRLF files keep CRLF when Shipline saves them; new files use LF.

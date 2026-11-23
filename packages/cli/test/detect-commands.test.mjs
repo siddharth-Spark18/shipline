@@ -3,6 +3,7 @@
 // Node 18+, no dependencies.
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { detectCommands } from '../src/detect-commands.mjs';
@@ -166,5 +167,39 @@ describe('precedence and empty repos', () => {
   test('an empty repo, and a folder that does not exist, give nothing', () => {
     assert.deepEqual(detectCommands(repo()), NONE);
     assert.deepEqual(detectCommands(path.join(repo(), 'missing')), NONE);
+  });
+});
+
+describe('package manager from the git root (Plan E, E5)', () => {
+  const scripts = { test: 'vitest run', lint: 'eslint .', build: 'tsc -b' };
+
+  function monorepo(lock) {
+    const dir = repo({ 'package.json': pkg({}), ...(lock ? { [lock]: '' } : {}), 'packages/web/package.json': pkg(scripts) });
+    execFileSync('git', ['init', '-q'], { cwd: dir });
+    return path.join(dir, 'packages', 'web');
+  }
+
+  for (const [lock, pm] of [['pnpm-lock.yaml', 'pnpm'], ['yarn.lock', 'yarn'], ['bun.lock', 'bun'], ['bun.lockb', 'bun'], ['package-lock.json', 'npm']]) {
+    test(`a package folder without a lockfile uses the ${lock} at the git root -> ${pm}`, () => {
+      assert.equal(detectCommands(monorepo(lock)).test, `${pm} test`);
+      assert.equal(detectCommands(monorepo(lock)).build, `${pm} run build`);
+    });
+  }
+
+  test('scripts still come from the package folder\'s own package.json', () => {
+    const d = detectCommands(monorepo('pnpm-lock.yaml'));
+    assert.deepEqual(d.sources, { test: 'package.json', lint: 'package.json', build: 'package.json' });
+  });
+
+  test('the package folder\'s own lockfile wins over the root\'s', () => {
+    const web = monorepo('pnpm-lock.yaml');
+    writeFileSync(path.join(web, 'yarn.lock'), '');
+    assert.equal(detectCommands(web).test, 'yarn test');
+  });
+
+  test('no lockfile anywhere (or no git): npm', () => {
+    assert.equal(detectCommands(monorepo(null)).test, 'npm test');
+    const plain = repo({ 'sub/package.json': pkg(scripts), 'pnpm-lock.yaml': '' });
+    assert.equal(detectCommands(path.join(plain, 'sub')).test, 'npm test', 'outside git a parent folder is not consulted');
   });
 });

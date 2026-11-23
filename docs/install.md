@@ -63,12 +63,12 @@ check. It then prints a review (the settings and every file it will write) and a
 answering no writes nothing and exits with code 1. Guardrails off writes every rail as `off` and no protected paths;
 a branch pattern must contain `{slug}`. When it finishes, `init` prints a numbered checklist: commit the setup, open
 Claude Code and trust the folder, try a small change, run `/shipline-setup`, and (with the CI check) protect main and
-require the check. `--yes` installs every workflow, uses detection for "has a UI", installs
+require the check. `--yes` installs the four default workflows (feature, bugfix, hotfix, small; add the others later in Setup or with `/shipline-setup`), uses detection for "has a UI", installs
 only the agents those workflows use (no standalone agents) and keeps your own agent files on a clash. Without a terminal and
 without `--yes` (or `--dry-run`) it refuses. If any other file name collides, it aborts with nothing written. Running it again
-reports "already initialized".
+says Shipline is already set up (exit 0) and how to update it. In a subfolder of a git repo (a monorepo package) it explains that the hooks only load when Claude Code starts in that folder and asks `Install here anyway?` (default No; `--yes` continues, and without a terminal it stops with exit 1 unless `--yes`).
 
-`init` also detects your test, lint and build commands from the repo root (Node with npm, pnpm, yarn or bun;
+`init` also detects your test, lint and build commands from the repo root (Node with npm, pnpm, yarn or bun, taken from the git root's lockfile when you install in a subfolder that has none;
 Python with pytest and ruff or flake8; Go; Rust; Make targets) and asks you to confirm them, and asks which
 tracker you use (None, the default, GitHub Issues or Jira). With None the ticket stage is skipped. Every stage ships with default rules; run `/shipline-setup` in Claude
 Code (or **Setup → Set up with Claude** in the UI) to tailor them to the repo. Until you do, Shipline reminds
@@ -100,18 +100,19 @@ recorded is a warning, not a failed command. The first time it is needed it is f
 task data and still have `.shipline/config.yml`.
 
 **upgrade** shows a preview and asks before changing anything. `--dry-run` only previews, `--yes` skips the
-question, `--force` also replaces Shipline files your team edited (they are skipped otherwise). Your `config.yml`,
+question, `--force` also replaces Shipline files your team edited. Run it as `npx @forgeyard/shipline@latest upgrade`: npx reuses a cached older copy of the package otherwise. Your `config.yml`,
 workflows and rules are yours: only an untouched shipped rules file is replaced. It never commits: review and commit
 the result.
 
 **Edited scripts in `.shipline/bin/`.** The scripts there (`guard.mjs`, `stage.mjs`, `lib.mjs`, `run-hook.mjs` and
 the others) must all be the same version, because new ones can need new code from `lib.mjs`. If your team edited any of
 them, `upgrade` (and `--dry-run`) refuses before writing anything and exits 1, naming the files and what they would
-get. Save your edits, run `upgrade --force`, then re-apply them. Edited files elsewhere are still just skipped. With
-`--all`, that repo is reported as failed and the others continue.
+get. Save your edits, run `upgrade --force`, then re-apply them. With `--all`, that repo is reported as failed and the others continue.
+
+**Edited files elsewhere** (rules, workflows, agents, skills, the CI workflow) are resolved one by one in a terminal: keep yours, replace it with the new version, write the new version as `<file>.shipline-new` next to it, or show the full diff. With `--yes` (and in `upgrade --all`) every edited file gets a `.shipline-new` side file and `upgrade` lists them; merge by hand, then delete them (`uninstall` removes any left). A kept file stays "edited" for the next upgrade. The `CLAUDE.md` block and the `settings.json` hook entries are left as they are when edited (no side files); `--force` replaces them. Files this version no longer ships that you edited are kept (or deleted, if you choose).
 
 **`upgrade --all`** runs `upgrade` once for every repo in the project list (sorted by path, skipping any whose folder is
-gone), each with its own preview and confirmation, or with `--yes` / `--dry-run` / `--force` passed through. It can't be
+gone), each with its own preview and confirmation (never per-file questions: edited files get `.shipline-new` side files), or with `--yes` / `--dry-run` / `--force` passed through. It can't be
 combined with `--dir`. A failure in one repo (for example a pre-1.0 one) is reported and the run goes on; the summary
 counts upgraded, already current, declined, skipped (folder not found) and failed repos, and the exit code is 1 if any
 failed. As with a single `upgrade`, restart running Claude Code sessions afterwards.

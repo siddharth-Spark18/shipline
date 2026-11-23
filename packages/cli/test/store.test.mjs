@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { encodePath, shiplineHome, storeDir, tasksDir, stateDir, uiDir } from '../src/store.mjs';
+import { encodePath, mainRoot, shiplineHome, storeDir, storeDirFor, storeKey, storeScheme, tasksDir, stateDir, uiDir } from '../src/store.mjs';
 import { BIN, CLI_ROOT, git, homeFor, hook, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
 
 const dirs = [];
@@ -60,7 +60,7 @@ describe('SHIPLINE_HOME', () => {
     withHome(home, () => {
       assert.equal(shiplineHome(), home);
       const store = storeDir(repo);
-      assert.equal(store, path.join(home, 'projects', encodePath(repo)));
+      assert.equal(store, path.join(home, 'projects', encodePath(repo))); // no .shipline/bin/VERSION: the 1.x key
       assert.equal(tasksDir(repo), path.join(store, 'tasks'));
       assert.equal(stateDir(repo), path.join(store, 'state'));
       assert.equal(uiDir(repo), path.join(store, 'ui'));
@@ -97,7 +97,7 @@ describe('SHIPLINE_HOME', () => {
     for (const d of [a, b]) {
       const r = run(process.execPath, [path.join(d, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'feature', '--title', 'Same name', '--session', 's1'], { cwd: d, env: { SHIPLINE_HOME: home } });
       assert.equal(r.code, 0, r.stderr);
-      const want = path.join(home, 'projects', encodePath(d), 'tasks', 'same-name');
+      const want = path.join(home, 'projects', storeKey(realpathSync(d)), 'tasks', 'same-name');
       assert.ok(r.stdout.includes(`Started Feature task in ${want}`), r.stdout);
       assert.ok(existsSync(path.join(want, 'manifest.json')));
     }
@@ -107,8 +107,7 @@ describe('SHIPLINE_HOME', () => {
 
 describe('repo.json collision guard', () => {
   // Another path that encodes the same way: /x/a-b and /x/a.b both give -x-a-b.
-  const plantCollision = (repo) => {
-    const store = storeOf(repo);
+  const plantCollision = (repo, store = storeOf(repo)) => {
     mkdirSync(store, { recursive: true });
     writeFileSync(path.join(store, 'repo.json'), JSON.stringify({ root: '/somewhere/else', created: '2026-01-01T00:00:00.000Z' }));
     return store;
@@ -126,7 +125,7 @@ describe('repo.json collision guard', () => {
 
   test('init and stage.mjs stop with the collision message; upgrade (which no longer touches the store) is unaffected', () => {
     const fresh = keep(tmpDir());
-    plantCollision(fresh);
+    plantCollision(fresh, path.join(homeFor(fresh), 'projects', storeKey(realpathSync(fresh)))); // init installs interface 2
     const r = run(process.execPath, [BIN, 'init', '--dir', fresh, '--yes'], { cwd: fresh });
     assert.equal(r.code, 1);
     assert.match(r.stderr, /Shipline store collision at .*belongs to \/somewhere\/else/);
@@ -166,7 +165,7 @@ describe('an unwritable store', () => {
       });
       assert.equal(r.code, 0, `${script}: ${r.stderr}`);
       const json = JSON.parse(r.stdout);
-      assert.ok(json.systemMessage.includes(`Shipline can't write its task store at ${path.join(home, 'projects', encodePath(repo))}`), `${script}: ${r.stdout}`);
+      assert.ok(json.systemMessage.includes(`Shipline can't write its task store at ${path.join(home, 'projects', storeKey(realpathSync(repo)))}`), `${script}: ${r.stdout}`);
       assert.ok(!r.stdout.includes('"deny"'));
     }
     const s = run(process.execPath, [path.join(repo, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'feature', '--title', 'X', '--session', 's1'], { cwd: repo, env: { SHIPLINE_HOME: home } });
@@ -226,10 +225,221 @@ describe('success criterion 2: a fresh install leaves the repo clean', () => {
     assert.equal(stage(repo, ['resume', 'nope'], 's4').code, 1);
   });
 
-  test('a ticketless task folder is {slug}; the store path is realpath-based', () => {
+  test('a ticketless task folder is {slug}; the store key is realpath-based', () => {
     const repo = keep(makeRepo({ commitInit: true }));
     assert.equal(stage(repo, ['start', '--workflow', 'hotfix', '--title', 'Quick One!'], 's1').code, 0);
     assert.ok(existsSync(path.join(storeOf(repo), 'tasks', 'quick-one', 'manifest.json')));
-    assert.equal(storeOf(repo), path.join(homeFor(repo), 'projects', encodePath(realpathSync(repo))));
+    assert.equal(storeOf(repo), path.join(homeFor(repo), 'projects', storeKey(realpathSync(repo))));
+  });
+});
+
+// ---------- store keys (interface 2) and the lazy migration from the 2.1 key ----------
+
+// Marks a folder as installed at `iface` (all storeDir reads is .shipline/bin/VERSION).
+function install(dir, iface = 2) {
+  mkdirSync(path.join(dir, '.shipline', 'bin'), { recursive: true });
+  writeFileSync(path.join(dir, '.shipline', 'bin', 'VERSION'), JSON.stringify({ package: '2.2.0', interface: iface, files: {}, excluded: [] }));
+  return dir;
+}
+
+// A 2.1-style store for `dir`: <home>/projects/<encodePath(dir)>/ with repo.json and the given task folders.
+function oldStore(dir, tasks = {}) {
+  const store = path.join(homeFor(dir), 'projects', encodePath(realpathSync(dir)));
+  mkdirSync(path.join(store, 'tasks'), { recursive: true });
+  writeFileSync(path.join(store, 'repo.json'), JSON.stringify({ root: realpathSync(dir), created: '2026-01-01T00:00:00.000Z' }));
+  for (const [name, text] of Object.entries(tasks)) {
+    mkdirSync(path.join(store, 'tasks', name), { recursive: true });
+    writeFileSync(path.join(store, 'tasks', name, 'manifest.json'), text);
+  }
+  return store;
+}
+
+const projectsOf = (dir) => path.join(homeFor(dir), 'projects');
+
+describe('store keys', () => {
+  test('<last 80 characters of the encoded path>-<10 hex of sha256>, at most 91 characters', () => {
+    const key = storeKey('/Users/dev/my-app');
+    assert.match(key, /^-Users-dev-my-app-[0-9a-f]{10}$/);
+    const long = storeKey(`/${'x'.repeat(40)}/${'y'.repeat(200)}/tail`);
+    assert.ok(long.length <= 91, long);
+    assert.ok(long.startsWith('y') && long.includes('-tail-'), 'keeps the distinctive tail');
+    assert.notEqual(storeKey('/a/my-app'), storeKey('/a/my/app'));
+  });
+
+  test('two repos whose paths encode alike both get a store (no STORE_COLLISION)', () => {
+    const base = keep(tmpDir());
+    const a = install(path.join(base, 'c', 'my-app'));
+    const b = install(path.join(base, 'c', 'my', 'app'));
+    withHome(homeFor(base), () => {
+      const sa = storeDir(a);
+      const sb = storeDir(b);
+      assert.notEqual(sa, sb);
+      assert.equal(JSON.parse(readFileSync(path.join(sa, 'repo.json'), 'utf8')).root, realpathSync(a));
+      assert.equal(JSON.parse(readFileSync(path.join(sb, 'repo.json'), 'utf8')).root, realpathSync(b));
+    });
+  });
+
+  test('a path of 300+ characters gets a short store folder', () => {
+    const base = keep(tmpDir());
+    const deep = install(path.join(base, ...Array.from({ length: 6 }, (_, i) => `${String(i).repeat(50)}`)));
+    assert.ok(realpathSync(deep).length > 300);
+    withHome(homeFor(base), () => {
+      const store = storeDir(deep);
+      assert.ok(path.basename(store).length <= 91);
+      assert.ok(existsSync(path.join(store, 'repo.json')));
+    });
+  });
+
+  test('repo.json of a new store: root, main_root, key_version 2, created', () => {
+    const repo = install(keep(tmpDir()));
+    withHome(homeFor(repo), () => {
+      const meta = JSON.parse(readFileSync(path.join(storeDir(repo), 'repo.json'), 'utf8'));
+      assert.equal(meta.root, repo);
+      assert.equal(meta.main_root, repo);
+      assert.equal(meta.key_version, 2);
+      assert.ok(!Number.isNaN(Date.parse(meta.created)));
+    });
+  });
+});
+
+describe('interface guard', () => {
+  test('interface 1 and a missing VERSION keep the old key and never migrate; interface 2 uses the new key', () => {
+    const base = keep(tmpDir());
+    const none = path.join(base, 'none');
+    const v1 = install(path.join(base, 'v1'), 1);
+    mkdirSync(none);
+    withHome(homeFor(base), () => {
+      assert.equal(storeScheme(none), 1);
+      assert.equal(storeScheme(v1), 1);
+      assert.equal(storeDir(none), path.join(projectsOf(base), encodePath(none)));
+      const old = oldStore(v1, { t: '{}' });
+      assert.equal(storeDir(v1), old);
+      assert.ok(existsSync(path.join(old, 'tasks', 't')));
+      assert.deepEqual(readdirSync(projectsOf(base)).filter((n) => n.includes('migrated')), []);
+      install(v1, 2); // upgraded: now the new key (and the migration)
+      assert.equal(storeScheme(v1), 2);
+      assert.equal(storeDir(v1), path.join(projectsOf(base), storeKey(v1)));
+    });
+  });
+
+  test('storeDirFor(root, 2) uses the new key before VERSION exists (init)', () => {
+    const repo = keep(tmpDir());
+    withHome(homeFor(repo), () => assert.equal(storeDirFor(repo, 2), path.join(projectsOf(repo), storeKey(repo))));
+  });
+});
+
+describe('migration from the 2.1 key', () => {
+  test('the old folder is renamed to the new key: tasks and repo.json come along, the old name is gone', () => {
+    const repo = install(keep(tmpDir()));
+    const old = oldStore(repo, { 'fix-1': '{"a":1}' });
+    withHome(homeFor(repo), () => {
+      const store = storeDir(repo);
+      assert.equal(store, path.join(projectsOf(repo), storeKey(repo)));
+      assert.ok(!existsSync(old));
+      assert.equal(readFileSync(path.join(store, 'tasks', 'fix-1', 'manifest.json'), 'utf8'), '{"a":1}');
+      const meta = JSON.parse(readFileSync(path.join(store, 'repo.json'), 'utf8'));
+      assert.equal(meta.key_version, 2);
+      assert.equal(meta.created, '2026-01-01T00:00:00.000Z');
+    });
+  });
+
+  test('when the new store already exists the old one is merged (name clashes get -2) and kept as .migrated-<date>', () => {
+    const repo = install(keep(tmpDir()));
+    const old = oldStore(repo, { same: '{"from":"old"}', only: '{"from":"old"}' });
+    mkdirSync(path.join(old, 'state'));
+    writeFileSync(path.join(old, 'state', 's1.json'), '{"old":true}');
+    withHome(homeFor(repo), () => {
+      const fresh = path.join(projectsOf(repo), storeKey(repo));
+      mkdirSync(path.join(fresh, 'tasks', 'same'), { recursive: true });
+      writeFileSync(path.join(fresh, 'tasks', 'same', 'manifest.json'), '{"from":"new"}');
+      mkdirSync(path.join(fresh, 'state'));
+      writeFileSync(path.join(fresh, 'state', 's1.json'), '{"new":true}');
+      writeFileSync(path.join(fresh, 'repo.json'), JSON.stringify({ root: realpathSync(repo), key_version: 2 }));
+      assert.equal(storeDir(repo), fresh);
+      assert.equal(readFileSync(path.join(fresh, 'tasks', 'same', 'manifest.json'), 'utf8'), '{"from":"new"}');
+      assert.equal(readFileSync(path.join(fresh, 'tasks', 'same-2', 'manifest.json'), 'utf8'), '{"from":"old"}');
+      assert.equal(readFileSync(path.join(fresh, 'tasks', 'only', 'manifest.json'), 'utf8'), '{"from":"old"}');
+      assert.equal(readFileSync(path.join(fresh, 'state', 's1.json'), 'utf8'), '{"new":true}');
+      assert.equal(readFileSync(path.join(fresh, 'state', 's1-2.json'), 'utf8'), '{"old":true}');
+      assert.ok(!existsSync(old));
+      const kept = readdirSync(projectsOf(repo)).filter((n) => n.startsWith(`${encodePath(realpathSync(repo))}.migrated-`));
+      assert.equal(kept.length, 1);
+      assert.match(kept[0], /\.migrated-\d{4}-\d{2}-\d{2}$/);
+    });
+  });
+
+  test('an old folder whose repo.json names another checkout is left alone', () => {
+    const repo = install(keep(tmpDir()));
+    const old = oldStore(repo, { t: '{}' });
+    writeFileSync(path.join(old, 'repo.json'), JSON.stringify({ root: '/elsewhere' }));
+    withHome(homeFor(repo), () => {
+      storeDir(repo);
+      assert.ok(existsSync(path.join(old, 'tasks', 't')));
+    });
+  });
+
+  test('two processes resolving at once lose nothing (rename, then merge)', async () => {
+    const { spawn } = await import('node:child_process');
+    const repo = install(keep(tmpDir()));
+    const old = oldStore(repo, { a: '{"n":1}', b: '{"n":2}', c: '{"n":3}' });
+    const lib = pathToFileURL(path.join(CLI_ROOT, 'templates', 'shipline', 'bin', 'lib.mjs')).href;
+    const code = `import(${JSON.stringify(lib)}).then((l) => console.log(l.storeDir(${JSON.stringify(repo)})))`;
+    const one = () =>
+      new Promise((resolve) => {
+        const p = spawn(process.execPath, ['--input-type=module', '-e', code], { env: { ...process.env, SHIPLINE_HOME: homeFor(repo) } });
+        let out = '';
+        let err = '';
+        p.stdout.on('data', (d) => (out += d));
+        p.stderr.on('data', (d) => (err += d));
+        p.on('close', (status) => resolve({ status, out: out.trim(), err }));
+      });
+    const results = await Promise.all([one(), one(), one(), one()]);
+    const fresh = path.join(projectsOf(repo), storeKey(repo));
+    for (const r of results) {
+      assert.equal(r.status, 0, r.err);
+      assert.equal(r.out, fresh);
+    }
+    assert.deepEqual(readdirSync(path.join(fresh, 'tasks')).sort(), ['a', 'b', 'c']);
+    assert.ok(!existsSync(old));
+  });
+});
+
+describe('mainRoot', () => {
+  const gitIn = (cwd, ...args) => spawnSync('git', ['-c', 'protocol.file.allow=always', ...args], { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@e.x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@e.x' } });
+
+  test('a normal repo is its own main root; a linked worktree resolves to the main checkout', () => {
+    const repo = keep(makeRepo({ init: false }));
+    const wt = path.join(keep(tmpDir()), 'wt');
+    git(repo, 'worktree', 'add', '-q', '-b', 'side', wt);
+    assert.equal(mainRoot(repo), realpathSync(repo));
+    assert.equal(mainRoot(wt), realpathSync(repo));
+  });
+
+  test('a subfolder of a repo keeps its own path (a monorepo package installed on its own)', () => {
+    const repo = keep(makeRepo({ init: false }));
+    assert.equal(mainRoot(path.join(repo, 'src')), realpathSync(path.join(repo, 'src')));
+  });
+
+  test('not a git repo: its own real path', () => {
+    const dir = keep(tmpDir());
+    assert.equal(mainRoot(dir), realpathSync(dir));
+  });
+
+  test('a submodule, a bare repo and --separate-git-dir fall back to the checkout\'s own path', () => {
+    const sup = keep(makeRepo({ init: false }));
+    const lib = keep(makeRepo({ init: false }));
+    const add = gitIn(sup, 'submodule', 'add', lib, 'vendor/lib');
+    assert.equal(add.status, 0, add.stderr);
+    const sub = path.join(sup, 'vendor', 'lib');
+    assert.equal(mainRoot(sub), realpathSync(sub), 'submodule');
+
+    const bare = path.join(keep(tmpDir()), 'r.git');
+    assert.equal(gitIn(path.dirname(bare), 'init', '-q', '--bare', bare).status, 0);
+    assert.equal(mainRoot(bare), realpathSync(bare), 'bare repo');
+
+    const work = keep(tmpDir());
+    const gitdir = path.join(keep(tmpDir()), 'elsewhere');
+    assert.equal(gitIn(work, 'init', '-q', '--separate-git-dir', gitdir).status, 0);
+    assert.equal(mainRoot(work), realpathSync(work), 'separate git dir');
   });
 });

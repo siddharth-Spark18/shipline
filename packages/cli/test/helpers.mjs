@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { encodePath } from '../templates/shipline/bin/lib.mjs';
+import { encodePath, mainRoot, storeKey, storeScheme } from '../templates/shipline/bin/lib.mjs';
 
 export const CLI_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const BIN = path.join(CLI_ROOT, 'bin', 'shipline.mjs');
@@ -34,9 +34,11 @@ export function homeFor(dir) {
   return PROCESS_HOME;
 }
 
-// The store folder of a repo: <its SHIPLINE_HOME>/projects/<encoded realpath>.
+// The task store folder of a repo: <its SHIPLINE_HOME>/projects/<key>, the key by the checkout's installed interface
+// (interface 2: <encoded main checkout>-<hash>, shared by worktrees; 1 or no VERSION: the encoded realpath).
 export function storeOf(dir) {
-  return path.join(homeFor(dir), 'projects', encodePath(realpathSync(dir)));
+  const real = realpathSync(dir);
+  return path.join(homeFor(dir), 'projects', storeScheme(real) >= 2 ? storeKey(mainRoot(real)) : encodePath(real));
 }
 
 // The hooks' findRoot honours CLAUDE_PROJECT_DIR and stage.mjs reads SHIPLINE_SESSION; when these tests

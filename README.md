@@ -105,8 +105,10 @@ reached" are in [Phone access](docs/phone-access.md).
 | `ui` | Opens the local web UI, one server for every repo (a second run hands over to it). `--remote` (phone access), `--port <n>`, `--no-open`, `--dir <path>` |
 | `upgrade` | Updates the installed files to this version. `--yes`, `--dry-run`, `--force`; `--all` for every registered repo |
 | `uninstall` | Removes what `init` installed. `--yes`, `--dry-run`, `--purge` |
+| `prune` | Removes the task data of repos that no longer exist. `--dry-run`, `--yes` |
+| `relink` | Gives a moved repo the task data of its old path. `--from <old path>`, `--dry-run`, `--dir <path>` |
 
-Run `npx @forgeyard/shipline <command> --help` for details. Task data lives in `~/.shipline`, not in your repo.
+Run `npx @forgeyard/shipline <command> --help` for details, and `npx @forgeyard/shipline@latest upgrade` to update (`@latest` avoids npx's cached older copy). Task data lives in `~/.shipline`, not in your repo.
 
 ## Documentation
 

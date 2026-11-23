@@ -126,13 +126,14 @@ describe('init writes VERSION', () => {
     assert.ok(!/npx shipline/.test(r.stdout));
   });
 
-  test('init on an initialized repo points at `npx @forgeyard/shipline upgrade`', () => {
+  test('init on an initialized repo points at `npx @forgeyard/shipline@latest upgrade`', () => {
     const dir = fresh();
     assert.equal(runInit(dir).code, 0);
     const r = runInit(dir);
     assert.equal(r.code, 0);
-    assert.match(r.stdout, /already initialized/);
-    assert.match(r.stdout, /npx @forgeyard\/shipline upgrade/);
+    assert.match(r.stdout, /already set up/);
+    assert.match(r.stdout, /already set up in .* \(version \S+\)\./);
+    assert.match(r.stdout, /npx @forgeyard\/shipline@latest upgrade/);
   });
 
   test('--dry-run lists VERSION and writes nothing', () => {
@@ -257,6 +258,6 @@ describe('compareInterface', () => {
   });
 
   test('MISSING_BEFORE has the interface-2 entry', () => {
-    assert.deepEqual(MISSING_BEFORE, [{ interface: 2, missing: 'hook crash warnings, Bash write blocking, task auto-bind, abandon, side pass, explain and status --all' }]);
+    assert.deepEqual(MISSING_BEFORE, [{ interface: 2, missing: 'hook crash warnings, Bash write blocking, task auto-bind, abandon, side pass, explain, status --all and a task store shared by every worktree of a repo' }]);
   });
 });

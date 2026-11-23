@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { BIN, FIXTURES, git, makeRepo, removeDir, run, runInitAll, storeOf, tmpDir } from './helpers.mjs';
+import { BIN, FIXTURES, git, homeFor, makeRepo, removeDir, run, runInitAll, storeOf, tmpDir } from './helpers.mjs';
 
 const sha = (data) => createHash('sha256').update(data).digest('hex');
 const dirs = [];
@@ -389,3 +389,41 @@ describe('the CI workflow', () => {
     assert.ok(exists(dir, CI));
   });
 });
+
+describe('side files and shared stores (Plan E)', () => {
+  test('removes <file>.shipline-new left by upgrade next to Shipline-owned files, and lists them in the preview', () => {
+    const dir = makeRepo({ commitInit: true });
+    dirs.push(dir);
+    writeFileSync(path.join(dir, '.claude/agents/planner.md.shipline-new'), 'new planner\n');
+    writeFileSync(path.join(dir, '.claude/agents/unrelated.md.shipline-new'), 'not ours\n');
+    const preview = uninstall(dir, '--dry-run');
+    assert.match(preview.stdout, /- \.claude\/agents\/planner\.md\.shipline-new/);
+    const r = uninstall(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!exists(dir, '.claude/agents/planner.md.shipline-new'));
+    assert.ok(exists(dir, '.claude/agents/unrelated.md.shipline-new'), 'only side files of Shipline-owned paths');
+  });
+
+  test('--purge keeps a store that another registered checkout (a worktree) still uses', () => {
+    const dir = makeRepo({ commitInit: true });
+    dirs.push(dir);
+    const wt = path.join(dir, 'wt');
+    git(dir, 'worktree', 'add', '-q', '-b', 'side', wt);
+    assert.equal(run(process.execPath, [BIN, 'upgrade', '--dir', wt, '--dry-run'], { cwd: wt }).code, 0);
+    const regFile = path.join(homeFor(dir), 'projects.json');
+    const reg = readJson(regFile);
+    reg.projects.push({ id: 'bbbbbbbbbbbb', root: wt, group: null, addedAt: '2026-01-01T00:00:00.000Z' });
+    writeFileSync(regFile, JSON.stringify(reg));
+    assert.equal(stage_start(dir), 0);
+    const store = storeOf(dir); // before uninstall: it removes the VERSION that names the key scheme
+    assert.ok(existsSync(store));
+    const r = uninstall(dir, '--yes', '--purge');
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /is shared with other checkouts of this repo/);
+    assert.ok(existsSync(store), 'the shared store is kept');
+  });
+});
+
+function stage_start(dir) {
+  return run(process.execPath, [path.join(dir, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'bugfix', '--title', 'T', '--session', 's1'], { cwd: dir }).code;
+}

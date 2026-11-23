@@ -259,3 +259,59 @@ describe('init: the file count and the warnings', () => {
     }
   });
 });
+
+describe('help for every command (Plan E, E7)', () => {
+  const COMMANDS = ['init', 'upgrade', 'uninstall', 'ui', 'prune', 'relink'];
+
+  test('`help`, `--help` and `-h` print the overview and then every command\'s help under a heading', () => {
+    for (const args of [['help'], ['--help'], ['-h'], []]) {
+      const r = cli(args);
+      assert.equal(r.code, 0, args.join(' '));
+      assert.match(r.stdout, /^shipline - repo-installed Claude Code workflow\n/);
+      for (const c of COMMANDS) {
+        assert.ok(r.stdout.includes(`----- npx @forgeyard/shipline ${c} -----\n${cli([c, '--help']).stdout.trimEnd()}`), `${args.join(' ')}: ${c}`);
+      }
+    }
+  });
+
+  test('`help <command>` prints that command\'s help only, the same text as `<command> --help`', () => {
+    for (const c of COMMANDS) {
+      const r = cli(['help', c]);
+      assert.equal(r.code, 0, c);
+      assert.equal(r.stdout, cli([c, '--help']).stdout);
+      assert.ok(r.stdout.startsWith(`Usage: npx @forgeyard/shipline ${c}`), r.stdout);
+      assert.ok(!r.stdout.includes('shipline - repo-installed'));
+    }
+  });
+
+  test('`help <unknown>` is an error with the overview, exit 2', () => {
+    const r = cli(['help', 'frobnicate']);
+    assert.equal(r.code, 2);
+    assert.equal(r.stderr, 'shipline: unknown command frobnicate\n\n');
+    assert.match(r.stdout, /^shipline - repo-installed Claude Code workflow\n/);
+  });
+
+  test('the overview lists prune, relink and help', () => {
+    const r = cli(['--help']);
+    assert.match(r.stdout, /^ {2}prune {7}Remove the task data of repos that no longer exist$/m);
+    assert.match(r.stdout, /^ {2}relink {6}Give a moved repo back the task data of its old path$/m);
+  });
+
+  test('prune takes no --dir; relink needs a value for --from', () => {
+    assert.equal(cli(['prune', '--dir', '/x']).code, 2);
+    const r = cli(['relink', '--from']);
+    assert.equal(r.code, 2);
+    assert.match(r.stderr, /--from needs a value/);
+  });
+
+  test('init in an initialized repo exits 0 with the already-set-up message and the @latest upgrade command', () => {
+    const repo = makeRepo({ commitInit: true });
+    try {
+      const r = cli(['init', '--dir', repo, '--yes'], repo);
+      assert.equal(r.code, 0);
+      assert.match(r.stdout, new RegExp(`^Shipline is already set up in ${repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(version 2\\.2\\.0\\)\\. Nothing was written\\.\\nTo update it, run: npx @forgeyard/shipline@latest upgrade\\n`));
+    } finally {
+      removeDir(repo);
+    }
+  });
+});

@@ -10,6 +10,29 @@ Fixes to enforcement: a bugfix can get past Reproduce, Verify no longer loops on
 hook says so, and `upgrade` keeps `.shipline/bin/` at one version. **The hook contract (INTERFACE) is now 2**:
 `upgrade` rewrites the hook entries in `.claude/settings.json`; restart running Claude Code sessions afterwards.
 
+### Store, CLI and docs
+
+- **Collision-proof task store keys, shared by worktrees (INTERFACE 2).** The store folder is now
+  `<last 80 characters of the encoded main checkout path>-<10 hex of its sha256>`, so `~/c/my-app` and `~/c/my/app`
+  no longer collide and very long paths work. Every `git worktree` of a repo resolves to the main checkout's store, so
+  tasks are shared; config and workflows still come from each worktree's own `.shipline/`. Existing stores move
+  lazily and never lose data: a checkout's old folder is renamed to the new key, or merged task by task when the
+  shared store already exists (the old folder is kept as `<old>.migrated-<date>`). A checkout whose hooks are still
+  interface 1 keeps its old per-checkout store until it is upgraded.
+- **`shipline prune`** removes the stores of repos that are gone (and migration backups older than 30 days); a store
+  that a worktree you still have uses is kept.
+- **`shipline relink --from <old path>`** gives a moved repo the task data of its old path.
+- **`init` in a subfolder of a git repo** says so and asks before installing there; command detection takes the
+  package manager from the git root's lockfile when the folder has none.
+- **`upgrade` handles edited files one by one**: keep yours, replace, write `<file>.shipline-new`, or show the diff.
+  `--yes` and `upgrade --all` write the `.shipline-new` side files; `uninstall` removes them.
+- **Help:** `shipline help` and `--help` print every command's help; `help <command>` prints one. Running `init` where
+  Shipline is already set up says so and how to update.
+- **Publish safety:** the release workflow requires the tag commit to be on `main` with a passing `ci` check on its
+  merged PR, and publishes one tag at a time.
+- **Docs:** `--yes` installs the four default workflows, the `ci:` config block is documented, CONTRIBUTING describes
+  the PR-only `ci` check, and upgrade is shown as `npx @forgeyard/shipline@latest upgrade`.
+
 ### Fixed
 
 - **Verify could trust a stale check run after a same-size edit.** The code fingerprint copies git's index to reuse its

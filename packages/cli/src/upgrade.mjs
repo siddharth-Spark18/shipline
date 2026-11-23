@@ -14,6 +14,7 @@ import { INTERFACE, compareInterface, isPreOne, preOneMessage, readRepoVersion, 
 import { mergeSettingsObject, parseSettings } from './init.mjs';
 import { KNOWN_STUB_RULES } from './known-stub-rules.mjs';
 import { listProjects, probeStateOf, registerQuietly } from './registry.mjs';
+import { storeDir } from './store.mjs';
 
 const require = createRequire(import.meta.url);
 const KNOWN = require('./known-hashes.json');
@@ -107,7 +108,7 @@ function planFiles(root, version, force) {
       plan.replace.push({ to: f.to, data, forced: !isUnedited(curHash, f.to, record) });
       plan.hashes[f.to] = newHash;
     } else {
-      plan.skip.push({ to: f.to, diff: lineDiff(current.toString('utf8'), data.toString('utf8')) });
+      plan.skip.push({ to: f.to, data, newHash, diff: lineDiff(current.toString('utf8'), data.toString('utf8')) });
       if (record && record[f.to]) plan.hashes[f.to] = record[f.to];
     }
   }
@@ -128,7 +129,7 @@ function planFiles(root, version, force) {
         plan.replace.push({ to: CI_WORKFLOW, data, forced: !isUnedited(curHash, CI_WORKFLOW, record) });
         plan.hashes[CI_WORKFLOW] = newHash;
       } else {
-        plan.skip.push({ to: CI_WORKFLOW, diff: lineDiff(current.toString('utf8'), data.toString('utf8')) });
+        plan.skip.push({ to: CI_WORKFLOW, data, newHash, diff: lineDiff(current.toString('utf8'), data.toString('utf8')) });
         if (record && record[CI_WORKFLOW]) plan.hashes[CI_WORKFLOW] = record[CI_WORKFLOW];
       }
     }
@@ -233,6 +234,55 @@ function planRules(root) {
 
 // ---------- applying ----------
 
+// What an edited file's new version is written as when the team keeps its own (never loaded by Claude Code or GitHub).
+const SIDE_SUFFIX = '.shipline-new';
+
+// The 'k'/'r'/'n'/'d' answers to the per-file question, by their first letter or whole word.
+const FILE_CHOICES = { k: 'keep', keep: 'keep', r: 'replace', replace: 'replace', n: 'new', new: 'new', w: 'new' };
+const REMOVED_CHOICES = { k: 'keep', keep: 'keep', d: 'delete', delete: 'delete' };
+
+async function defaultAsk(question) {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return (await rl.question(question)).trim().toLowerCase();
+  } finally {
+    rl.close();
+  }
+}
+
+const diffCounts = (diff) => ({
+  added: diff.filter((l) => /^ {4}\+ /.test(l)).length,
+  removed: diff.filter((l) => /^ {4}- /.test(l)).length,
+});
+
+// Asks, for each edited file, what to do with it (keep mine / replace / write .shipline-new / show the diff; a file no
+// longer shipped: keep / delete). Sets `choice` on every entry. Nothing is written here.
+async function askConflicts(conflicts, ask) {
+  for (const c of conflicts) {
+    if (c.removed) {
+      for (;;) {
+        const a = await ask(`\n${c.to} is no longer shipped, and your team edited it.\n  [k]eep it / [d]elete it: `);
+        if (REMOVED_CHOICES[a]) {
+          c.choice = REMOVED_CHOICES[a];
+          break;
+        }
+      }
+      continue;
+    }
+    const n = diffCounts(c.diff);
+    console.log(`\n${c.to}: edited by your team (the new version adds ${n.added} and removes ${n.removed} line${n.added + n.removed === 1 ? '' : 's'} against yours)`);
+    for (;;) {
+      const a = await ask('  [k]eep mine / [r]eplace with new / write [n]ew as .shipline-new / show [d]iff: ');
+      if (a === 'd' || a === 'diff') {
+        console.log(c.diff.join('\n'));
+      } else if (FILE_CHOICES[a]) {
+        c.choice = FILE_CHOICES[a];
+        break;
+      }
+    }
+  }
+}
+
 class StepError extends Error {
   constructor(step, cause, extra = '') {
     super(`${step}: ${cause && cause.message ? cause.message : cause}${extra}`);
@@ -250,6 +300,12 @@ function apply(root, ctx) {
       writeFileSync(abs, f.data);
     }
     for (const f of files.remove) rmSync(path.join(root, f.to), { force: true });
+    for (const c of ctx.conflicts || []) {
+      const abs = path.join(root, c.to);
+      if (c.choice === 'replace') writeFileSync(abs, c.data);
+      else if (c.choice === 'new') writeFileSync(`${abs}${SIDE_SUFFIX}`, c.data);
+      else if (c.choice === 'delete') rmSync(abs, { force: true });
+    }
     if (shared.claude.text !== undefined && shared.claude.action !== 'skip') writeFileSync(path.join(root, 'CLAUDE.md'), shared.claude.text);
     if (shared.settings.text !== undefined) {
       mkdirSync(path.join(root, '.claude'), { recursive: true });
@@ -273,7 +329,7 @@ function sortKeys(o) {
 
 // Returns a process exit code. `report` (optional) gets `outcome` for `upgrade --all`: 'upgraded', 'current',
 // 'dry-run', 'declined' or 'failed'.
-export async function runUpgrade({ target, yes = false, dryRun = false, force = false, report = {} } = {}) {
+export async function runUpgrade({ target, yes = false, dryRun = false, force = false, perFile = true, ask = defaultAsk, report = {} } = {}) {
   const root = path.resolve(target || process.cwd());
   report.outcome = 'failed';
   if (!existsSync(root) || !lstatSync(root).isDirectory()) {
@@ -370,6 +426,21 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
   if (warnings.length) out.push('', 'Warnings', ...warnings.map((w) => `  ! ${w}`));
   console.log(out.join('\n'));
 
+  // Edited Shipline files (outside .shipline/bin/, which stays all or nothing, see above): asked about one by one in a
+  // terminal; with --yes (and for `upgrade --all`) the new version is written next to the file as <file>.shipline-new.
+  const conflicts = files.skip.filter((f) => !/^\.shipline\/bin\/[^/]+$/.test(f.to) || f.removed);
+  const interactive = !yes && perFile;
+  for (const c of conflicts) c.choice = c.removed ? 'keep' : 'new';
+  if (conflicts.length) {
+    const lines = ['', 'Edited files'];
+    for (const c of conflicts) {
+      if (dryRun && interactive) lines.push(`  ? ${c.to}: you would be asked: ${c.removed ? 'keep or delete' : 'keep mine, replace, write .shipline-new, or show the diff'}`);
+      else if (c.removed) lines.push(`  = keep     ${c.to} (no longer shipped; your edit stays)`);
+      else lines.push(`  + new      ${c.to}${SIDE_SUFFIX}${interactive ? ' (unless you choose otherwise)' : ''}`);
+    }
+    console.log(lines.join('\n'));
+  }
+
   if (dryRun) {
     console.log('\nDry run, nothing written.');
     report.outcome = 'dry-run';
@@ -381,9 +452,8 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
       console.error('\nshipline: not a terminal, so there is nobody to confirm. Re-run with --yes to apply, or --dry-run to preview.');
       return 1;
     }
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const answer = (await rl.question('\nApply these changes? [y/N] ')).trim().toLowerCase();
-    rl.close();
+    if (interactive && conflicts.length) await askConflicts(conflicts, ask);
+    const answer = await ask('\nApply these changes? [y/N] ');
     if (answer !== 'y' && answer !== 'yes') {
       console.log('Cancelled, nothing was changed.');
       report.outcome = 'declined';
@@ -391,12 +461,23 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     }
   }
 
+  for (const c of conflicts) if (c.choice === 'replace') files.hashes[c.to] = c.newHash;
+  for (const c of conflicts) if (c.choice === 'delete') delete files.hashes[c.to];
   try {
-    apply(root, { files, shared, rulesPlan, excluded });
+    apply(root, { files, shared, rulesPlan, excluded, conflicts });
   } catch (e) {
     console.error(`shipline: ${e.message}`);
     return 1;
   }
+
+  // The new interface may use a different store folder: bring this checkout's tasks over now, not on the first hook run.
+  try {
+    storeDir(root);
+  } catch (e) {
+    console.warn(`shipline: ${e.message}`);
+  }
+  const sideFiles = conflicts.filter((c) => c.choice === 'new').map((c) => `${c.to}${SIDE_SUFFIX}`);
+  if (sideFiles.length) console.log(`\nYour edited files were kept. Merge these by hand, then delete the ${SIDE_SUFFIX} files:\n${sideFiles.map((f) => `  ${f}`).join('\n')}`);
 
   console.log(`\nUpgraded to ${PACKAGE_VERSION} (interface ${INTERFACE}).
 
@@ -427,7 +508,7 @@ export async function runUpgradeAll({ yes = false, dryRun = false, force = false
     console.log(`\n=== ${p.root} ===`);
     const report = {};
     try {
-      await runUpgrade({ target: p.root, yes, dryRun, force, report });
+      await runUpgrade({ target: p.root, yes, dryRun, force, perFile: false, report });
     } catch (e) {
       console.error(`shipline: ${e && e.message ? e.message : e}`);
       report.outcome = 'failed';

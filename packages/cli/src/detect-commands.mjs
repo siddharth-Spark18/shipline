@@ -1,5 +1,5 @@
 // Detects the test, lint and build commands of a repo from the files at its root. Reads files only: it never runs
-// a project script or a package manager. Node 22+, no dependencies.
+// a project script or a package manager (it only asks git for the repo root). Node 22+, no dependencies.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
@@ -14,6 +14,34 @@ const read = (file) => {
 
 const all = (file) => ({ test: file, lint: file, build: file });
 
+const LOCKFILES = [
+  ['pnpm-lock.yaml', 'pnpm'],
+  ['yarn.lock', 'yarn'],
+  ['bun.lockb', 'bun'],
+  ['bun.lock', 'bun'],
+  ['package-lock.json', 'npm'],
+];
+
+const lockfileManager = (dir) => (LOCKFILES.find(([f]) => existsSync(path.join(dir, f))) || [])[1] || null;
+
+// The git work tree root above `dir`, or null outside git (or when git is missing).
+function gitToplevel(dir) {
+  try {
+    const r = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    return r.status === 0 && r.stdout.trim() ? path.resolve(dir, r.stdout.trim()) : null;
+  } catch {
+    return null;
+  }
+}
+
+// The package manager: the target's own lockfile, else (a subfolder of a monorepo) the one at the git root, else npm.
+function packageManager(root) {
+  const own = lockfileManager(root);
+  if (own) return own;
+  const top = gitToplevel(root);
+  return (top && path.resolve(top) !== path.resolve(root) && lockfileManager(top)) || 'npm';
+}
+
 function node(root) {
   const text = read(path.join(root, 'package.json'));
   if (text === null) return null;
@@ -25,13 +53,7 @@ function node(root) {
   }
   const scripts = pkg && typeof pkg === 'object' && pkg.scripts && typeof pkg.scripts === 'object' ? pkg.scripts : {};
   const has = (name) => typeof scripts[name] === 'string' && scripts[name].trim() !== '';
-  const pm = existsSync(path.join(root, 'pnpm-lock.yaml'))
-    ? 'pnpm'
-    : existsSync(path.join(root, 'yarn.lock'))
-      ? 'yarn'
-      : existsSync(path.join(root, 'bun.lockb')) || existsSync(path.join(root, 'bun.lock'))
-        ? 'bun'
-        : 'npm';
+  const pm = packageManager(root);
   const out = {};
   if (has('test') && !scripts.test.includes('no test specified')) out.test = `${pm} test`;
   if (has('lint')) out.lint = `${pm} run lint`;

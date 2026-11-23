@@ -17,7 +17,9 @@ permissions:
   pull-requests: read
 
 jobs:
-  # Whether the PR touches the CLI, the UI or this workflow (the test matrix is skipped otherwise).
+  # Whether the PR touches the CLI, the UI, the workspace's dependency files or these workflows (the test matrix is
+  # skipped otherwise). The root package.json, pnpm-lock.yaml and pnpm-workspace.yaml decide what gets installed, so a
+  # dependency-only PR (e.g. a lockfile bump) must run the tests too.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -28,7 +30,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           files=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" -q '.[].filename')
-          if printf '%s\n' "$files" | grep -qE '^(packages/cli/|packages/ui/|\.github/workflows/cli\.yml$)'; then
+          if printf '%s\n' "$files" | grep -qE '^(packages/cli/|packages/ui/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/(cli|publish)\.yml$)'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"

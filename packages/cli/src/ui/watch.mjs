@@ -155,7 +155,7 @@ export async function watchRepo(root, onChange, opts = {}) {
 // a `drafts` event carries the new list.
 export async function startTaskWatch(app) {
   let handle = null;
-  let running = false;
+  let running = null; // the refresh in flight, so close() can wait for it
   let again = false;
   let closed = false;
   let configChanged = false;
@@ -198,8 +198,7 @@ export async function startTaskWatch(app) {
       again = true;
       return;
     }
-    running = true;
-    try {
+    running = (async () => {
       do {
         again = false;
         if (configChanged) {
@@ -213,20 +212,24 @@ export async function startTaskWatch(app) {
           app.hub.send('drafts', { drafts: JSON.parse(drafts) }); // wrapped: the hub adds repoId to the payload
         }
       } while (again && !closed);
-    } catch (e) {
-      log('refresh-error', { message: e.message });
-    } finally {
-      running = false;
-    }
+    })()
+      .catch((e) => log('refresh-error', { message: e.message }))
+      .finally(() => {
+        running = null;
+      });
+    return running;
   }
 
   await start();
   return {
     mode: () => handle.mode,
     refresh,
+    // Resolves once a refresh already in flight has finished: it resolves store paths against SHIPLINE_HOME, so a
+    // shutdown that moved on without it could create a store after the server is gone.
     close() {
       closed = true;
       handle.close();
+      return running || Promise.resolve();
     },
   };
 }

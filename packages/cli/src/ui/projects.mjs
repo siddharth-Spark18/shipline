@@ -237,7 +237,7 @@ export function createProjects(app) {
   // check (409 chat-running).
   async function dispose(ctx) {
     contexts.delete(ctx.id);
-    if (ctx.watch) ctx.watch.close();
+    if (ctx.watch) await ctx.watch.close();
     if (ctx.chats) await ctx.chats.close();
     ctx.connectFns.length = 0;
   }
@@ -784,9 +784,9 @@ export function createProjects(app) {
 
     // Shutdown, in two steps like the single-repo server had: stop the file watches, then (after http is closed) every
     // chat and its lock.
-    closeWatches() {
+    async closeWatches() {
       stopped = true;
-      for (const ctx of contexts.values()) if (ctx.watch) ctx.watch.close();
+      await Promise.all([...contexts.values()].map((ctx) => ctx.watch && ctx.watch.close()));
     },
     async closeChats() {
       for (const ctx of contexts.values()) {

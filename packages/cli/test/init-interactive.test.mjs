@@ -852,6 +852,15 @@ describe('a subfolder of a git repo (Plan E, E5)', () => {
     assert.deepEqual(tree(web), before);
   });
 
+  // 2.2.0 hung on Windows CI here: injected prompts but no `ask` sent the question to stdin, which nobody answers.
+  test('without a terminal, injected prompts but no ask: stops with exit 1 instead of waiting on stdin', async () => {
+    const { top, web } = monorepo();
+    const r = await initWith(web, selection());
+    assert.equal(r.code, 1);
+    assert.ok(r.stderr.includes(TEXT(top, web)), r.stderr);
+    assert.ok(!exists(web, '.shipline'));
+  });
+
   test('--yes prints the note and installs anyway', () => {
     const { top, web } = monorepo();
     const r = runInit(web);

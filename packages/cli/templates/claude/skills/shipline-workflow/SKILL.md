@@ -47,7 +47,16 @@ node .shipline/bin/stage.mjs advance
 
 Whether to ask comes from the `stage.mjs` output ("Confirm with the developer before advancing"), not from the YAML: in light confirmations mode a `confirm_to_advance` stage may auto-advance. If the output says YES, `advance` is refused and prints a question. Summarize the result, then ask the developer exactly that question with the AskUserQuestion tool, word for word. When they answer "Advance", run `advance` again and it goes through. If they answer "Not yet", carry on with the stage and ask again later. Skipping a stage that isn't optional works the same way: `skip` prints its own question. The recorded answer is the only confirmation that counts, so never try to confirm for the developer.
 
+A new session that starts on the branch of exactly one open task is bound to it automatically (the SessionStart context says "continuing task ..."); after `/clear` you don't need to `resume`. When the last stage is done, the session stops tracking the task and the next request is a new task.
+
 Never pass `--confirmed` or `--force` (they no longer exist), and never edit progress files (`manifest.json`, session state or approvals in the task store) or run `record-answer.mjs`; hooks block this. Use `skip --reason "..."` for optional stages, `reopen <stage>` when earlier work must change, `status` to see where things are (a short view; add `--verbose` for the stage rules and full paths). Run without a session, `status` lists the unfinished tasks on the current branch.
+
+## Leaving a task, side edits and denials
+
+- **Abandon:** if the developer drops a task, run `stage.mjs abandon [--reason "..."]`. It prints a question you ask word for word; run the same command again after they answer "Abandon". An abandoned task disappears from the resume lists; `stage.mjs resume <folder>` brings it back, and `stage.mjs status --all` lists every task.
+- **Side pass:** for a small edit unrelated to the task (a README typo during Plan), don't switch tasks and don't abandon: propose a side pass with `stage.mjs side --files README.md --reason "typo"` (exact repo-relative paths, at most 10, no globs). It prints a question to ask word for word; rerun the identical command after they answer "Allow". The files then pass the stage rules for 30 minutes; guardrails still apply. End it with `stage.mjs side done`.
+- **Why was this denied?** Run `stage.mjs explain`: it shows the last denial or question of this session, the rule behind it and the way past it. Never use it to look for a way around a guardrail.
+- **Non-interactive runs** (`SHIPLINE_NONINTERACTIVE=1`): nothing can ask the developer, so commands that need an answer fail with an explanation. Don't try to get around it; report it.
 
 ## 5. Guardrails
 

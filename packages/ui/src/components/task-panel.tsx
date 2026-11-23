@@ -254,17 +254,50 @@ function TaskHeading({ task }: { task: Task }) {
   );
 }
 
+function formatDate(iso: string | null | undefined): string {
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(t) ? new Date(t).toLocaleDateString() : '';
+}
+
+/** The abandoned banner, and the owner line when another session is working on the task. */
+function TaskNotes({ task, chatId }: { task: Task; chatId?: string | null }) {
+  const owner = task.owner;
+  const other =
+    owner && owner.active && owner.session !== (chatId ?? '').replace(/[^A-Za-z0-9_-]/g, '_');
+  const minutes = owner
+    ? Math.max(0, Math.round((Date.now() - Date.parse(owner.last_seen)) / 60000))
+    : 0;
+  if (!task.abandoned && !other) return null;
+  return (
+    <div className="flex flex-col gap-1 text-xs">
+      {task.abandoned && (
+        <p className="rounded-md border border-dashed px-2 py-1 text-muted-foreground">
+          Abandoned {formatDate(task.abandoned.at)}
+          {task.abandoned.reason ? `: ${task.abandoned.reason}` : ''}
+        </p>
+      )}
+      {other && (
+        <p className="text-muted-foreground">
+          Another session is working on this task (active {minutes} min ago).
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** One task in the chat's list: a one-line summary, and when expanded its stage timeline and files. */
 function ChatTaskRow({
   task,
   current,
   expanded,
   onToggle,
+  chatId,
 }: {
   task: Task;
   current: boolean;
   expanded: boolean;
   onToggle: () => void;
+  chatId?: string | null;
 }) {
   const done = finished(task).length;
   const complete = done === task.stages.length;
@@ -287,6 +320,11 @@ function ChatTaskRow({
             {done}/{task.stages.length} stages
           </span>
         </span>
+        {task.abandoned && (
+          <Badge variant="outline" className="shrink-0">
+            Abandoned
+          </Badge>
+        )}
         {complete && (
           <span className="shrink-0 text-stage-done" role="img" aria-label="Complete">
             ✓
@@ -301,6 +339,7 @@ function ChatTaskRow({
       {expanded && (
         <div className="flex flex-col gap-4 border-t p-3">
           <TaskHeading task={task} />
+          <TaskNotes task={task} chatId={chatId} />
           <StageTimeline task={task} />
           <div>
             <h4 className="mb-1 text-sm font-medium">Files</h4>
@@ -321,11 +360,14 @@ export function ChatTasksPanel({
   tasks,
   currentDir,
   changes,
+  chatId,
 }: {
   tasks: Task[];
   /** The chat's current task folder (`task_dir`). */
   currentDir: string | null | undefined;
   changes: Change[];
+  /** The chat's own session id, to tell its own ownership from another session's. */
+  chatId?: string | null;
 }) {
   const current = currentDir ? normDir(currentDir) : null;
   // A task the user opened by hand holds only while the chat's current task stays the same.
@@ -353,6 +395,7 @@ export function ChatTasksPanel({
                   key={t.dir}
                   task={t}
                   current={dir === defaultDir}
+                  chatId={chatId}
                   expanded={dir === expandedDir}
                   onToggle={() =>
                     setPicked({ dir: dir === expandedDir ? null : dir, forCurrent: defaultDir })

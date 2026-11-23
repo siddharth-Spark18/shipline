@@ -7,8 +7,17 @@ Common problems and what to do.
 - **A hook warning appears at session start or on a tool call.** Read it: it names the problem (a config
   that doesn't parse, a missing stage). A config.yml that can't be read keeps the guardrails on with their
   defaults ("guardrails are using their defaults"); fix the file shown, or run `npx @forgeyard/shipline ui` and use Setup.
-- **A tool call was denied.** A `block` stage isn't done yet. Finish that stage or tell the developer; don't
-  work around it.
+- **"Shipline <hook> hook crashed: ...".** One of the hooks (`guard`, `session-start`, `prompt-submit`,
+  `record-answer`) threw, usually because a file in `.shipline/bin/` was edited or half-upgraded. Claude keeps working
+  but that hook's checks are off for the call, and the message repeats until it is fixed. Run
+  `npx @forgeyard/shipline upgrade` (add `--force` to replace edited scripts), or fix the error it quotes.
+- **`upgrade` says ".shipline/bin/ has local edits".** The scripts in `.shipline/bin/` must be upgraded together.
+  Save your edits, run `upgrade --force`, then re-apply them. See [Upgrade and uninstall](install.md#upgrade-and-uninstall).
+- **A tool call was denied.** A `block` stage isn't done yet, or a guardrail fired. Run
+  `node .shipline/bin/stage.mjs explain`: it shows the last denial or question of the session, the rule behind it and the
+  way past it. Finish that stage, use a side pass for an unrelated edit, or tell the developer; don't work around it.
+- **A task started in the main checkout isn't visible in a Claude Code worktree.** Each worktree has its own task store
+  until the store is shared between worktrees; start or resume the task from the worktree.
 - **"Shipline is already initialized".** `init` found `.shipline/`, the `CLAUDE.md` block or the hooks. To
   change agents and skills use the UI (Setup, Agents & skills); to update use `upgrade`; to start over use
   `uninstall`, then `init`.
@@ -28,14 +37,20 @@ Common problems and what to do.
   `shipline ui` in the new location.
 - **A repo shows "Newer Shipline" or "Needs reinstall".** That repo isn't served by this server; the others are. For a
   newer one, stop the server and run the version it names, for example `npx @forgeyard/shipline@<version> ui`.
-- **A task seems lost.** Tasks are stored per repo path under `~/.shipline/projects/`. If you moved or renamed
-  the repo folder, the store key changed and the old folder is still on disk; move it to the new key or work
-  from the old path. Also check you are on the same machine and `SHIPLINE_HOME` is unchanged.
+- **A task seems lost.** Tasks are stored outside the repo under `~/.shipline/projects/`, keyed by the repo's main
+  checkout path. If you moved or renamed the repo folder, run `npx @forgeyard/shipline relink --from <old path>` in
+  it (`--dry-run` previews); it moves the old store to the new key. It refuses if the new location already has tasks.
+  Also check you are on the same machine and `SHIPLINE_HOME` is unchanged.
+- **Old task data piling up.** `npx @forgeyard/shipline prune` lists (and, after you confirm, removes) the stores of
+  repos that no longer exist and `*.migrated-<date>` backups older than 30 days. It never touches a store whose repo
+  still has Shipline, or one that a worktree you still have uses.
+- **Installed in a monorepo package.** `init` warns when the folder is inside a larger git repo: Claude Code loads the
+  hooks only when it starts in the folder that has `.claude/settings.json`, so start it there, or install at the repo root.
 - **Windows.**
   - Install [Git for Windows](https://git-scm.com/download/win); Claude Code itself requires it.
-  - The hook command is `node "$CLAUDE_PROJECT_DIR/.shipline/bin/<x>.mjs"`, which relies on Claude Code
+  - The hook command is `node "$CLAUDE_PROJECT_DIR/.shipline/bin/run-hook.mjs" <hook>`, which relies on Claude Code
     running hooks through Git Bash. That is untested here; if hooks show an error, please report it.
   - `shipline ui` opens your browser with `start`, and stops a chat with `taskkill`. Stopping can take a few
     seconds.
-  - Task data is in `%USERPROFILE%\.shipline`. A repo at `C:\Users\you\repo` is stored as `C--Users-you-repo`.
+  - Task data is in `%USERPROFILE%\.shipline`. A repo at `C:\Users\you\repo` is stored in a folder named like `C--Users-you-repo-<hash>`.
   - Existing CRLF files keep CRLF when Shipline saves them; new files use LF.

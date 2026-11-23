@@ -112,7 +112,7 @@ describe('the small.yml template (Small change workflow)', () => {
     assert.equal(m.id, 'small');
     assert.equal(m.name, 'Small change');
     assert.deepEqual(m.stages.map((s) => s.id), ['ticket', 'implement', 'verify', 'pr']); // `jira` before 0.10.0
-    assert.deepEqual(m.stages.map((s) => s.agent ?? null), [null, 'builder', 'qa-bug-hunter', 'builder']);
+    assert.deepEqual(m.stages.map((s) => s.agent ?? null), [null, null, null, null]); // 2.2.0 (D13): a Small change suggests no subagents
     const verify = m.stages.find((s) => s.id === 'verify');
     assert.equal(verify.enforcement, 'block');
     assert.equal(verify.confirm_to_advance, true);
@@ -265,14 +265,14 @@ describe('known fields, header and layout', () => {
   test('KNOWN_FIELDS lists the form fields from the schema table', () => {
     // `setup` is known (so not listed under "other fields") but the form doesn't edit it (Teams Phase 1, E).
     // Teams Phase 3, F: the Guardrails section edits rails, rails_commands, protected_paths and scope_check.
-    assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup', 'rails', 'rails_commands', 'protected_paths', 'scope_check', 'confirmations', 'fail_first']);
+    assert.deepEqual(KNOWN_FIELDS.config.top, ['branch_pattern', 'tracker', 'commands', 'skills', 'ci', 'setup', 'rails', 'rails_commands', 'protected_paths', 'scope_check', 'confirmations', 'fail_first', 'non_interactive', 'stale_task_days']);
     assert.deepEqual(KNOWN_FIELDS.config.rails, ['force_push_default', 'push_default', 'pipe_to_shell', 'print_credentials', 'read_credentials', 'deploy', 'migrate', 'install_packages', 'agent_config']);
     assert.deepEqual(KNOWN_FIELDS.config.rails_commands, ['deploy', 'migrate', 'install_packages']);
     assert.deepEqual(KNOWN_FIELDS.config.fail_first, ['level', 'workflows']);
     assert.deepEqual(KNOWN_FIELDS.config.scope_check, ['enabled', 'sensitive_extra']);
     assert.deepEqual(KNOWN_FIELDS.workflow.block, ['tools', 'allow_paths', 'bash', 'actions']);
     assert.deepEqual(KNOWN_FIELDS.config.commands, ['test', 'lint', 'build']);
-    assert.deepEqual(KNOWN_FIELDS.config.ci, ['missing_block', 'skip_label', 'stale_checks']);
+    assert.deepEqual(KNOWN_FIELDS.config.ci, ['missing_block', 'skip_label', 'stale_checks', 'allow_non_interactive']);
     for (const f of ['id', 'name', 'description', 'branch_type', 'stages']) assert.ok(KNOWN_FIELDS.workflow.top.includes(f), f);
     for (const f of ['id', 'name', 'artifact', 'description', 'optional', 'confirm_to_advance', 'condition', 'agent', 'enforcement', 'blocks', 'checks', 'sections', 'checkpoint']) {
       assert.ok(KNOWN_FIELDS.workflow.stage.includes(f), f);
@@ -567,5 +567,39 @@ describe('the /shipline-setup skill text', () => {
 
   test('the topic list includes the branch pattern with its placeholders', () => {
     assert.match(skill, /`branch_pattern`, with `\{type\}`, `\{key\}` and `\{slug\}`; it must contain `\{slug\}`/);
+  });
+});
+
+describe('non_interactive, stale_task_days and ci.allow_non_interactive (2.2.0, part D)', () => {
+  const issues = (patch) => validateConfig({ ...baseConfig(), ...patch }).filter((i) => i.severity !== 'warning');
+  const paths = (patch) => issues(patch).map((i) => i.path);
+
+  test('non_interactive: deny and checks_pass pass; anything else is an error', () => {
+    for (const v of ['deny', 'checks_pass', null]) assert.deepEqual(issues({ non_interactive: v }), [], String(v));
+    assert.deepEqual(paths({ non_interactive: 'always' }), ['non_interactive']);
+  });
+
+  test('stale_task_days: a whole number of 1 or more', () => {
+    for (const v of [1, 14, 90, null]) assert.deepEqual(issues({ stale_task_days: v }), [], String(v));
+    for (const v of [0, -3, 1.5, 'soon']) assert.deepEqual(paths({ stale_task_days: v }), ['stale_task_days'], String(v));
+  });
+
+  test('ci.allow_non_interactive must be true or false', () => {
+    assert.deepEqual(issues({ ci: { allow_non_interactive: true } }), []);
+    assert.deepEqual(paths({ ci: { allow_non_interactive: 'yes' } }), ['ci.allow_non_interactive']);
+  });
+
+  test('the new keys round-trip through emitConfig, and leaving them out writes neither', () => {
+    const raw = readFileSync(path.join(TEMPLATES, 'config.yml'), 'utf8');
+    const model = parseYaml(raw);
+    assert.equal(model.non_interactive, 'deny');
+    assert.equal(model.stale_task_days, 14);
+    const text = emitConfig({ ...model, non_interactive: 'checks_pass', stale_task_days: 7 }, { layout: configLayout(), raw });
+    const back = parseYaml(text);
+    assert.equal(back.non_interactive, 'checks_pass');
+    assert.equal(back.stale_task_days, 7);
+    const { non_interactive: _a, stale_task_days: _b, ...rest } = model;
+    const without = emitConfig(rest, { layout: configLayout(), raw });
+    assert.ok(!/non_interactive|stale_task_days/.test(without.replace(/^#.*$/gm, '')), without);
   });
 });

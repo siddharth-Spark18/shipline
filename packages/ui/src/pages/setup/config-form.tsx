@@ -20,6 +20,8 @@ const TOP_KEYS = [
   'branch_pattern',
   'tracker',
   'confirmations',
+  'non_interactive',
+  'stale_task_days',
   'commands',
   'skills',
   'ci',
@@ -30,6 +32,11 @@ const TOP_KEYS = [
   'scope_check',
 ];
 const TRACKERS = TRACKER_OPTIONS;
+const NON_INTERACTIVE = [
+  { value: 'deny', label: 'Deny' },
+  { value: 'checks_pass', label: 'Advance when checks pass' },
+];
+
 const CONFIRMATIONS = [
   {
     value: 'standard',
@@ -134,6 +141,14 @@ export function ConfigForm({
   const tracker = model.tracker || 'none';
   const staleChecks = model.ci?.stale_checks || 'warn';
   const confirmations = model.confirmations === 'light' ? 'light' : 'standard';
+  const nonInteractive = model.non_interactive === 'checks_pass' ? 'checks_pass' : 'deny';
+  const setStaleDays = (v: string) => {
+    const next = { ...model };
+    if (v.trim() === '') delete next.stale_task_days;
+    else if (/^\d+$/.test(v.trim())) next.stale_task_days = Number(v.trim());
+    else return;
+    onChange(next);
+  };
   const supported = TRACKERS.some((t) => t.value === tracker);
 
   return (
@@ -178,6 +193,42 @@ export function ConfigForm({
             {CONFIRMATIONS.find((c) => c.value === confirmations)?.hint}
           </p>
         </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="cfg-non-interactive">Non-interactive runs</Label>
+          <Select value={nonInteractive} onValueChange={(v) => setTop('non_interactive', v)}>
+            <SelectTrigger id="cfg-non-interactive" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {NON_INTERACTIVE.map((c) => (
+                <SelectItem key={c.value} value={c.value}>
+                  {c.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Only applies when SHIPLINE_NONINTERACTIVE=1 is set, e.g. in CI.
+          </p>
+        </div>
+        <TextField
+          id="cfg-stale-task-days"
+          label="Stale task days"
+          value={
+            model.stale_task_days === undefined || model.stale_task_days === null
+              ? ''
+              : String(model.stale_task_days)
+          }
+          error={
+            model.stale_task_days !== undefined &&
+            model.stale_task_days !== null &&
+            model.stale_task_days < 1
+              ? 'Must be 1 or more'
+              : null
+          }
+          hint="Tasks idle longer than this are listed as a count at session start (default 14)."
+          onChange={setStaleDays}
+        />
         <TextField
           id="cfg-branch-pattern"
           label="Branch pattern"

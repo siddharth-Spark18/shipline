@@ -14,9 +14,12 @@ try {
   if (session && session.task_dir) {
     const m = readManifest(root, session.task_dir);
     const cur = m && currentStage(m);
-    ctx = m
-      ? `Shipline: active task ${m.task.slug} (${session.workflow} workflow), ${cur ? `current stage "${cur.id}"` : 'all stages done'}. Keep following the shipline-workflow skill; if this message is a new, unrelated task, ask the developer before switching.`
-      : null;
+    // A session still bound to a finished task (from before 2.2.0) doesn't ask before switching: the next request is new.
+    ctx = !m
+      ? null
+      : cur
+        ? `Shipline: active task ${m.task.slug} (${session.workflow} workflow), current stage "${cur.id}". Keep following the shipline-workflow skill; if this message is a new, unrelated task, ask the developer before switching.`
+        : `Shipline: task ${m.task.slug} is complete (all stages done). Treat a new request as a new task: classify it and start the matching workflow.`;
   } else {
     const wfs = listWorkflows(root).map((w) => `${w.id}${w.description ? ` (${w.description})` : ''}`);
     ctx =

@@ -6,11 +6,12 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { BIN, CLI_ROOT, git, makeRepo, removeDir, run, storeOf, tmpDir } from './helpers.mjs';
-import { SETTINGS_KEY, canonicalSettingsPart } from '../src/hashes.mjs';
+import { BIN, CLI_ROOT, git, homeFor, makeRepo, removeDir, run, storeOf, tmpDir } from './helpers.mjs';
+import { SETTINGS_KEY, START, canonicalSettingsPart } from '../src/hashes.mjs';
 import { INTERFACE } from '../src/interface.mjs';
+import { encodePath } from '../src/store.mjs';
 
 const TEMPLATES_ROOT = path.join(CLI_ROOT, 'templates');
 const PACKAGE_VERSION = JSON.parse(readFileSync(path.join(CLI_ROOT, 'package.json'), 'utf8')).version;
@@ -263,36 +264,115 @@ describe('edited files', () => {
   test('an edited file is shown as a diff and skipped on every run; --force replaces it', () => {
     const dir = makeRepo({ commitInit: true });
     dirs.push(dir);
-    appendFileSync(path.join(dir, '.shipline/bin/guard.mjs'), '// team tweak\n');
+    appendFileSync(path.join(dir, '.claude/agents/planner.md'), '// team tweak\n');
     // An unedited file from an older 1.x (recorded in VERSION.files) next to it, so there is something to apply.
     const old = '// lib.mjs from an older 1.x release\n';
     writeFileSync(path.join(dir, '.shipline/bin/lib.mjs'), old);
     const v = version(dir);
     v.files['.shipline/bin/lib.mjs'] = sha(old);
     writeFileSync(path.join(dir, '.shipline/bin/VERSION'), JSON.stringify(v, null, 2) + '\n');
-    const guard = read(dir, '.shipline/bin/guard.mjs');
+    const guard = read(dir, '.claude/agents/planner.md');
 
     const first = upgrade(dir, '--yes');
     assert.equal(first.code, 0, first.stderr);
-    assert.ok(first.stdout.includes('  ! skip     .shipline/bin/guard.mjs: edited by your team; use --force to replace. Changes it would get:'), first.stdout);
+    assert.ok(first.stdout.includes('  ! skip     .claude/agents/planner.md: edited by your team; use --force to replace. Changes it would get:'), first.stdout);
     assert.ok(first.stdout.includes('    - // team tweak'), 'the diff shows the team line going away');
     assert.ok(first.stdout.includes('  ~ replace  .shipline/bin/lib.mjs\n'), first.stdout);
-    assert.ok(first.stdout.includes(`\nUpgraded to ${PACKAGE_VERSION} (interface 1).\n`), first.stdout);
-    assert.equal(read(dir, '.shipline/bin/guard.mjs'), guard);
+    assert.ok(first.stdout.includes(`\nUpgraded to ${PACKAGE_VERSION} (interface ${INTERFACE}).\n`), first.stdout);
+    assert.equal(read(dir, '.claude/agents/planner.md'), guard);
     assert.equal(read(dir, '.shipline/bin/lib.mjs'), template('.shipline/bin/lib.mjs').toString());
-    assert.equal(version(dir).interface, 1);
+    assert.equal(version(dir).interface, INTERFACE);
 
     const second = upgrade(dir, '--yes');
     assert.equal(second.code, 0, second.stderr);
-    assert.equal(second.stdout, 'Already up to date.\nSkipped (edited by your team; use --force to replace): .shipline/bin/guard.mjs\n');
-    assert.equal(read(dir, '.shipline/bin/guard.mjs'), guard);
+    assert.equal(second.stdout, 'Already up to date.\nSkipped (edited by your team; use --force to replace): .claude/agents/planner.md\n');
+    assert.equal(read(dir, '.claude/agents/planner.md'), guard);
 
     const forced = upgrade(dir, '--yes', '--force');
     assert.equal(forced.code, 0, forced.stderr);
-    assert.ok(forced.stdout.includes('  ~ replace  .shipline/bin/guard.mjs (edited, --force)'), forced.stdout);
-    assert.equal(read(dir, '.shipline/bin/guard.mjs'), template('.shipline/bin/guard.mjs').toString());
-    assert.equal(version(dir).files['.shipline/bin/guard.mjs'], sha(template('.shipline/bin/guard.mjs')));
+    assert.ok(forced.stdout.includes('  ~ replace  .claude/agents/planner.md (edited, --force)'), forced.stdout);
+    assert.equal(read(dir, '.claude/agents/planner.md'), template('.claude/agents/planner.md').toString());
+    assert.equal(version(dir).files['.claude/agents/planner.md'], sha(template('.claude/agents/planner.md')));
     assert.equal(upgrade(dir, '--yes').stdout, 'Already up to date.\n');
+  });
+
+  // Plan A, A4: the scripts in .shipline/bin/ are upgraded as one unit.
+  describe('an edited .shipline/bin script', () => {
+    function editedBinRepo() {
+      const dir = makeRepo({ commitInit: true });
+      dirs.push(dir);
+      appendFileSync(path.join(dir, '.shipline/bin/lib.mjs'), '// team tweak\n');
+      // An unedited older script next to it, so a mixed upgrade would have something to write.
+      const old = '// stage.mjs from an older release\n';
+      writeFileSync(path.join(dir, '.shipline/bin/stage.mjs'), old);
+      const v = version(dir);
+      v.files['.shipline/bin/stage.mjs'] = sha(old);
+      writeFileSync(path.join(dir, '.shipline/bin/VERSION'), JSON.stringify(v, null, 2) + '\n');
+      return dir;
+    }
+
+    test('--yes refuses with exit 1 and changes nothing', () => {
+      const dir = editedBinRepo();
+      const before = snapshot(dir);
+      const r = upgrade(dir, '--yes');
+      assert.equal(r.code, 1, r.stdout);
+      assert.match(r.stderr, /\.shipline\/bin\/ has local edits \(lib\.mjs\)/);
+      assert.match(r.stderr, /upgrade --force/);
+      assert.ok(r.stderr.includes('    - // team tweak'), 'the diff is shown');
+      assert.deepEqual(snapshot(dir), before);
+    });
+
+    test('--dry-run reports the same refusal', () => {
+      const dir = editedBinRepo();
+      const before = snapshot(dir);
+      const r = upgrade(dir, '--dry-run');
+      assert.equal(r.code, 1, r.stdout);
+      assert.match(r.stderr, /has local edits \(lib\.mjs\)/);
+      assert.deepEqual(snapshot(dir), before);
+    });
+
+    test('--force replaces every bin script', () => {
+      const dir = editedBinRepo();
+      const r = upgrade(dir, '--yes', '--force');
+      assert.equal(r.code, 0, r.stderr);
+      for (const f of ['lib', 'stage', 'guard', 'run-hook']) assert.equal(read(dir, `.shipline/bin/${f}.mjs`), template(`.shipline/bin/${f}.mjs`).toString(), f);
+    });
+
+    test('a team-added file in .shipline/bin/ does not count', () => {
+      const dir = makeRepo({ commitInit: true });
+      dirs.push(dir);
+      writeFileSync(path.join(dir, '.shipline/bin/my-helper.mjs'), '// ours\n');
+      const old = '// stage.mjs from an older release\n';
+      writeFileSync(path.join(dir, '.shipline/bin/stage.mjs'), old);
+      const v = version(dir);
+      v.files['.shipline/bin/stage.mjs'] = sha(old);
+      writeFileSync(path.join(dir, '.shipline/bin/VERSION'), JSON.stringify(v, null, 2) + '\n');
+      const r = upgrade(dir, '--yes');
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(read(dir, '.shipline/bin/my-helper.mjs'), '// ours\n');
+    });
+    test('--all marks that repo failed and goes on with the others', () => {
+      const bad = editedBinRepo();
+      const good = makeRepo({ commitInit: true });
+      dirs.push(good);
+      const home = homeFor(bad);
+      const env = { SHIPLINE_HOME: home };
+      // Register both repos (any non-dry-run upgrade does), then make the second one need an upgrade.
+      upgrade(good, '--yes');
+      run(process.execPath, [BIN, 'upgrade', '--dir', bad, '--yes'], { cwd: bad, env });
+      run(process.execPath, [BIN, 'upgrade', '--dir', good, '--yes'], { cwd: good, env });
+      const old = '// stage.mjs from an older release\n';
+      writeFileSync(path.join(good, '.shipline/bin/stage.mjs'), old);
+      const v = version(good);
+      v.files['.shipline/bin/stage.mjs'] = sha(old);
+      writeFileSync(path.join(good, '.shipline/bin/VERSION'), JSON.stringify(v, null, 2) + '\n');
+      const r = run(process.execPath, [BIN, 'upgrade', '--all', '--yes'], { cwd: bad, env });
+      assert.equal(r.code, 1, r.stdout + r.stderr);
+      assert.match(r.stderr, /has local edits \(lib\.mjs\)/);
+      assert.match(r.stdout, /upgraded: 1\n\s+.*\n\s+already current: 0|upgraded: 1/);
+      assert.match(r.stdout, /failed: 1/);
+      assert.equal(read(good, '.shipline/bin/stage.mjs'), template('.shipline/bin/stage.mjs').toString());
+    });
   });
 
   test('with a VERSION.files record: an unedited older file is replaced, an edited one keeps its recorded hash', () => {
@@ -585,7 +665,7 @@ describe('from a 1.0.0 install: the shipline-setup skill', () => {
       const r = upgrade(dir, '--yes');
       assert.equal(r.code, 0, r.stderr);
       assert.ok(r.stdout.includes(`  ~ replace  ${SKILL}\n`), r.stdout);
-      assert.ok(r.stdout.includes(`\nUpgraded to ${PACKAGE_VERSION} (interface 1).\n`), r.stdout);
+      assert.ok(r.stdout.includes(`\nUpgraded to ${PACKAGE_VERSION} (interface ${INTERFACE}).\n`), r.stdout);
       assert.equal(read(dir, SKILL), template(SKILL).toString());
       assert.match(read(dir, SKILL), /\*\*Guardrails:\*\*/);
       const v = version(dir);
@@ -602,5 +682,171 @@ describe('from a 1.0.0 install: the shipline-setup skill', () => {
     assert.equal(r.code, 0, r.stderr);
     assert.ok(r.stdout.includes(`  ! skip     ${SKILL}: edited by your team; use --force to replace.`), r.stdout);
     assert.equal(read(dir, SKILL), edited);
+  });
+});
+
+// ---------- per-file conflicts and .shipline-new side files (Plan E, E6) ----------
+
+describe('edited files: per-file choices and .shipline-new', () => {
+  // A repo with two edited agents and one unedited older script (so there is something to apply).
+  function conflictRepo() {
+    const dir = makeRepo({ commitInit: true });
+    dirs.push(dir);
+    appendFileSync(path.join(dir, '.claude/agents/planner.md'), '// team tweak\n');
+    appendFileSync(path.join(dir, '.claude/agents/builder.md'), '// builder tweak\n');
+    const old = '// lib.mjs from an older 1.x release\n';
+    writeFileSync(path.join(dir, '.shipline/bin/lib.mjs'), old);
+    const v = version(dir);
+    v.files['.shipline/bin/lib.mjs'] = sha(old);
+    writeFileSync(path.join(dir, '.shipline/bin/VERSION'), JSON.stringify(v, null, 2) + '\n');
+    return dir;
+  }
+
+  // runUpgrade in this process, with a terminal-like stdin and scripted answers. Returns { code, stdout, asked }.
+  async function interactive(dir, answers, opts = {}) {
+    const { runUpgrade } = await import('../src/upgrade.mjs');
+    const asked = [];
+    const ask = async (q) => {
+      asked.push(q);
+      if (!answers.length) throw new Error(`unexpected question: ${q}`);
+      return answers.shift();
+    };
+    const had = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true, writable: true });
+    const out = [];
+    const log = console.log;
+    console.log = (...a) => out.push(a.join(' '));
+    let code;
+    try {
+      code = await runUpgrade({ target: dir, ask, ...opts });
+    } finally {
+      console.log = log;
+      if (had) Object.defineProperty(process.stdin, 'isTTY', had);
+      else delete process.stdin.isTTY;
+    }
+    return { code, stdout: out.join('\n'), asked };
+  }
+
+  test('--yes: every edited file gets <file>.shipline-new with the new version; the edit stays and keeps its recorded hash', () => {
+    const dir = conflictRepo();
+    const recorded = version(dir).files['.claude/agents/planner.md'];
+    const planner = read(dir, '.claude/agents/planner.md');
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(read(dir, '.claude/agents/planner.md'), planner);
+    assert.equal(read(dir, '.claude/agents/planner.md.shipline-new'), template('.claude/agents/planner.md').toString());
+    assert.equal(read(dir, '.claude/agents/builder.md.shipline-new'), template('.claude/agents/builder.md').toString());
+    assert.equal(version(dir).files['.claude/agents/planner.md'], recorded, 'still seen as edited next time');
+    assert.ok(!('.claude/agents/planner.md.shipline-new' in version(dir).files));
+    assert.match(r.stdout, /Merge these by hand, then delete the \.shipline-new files:\n {2}\.claude\/agents\/builder\.md\.shipline-new\n {2}\.claude\/agents\/planner\.md\.shipline-new/);
+    assert.match(r.stdout, /\+ new {6}\.claude\/agents\/planner\.md\.shipline-new/);
+  });
+
+  test('--dry-run with --yes lists the side files it would write; without --yes it lists the questions; nothing is written', () => {
+    const dir = conflictRepo();
+    const before = snapshot(dir);
+    const y = upgrade(dir, '--yes', '--dry-run');
+    assert.match(y.stdout, /Edited files\n {2}\+ new {6}\.claude\/agents\/builder\.md\.shipline-new/);
+    const n = upgrade(dir, '--dry-run');
+    assert.match(n.stdout, /\? \.claude\/agents\/planner\.md: you would be asked: keep mine, replace, write \.shipline-new, or show the diff/);
+    assert.deepEqual(snapshot(dir), before);
+  });
+
+  test('in a terminal each file is asked about: keep, replace (after showing the diff), and the final confirm', async () => {
+    const dir = conflictRepo();
+    const planner = read(dir, '.claude/agents/planner.md');
+    const recorded = version(dir).files['.claude/agents/planner.md'];
+    // Files are asked in template order: builder.md, then planner.md.
+    const r = await interactive(dir, ['d', 'r', 'k', 'y']);
+    assert.equal(r.code, 0, r.stdout);
+    assert.equal(r.asked.length, 4);
+    assert.match(r.asked[0], /\[k\]eep mine/);
+    assert.ok(r.stdout.includes('    - // builder tweak'), 'show diff printed it');
+    assert.equal(read(dir, '.claude/agents/builder.md'), template('.claude/agents/builder.md').toString());
+    assert.equal(version(dir).files['.claude/agents/builder.md'], sha(template('.claude/agents/builder.md')), 'a replaced file records the new hash');
+    assert.equal(read(dir, '.claude/agents/planner.md'), planner);
+    assert.equal(version(dir).files['.claude/agents/planner.md'], recorded);
+    assert.ok(!existsSync(path.join(dir, '.claude/agents/planner.md.shipline-new')));
+    assert.ok(!existsSync(path.join(dir, '.claude/agents/builder.md.shipline-new')));
+  });
+
+  test('"write .shipline-new" in a terminal, and nothing is written when the final confirm is declined', async () => {
+    const dir = conflictRepo();
+    const declined = await interactive(dir, ['r', 'r', 'n']);
+    assert.equal(declined.code, 1);
+    assert.ok(!existsSync(path.join(dir, '.claude/agents/planner.md.shipline-new')));
+    assert.match(read(dir, '.claude/agents/planner.md'), /team tweak/);
+    const r = await interactive(dir, ['n', 'k', 'y']);
+    assert.equal(r.code, 0, r.stdout);
+    assert.equal(read(dir, '.claude/agents/builder.md.shipline-new'), template('.claude/agents/builder.md').toString());
+    assert.ok(!existsSync(path.join(dir, '.claude/agents/planner.md.shipline-new')));
+  });
+
+  test('upgrade --all style (perFile: false): no per-file questions, side files, only the final confirm', async () => {
+    const dir = conflictRepo();
+    const r = await interactive(dir, ['y'], { perFile: false });
+    assert.equal(r.code, 0, r.stdout);
+    assert.equal(r.asked.length, 1);
+    assert.ok(existsSync(path.join(dir, '.claude/agents/planner.md.shipline-new')));
+  });
+
+  test('--force still replaces every edited file and writes no side files', () => {
+    const dir = conflictRepo();
+    const r = upgrade(dir, '--yes', '--force');
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(read(dir, '.claude/agents/planner.md'), template('.claude/agents/planner.md').toString());
+    assert.ok(!existsSync(path.join(dir, '.claude/agents/planner.md.shipline-new')));
+  });
+
+  test('an edited file that is no longer shipped: --yes keeps it; in a terminal Delete removes it and drops its record', async () => {
+    const make = () => {
+      const dir = conflictRepo();
+      writeFileSync(path.join(dir, '.claude/agents/retired-edited.md'), 'old agent, edited\n');
+      const v = version(dir);
+      v.files['.claude/agents/retired-edited.md'] = sha('old agent\n');
+      writeFileSync(path.join(dir, '.shipline/bin/VERSION'), JSON.stringify(v, null, 2) + '\n');
+      return dir;
+    };
+    const kept = make();
+    const y = upgrade(kept, '--yes');
+    assert.equal(y.code, 0, y.stderr);
+    assert.match(y.stdout, /= keep {5}\.claude\/agents\/retired-edited\.md/);
+    assert.ok(existsSync(path.join(kept, '.claude/agents/retired-edited.md')));
+    assert.ok(!existsSync(path.join(kept, '.claude/agents/retired-edited.md.shipline-new')));
+
+    const dir = make();
+    const r = await interactive(dir, ['k', 'k', 'd', 'y']);
+    assert.equal(r.code, 0, r.stdout);
+    assert.ok(!existsSync(path.join(dir, '.claude/agents/retired-edited.md')));
+    assert.ok(!('.claude/agents/retired-edited.md' in version(dir).files));
+  });
+
+  test('the CLAUDE.md block and settings.json hook entries keep the old behaviour: skipped, no side files', () => {
+    const dir = conflictRepo();
+    const md = read(dir, 'CLAUDE.md');
+    writeFileSync(path.join(dir, 'CLAUDE.md'), md.replace(START, `${START}\nteam edit inside the block`));
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /! skip {5}CLAUDE\.md \(Shipline block\)/);
+    assert.ok(!existsSync(path.join(dir, 'CLAUDE.md.shipline-new')));
+    assert.ok(!existsSync(path.join(dir, '.claude/settings.json.shipline-new')));
+  });
+
+  test('an upgrade from interface 1 brings this checkout\'s old-key tasks into the new store', () => {
+    const dir = makeRepo({ commitInit: true });
+    dirs.push(dir);
+    const real = realpathSync(dir);
+    const v = version(dir);
+    v.interface = 1;
+    writeFileSync(path.join(dir, '.shipline/bin/VERSION'), JSON.stringify(v, null, 2) + '\n');
+    const old = path.join(homeFor(dir), 'projects', encodePath(real));
+    mkdirSync(path.join(old, 'tasks', 'kept-task'), { recursive: true });
+    writeFileSync(path.join(old, 'tasks', 'kept-task', 'manifest.json'), '{}');
+    writeFileSync(path.join(old, 'repo.json'), JSON.stringify({ root: real }));
+    const r = upgrade(dir, '--yes');
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(version(dir).interface, INTERFACE);
+    assert.ok(existsSync(path.join(storeOf(dir), 'tasks', 'kept-task', 'manifest.json')));
+    assert.ok(!existsSync(old), 'the old folder was renamed away, not left in place');
   });
 });

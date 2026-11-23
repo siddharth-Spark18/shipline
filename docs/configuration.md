@@ -13,6 +13,8 @@ commands:                               # filled by init from the repo; the Veri
   test: "pnpm test"
   lint: "pnpm run lint"
   build: "pnpm run build"
+non_interactive: deny                    # deny | checks_pass: only when SHIPLINE_NONINTERACTIVE=1 (see Daily use, Headless runs)
+stale_task_days: 14                      # session start lists tasks idle longer than this as a count only
 confirmations: standard                 # standard | light: how often Claude asks before advancing (see Confirmations)
 skills: []                              # your own .claude/skills/<name> that Claude may use at any stage
 setup: done                             # written by /shipline-setup; stops the setup reminder
@@ -73,9 +75,19 @@ exit code, duration and output tail in the task, and fingerprints the code it ra
 uncommitted files; your real index is never touched). On a `checks: true` stage, `advance` refuses a missing run or a run
 on code that has since changed. When a command failed, it asks you whether to finish anyway. `pr-summary` then shows a
 Checks line plus the plan's scope and the verification checklist in collapsed sections. The CI check compares the
-summary's fingerprint with the PR's git tree. With `ci.stale_checks` in `config.yml` set to `warn` (the default) it warns
+summary's fingerprint with the PR's git tree. `ci.allow_non_interactive: true` (default false) lets the PR check accept stages a headless run advanced on passing checks.
+With `ci.stale_checks` in `config.yml` set to `warn` (the default) it warns
 when they differ, with `fail` it fails. A command that failed and wasn't accepted fails the check either way. A hand-edited
 summary can still lie: this is evidence for reviewers, not a signature.
+
+**The `ci:` block.** Optional; it sets what the PR check (`ci-check.mjs`) does. The values shown are the defaults:
+
+```yaml
+ci:
+  missing_block: fail-unless-label   # fail-unless-label | warn | fail: a PR without the Shipline summary block
+  skip_label: shipline:skip          # the PR label that skips the check under fail-unless-label
+  stale_checks: warn                 # warn | fail: the summary's checks ran on different code than the PR's
+```
 
 **Confirmations.** `confirmations` in `config.yml` sets how often Claude asks before moving to the next stage, for the
 whole repo.

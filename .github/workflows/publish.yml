@@ -8,14 +8,46 @@ on:
     tags:
       - 'v*.*.*'
 
+# One publish per tag at a time; a second run for the same tag waits instead of racing the first.
+concurrency:
+  group: publish-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write # npm provenance
+      pull-requests: read # the merged PR of the tag commit
+      checks: read # that PR's `ci` check run
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the tag commit must be checked against origin/main
+
+      # Only a commit that is on main, and whose merged pull request passed the `ci` check, is published. CI runs on
+      # pull requests only, so the check run lives on the PR's head commit (a squash merge has another SHA).
+      - name: Tag commit must be on main and its merged PR must have passed ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Tag ${GITHUB_REF_NAME} (${GITHUB_SHA}) is not on main. Release from a commit that is merged into main." >&2
+            exit 1
+          fi
+          head=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+            --jq '[.[] | select(.merged_at != null and .base.ref == "main")][0].head.sha // empty')
+          if [ -z "$head" ]; then
+            echo "No merged pull request found for ${GITHUB_SHA} (a direct push to main?). Releases go through a PR whose ci check passed." >&2
+            exit 1
+          fi
+          conclusion=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${head}/check-runs?check_name=ci" \
+            --jq '[.check_runs[] | select(.status == "completed")] | sort_by(.completed_at) | last | .conclusion // empty')
+          if [ "$conclusion" != "success" ]; then
+            echo "The ci check on the pull request head ${head} is '${conclusion:-missing}', not success. Not publishing." >&2
+            exit 1
+          fi
 
       - name: Tag must match the package version
         run: |

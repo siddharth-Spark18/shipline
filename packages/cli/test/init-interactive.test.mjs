@@ -102,15 +102,16 @@ const mustNotStart = async () => {
 };
 
 describe('an existing install', () => {
-  test('init --yes prints "already initialized" and writes nothing', () => {
+  test('init --yes prints "already set up" and writes nothing', () => {
     const dir = repo();
     assert.equal(runInit(dir).code, 0);
     const before = tree(dir);
     const r = runInit(dir);
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /already initialized/);
+    assert.match(r.stdout, /already set up/);
     assert.match(r.stdout, /Setup, Agents & skills/);
-    assert.match(r.stdout, /npx @forgeyard\/shipline upgrade/);
+    assert.match(r.stdout, /already set up in .* \(version \S+\)\./);
+    assert.match(r.stdout, /npx @forgeyard\/shipline@latest upgrade/);
     assert.match(r.stdout, /npx @forgeyard\/shipline uninstall`, then `init` again/);
     assert.deepEqual(tree(dir), before);
   });
@@ -121,7 +122,7 @@ describe('an existing install', () => {
     const before = tree(dir);
     const r = runInit(dir, { yes: false });
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /already initialized/);
+    assert.match(r.stdout, /already set up/);
     assert.equal(r.stderr, '');
     assert.deepEqual(tree(dir), before);
   });
@@ -138,7 +139,7 @@ describe('an existing install', () => {
       const before = tree(dir);
       const r = await initWith(dir, selection());
       assert.equal(r.code, 0, `${marker}: ${r.stderr}`);
-      assert.match(r.stdout, /already initialized/, marker);
+      assert.match(r.stdout, /already set up/, marker);
       assert.equal(r.calls.length, 0, `${marker}: prompts were called`);
       assert.deepEqual(tree(dir), before, marker);
     }
@@ -454,7 +455,7 @@ describe('the interactive path on old Node', () => {
   const old = Number(process.versions.node.split('.')[0]) < 20;
   test('src/init-prompts.mjs explains to use --yes when @inquirer/prompts cannot load', { skip: old ? false : 'needs Node < 20 (the CI test:hooks job)' }, async () => {
     const { askSelection } = await import('../src/init-prompts.mjs');
-    await assert.rejects(() => askSelection({ workflows: [], agents: [], repoAgents: [], repoSkills: [], missingStageAgents: () => [] }), /Node 20\.17 or newer; on older Node, run `init --yes`/);
+    await assert.rejects(() => askSelection({ workflows: [], agents: [], repoAgents: [], repoSkills: [], missingStageAgents: () => [] }), /needs Node 22 or newer; reinstall it, or run `init --yes`/);
   });
 });
 
@@ -645,21 +646,7 @@ describe('setup wizard: the new questions', () => {
     }
     const r = await withTty(() => initWith(repo({ '.shipline/config.yml': 'tracker: jira\n' }), undefined, { nodeMajor: 24, startUi: mustNotStart }));
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /already initialized/);
-  });
-
-  test('Node below 20: asks here instead, after the note; --terminal, --yes and --dry-run print no note', async () => {
-    const dir = repo();
-    const r = await withTty(() => initWith(dir, selection(), { nodeMajor: 18, startUi: mustNotStart }));
-    assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.stdout.split('\n')[0], 'The setup wizard needs Node 20+; asking here instead.');
-    assert.equal(r.calls.length, 1);
-    assert.ok(exists(dir, '.shipline/config.yml'));
-    for (const extra of [{ terminal: true }, { yes: true }, { dryRun: true }]) {
-      const o = await withTty(() => initWith(repo(), selection(), { ...extra, nodeMajor: 18, startUi: mustNotStart }));
-      assert.equal(o.code, 0, o.stderr);
-      assert.ok(!/The setup wizard needs Node 20/.test(o.stdout), JSON.stringify(extra));
-    }
+    assert.match(r.stdout, /already set up/);
   });
 
   test('init --terminal without a terminal is refused like any interactive run; --terminal --yes installs the defaults', () => {
@@ -844,5 +831,71 @@ describe('guardrails and the branch pattern', () => {
       assert.match(b.stderr, msg);
       assert.deepEqual(readdirSync(d), [], JSON.stringify(bad));
     }
+  });
+});
+
+describe('a subfolder of a git repo (Plan E, E5)', () => {
+  // A git repo (no Shipline) with a packages/web folder.
+  function monorepo() {
+    const dir = repo({ 'packages/web/package.json': '{"name":"web"}\n', 'pnpm-lock.yaml': '' });
+    git(dir, 'init', '-q');
+    return { top: dir, web: path.join(dir, 'packages', 'web') };
+  }
+  const TEXT = (top, web) => `This folder is inside the git repo at ${top}. Shipline's hooks only load when Claude Code starts in ${web}; most teams install at the repo root.`;
+
+  test('without a terminal and without --yes: stops with exit 1, the same text, nothing written', () => {
+    const { top, web } = monorepo();
+    const before = tree(web);
+    const r = runInit(web, { yes: false });
+    assert.equal(r.code, 1);
+    assert.ok(r.stderr.includes(TEXT(top, web)), r.stderr);
+    assert.deepEqual(tree(web), before);
+  });
+
+  test('--yes prints the note and installs anyway', () => {
+    const { top, web } = monorepo();
+    const r = runInit(web);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.stdout.includes(TEXT(top, web)), r.stdout);
+    assert.ok(exists(web, '.shipline/config.yml'));
+    assert.ok(!exists(top, '.shipline'));
+  });
+
+  test('--dry-run prints the note and still previews', () => {
+    const { top, web } = monorepo();
+    const r = runInit(web, '--dry-run');
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.stdout.includes(TEXT(top, web)), r.stdout);
+    assert.ok(!exists(web, '.shipline'));
+  });
+
+  test('in a terminal it asks "Install here anyway?": No (the default) writes nothing, Yes installs', async () => {
+    const { top, web } = monorepo();
+    const questions = [];
+    const no = await withTty(() => initWith(web, selection(), { ask: async (q) => (questions.push(q), false) }));
+    assert.equal(no.code, 1);
+    assert.deepEqual(questions, ['Install here anyway? [y/N] ']);
+    assert.ok(no.stdout.includes(TEXT(top, web)));
+    assert.ok(!exists(web, '.shipline'));
+    const yes = await withTty(() => initWith(web, selection(), { ask: async () => true }));
+    assert.equal(yes.code, 0, yes.stderr);
+    assert.ok(exists(web, '.shipline/config.yml'));
+  });
+
+  test('a repo root, or a folder outside git, gets no note', () => {
+    const { top } = monorepo();
+    const r = runInit(top);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.stdout.includes('is inside the git repo'));
+    const plain = repo();
+    assert.ok(!runInit(plain).stdout.includes('is inside the git repo'));
+  });
+
+  test('detection in the package folder uses the pnpm lockfile at the git root', () => {
+    const { web } = monorepo();
+    writeFileSync(path.join(web, 'package.json'), JSON.stringify({ name: 'web', scripts: { test: 'vitest run' } }));
+    const r = runInit(web);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(read(web, '.shipline/config.yml'), /test: pnpm test/);
   });
 });

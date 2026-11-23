@@ -290,7 +290,12 @@ export default function ChatPage({
   );
   const resumable = (tasks.data?.tasks ?? []).filter((t) => !busyDirs.has(normDir(t.dir)));
   const panel = (
-    <ChatTasksPanel tasks={chatTasks} currentDir={chatInfo?.task_dir} changes={changes} />
+    <ChatTasksPanel
+      tasks={chatTasks}
+      currentDir={chatInfo?.task_dir}
+      changes={changes}
+      chatId={selectedId}
+    />
   );
   const prefKey = selectedId ?? '';
   const panelOpen = (panelPref[prefKey] ?? (hasTask ? 'open' : 'closed')) === 'open';

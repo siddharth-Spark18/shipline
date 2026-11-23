@@ -1,6 +1,6 @@
 // `shipline upgrade`: brings a repo that already has Shipline up to this version: refreshes the files Shipline
 // owns that the team has not edited, and the shared CLAUDE.md block and settings entries. Never commits.
-// Node 18+, no dependencies.
+// Node 22+, no dependencies.
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -14,6 +14,7 @@ import { INTERFACE, compareInterface, isPreOne, preOneMessage, readRepoVersion, 
 import { mergeSettingsObject, parseSettings } from './init.mjs';
 import { KNOWN_STUB_RULES } from './known-stub-rules.mjs';
 import { listProjects, probeStateOf, registerQuietly } from './registry.mjs';
+import { storeDir } from './store.mjs';
 
 const require = createRequire(import.meta.url);
 const KNOWN = require('./known-hashes.json');
@@ -24,8 +25,17 @@ const readText = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : null
 
 // Line diff (LCS) of two texts, printed with 2 lines of context. Returns indented lines.
 function lineDiff(a, b) {
-  const x = a.split('\n');
-  const y = b.split('\n');
+  let x = a.split('\n');
+  let y = b.split('\n');
+  // Lines both texts share at the start and end are context only: trim them so a few edits in a long file still diff.
+  let head = 0;
+  while (head < x.length && head < y.length && x[head] === y[head]) head++;
+  let tail = 0;
+  while (tail < x.length - head && tail < y.length - head && x[x.length - 1 - tail] === y[y.length - 1 - tail]) tail++;
+  const pre = x.slice(Math.max(0, head - 2), head);
+  const post = x.slice(x.length - tail, x.length - tail + 2);
+  x = x.slice(head, x.length - tail);
+  y = y.slice(head, y.length - tail);
   if (x.length * y.length > 4_000_000) return ['    (diff too large to show)'];
   const w = y.length + 1;
   const dp = new Uint32Array((x.length + 1) * w);
@@ -34,7 +44,7 @@ function lineDiff(a, b) {
       dp[i * w + j] = x[i] === y[j] ? dp[(i + 1) * w + j + 1] + 1 : Math.max(dp[(i + 1) * w + j], dp[i * w + j + 1]);
     }
   }
-  const ops = [];
+  const ops = pre.map((l) => [' ', l]);
   let i = 0;
   let j = 0;
   while (i < x.length && j < y.length) {
@@ -44,6 +54,7 @@ function lineDiff(a, b) {
   }
   while (i < x.length) ops.push(['-', x[i++]]);
   while (j < y.length) ops.push(['+', y[j++]]);
+  for (const l of post) ops.push([' ', l]);
   const show = new Array(ops.length).fill(false);
   ops.forEach(([t], k) => {
     if (t === ' ') return;
@@ -97,7 +108,7 @@ function planFiles(root, version, force) {
       plan.replace.push({ to: f.to, data, forced: !isUnedited(curHash, f.to, record) });
       plan.hashes[f.to] = newHash;
     } else {
-      plan.skip.push({ to: f.to, diff: lineDiff(current.toString('utf8'), data.toString('utf8')) });
+      plan.skip.push({ to: f.to, data, newHash, diff: lineDiff(current.toString('utf8'), data.toString('utf8')) });
       if (record && record[f.to]) plan.hashes[f.to] = record[f.to];
     }
   }
@@ -118,7 +129,7 @@ function planFiles(root, version, force) {
         plan.replace.push({ to: CI_WORKFLOW, data, forced: !isUnedited(curHash, CI_WORKFLOW, record) });
         plan.hashes[CI_WORKFLOW] = newHash;
       } else {
-        plan.skip.push({ to: CI_WORKFLOW, diff: lineDiff(current.toString('utf8'), data.toString('utf8')) });
+        plan.skip.push({ to: CI_WORKFLOW, data, newHash, diff: lineDiff(current.toString('utf8'), data.toString('utf8')) });
         if (record && record[CI_WORKFLOW]) plan.hashes[CI_WORKFLOW] = record[CI_WORKFLOW];
       }
     }
@@ -192,6 +203,8 @@ function planShared(root, version, force) {
     if (record && record[SETTINGS_KEY]) shared.hashes[SETTINGS_KEY] = record[SETTINGS_KEY];
     // The read_credentials rail needs the PreToolUse matcher to include Read and Grep.
     const pre = settings && settings.hooks && Array.isArray(settings.hooks.PreToolUse) ? settings.hooks.PreToolUse.filter(isShiplineHookEntry) : [];
+    // Hook entries the team edited that still run the scripts directly get no crash warnings from run-hook.mjs.
+    shared.noRunHook = pre.some((e) => !JSON.stringify(e).includes('run-hook.mjs'));
     shared.readNotGuarded = !pre.some((e) => e && typeof e.matcher === 'string' && ['Read', 'Grep'].every((t) => e.matcher.split('|').includes(t)));
   }
   return shared;
@@ -221,6 +234,55 @@ function planRules(root) {
 
 // ---------- applying ----------
 
+// What an edited file's new version is written as when the team keeps its own (never loaded by Claude Code or GitHub).
+const SIDE_SUFFIX = '.shipline-new';
+
+// The 'k'/'r'/'n'/'d' answers to the per-file question, by their first letter or whole word.
+const FILE_CHOICES = { k: 'keep', keep: 'keep', r: 'replace', replace: 'replace', n: 'new', new: 'new', w: 'new' };
+const REMOVED_CHOICES = { k: 'keep', keep: 'keep', d: 'delete', delete: 'delete' };
+
+async function defaultAsk(question) {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return (await rl.question(question)).trim().toLowerCase();
+  } finally {
+    rl.close();
+  }
+}
+
+const diffCounts = (diff) => ({
+  added: diff.filter((l) => /^ {4}\+ /.test(l)).length,
+  removed: diff.filter((l) => /^ {4}- /.test(l)).length,
+});
+
+// Asks, for each edited file, what to do with it (keep mine / replace / write .shipline-new / show the diff; a file no
+// longer shipped: keep / delete). Sets `choice` on every entry. Nothing is written here.
+async function askConflicts(conflicts, ask) {
+  for (const c of conflicts) {
+    if (c.removed) {
+      for (;;) {
+        const a = await ask(`\n${c.to} is no longer shipped, and your team edited it.\n  [k]eep it / [d]elete it: `);
+        if (REMOVED_CHOICES[a]) {
+          c.choice = REMOVED_CHOICES[a];
+          break;
+        }
+      }
+      continue;
+    }
+    const n = diffCounts(c.diff);
+    console.log(`\n${c.to}: edited by your team (the new version adds ${n.added} and removes ${n.removed} line${n.added + n.removed === 1 ? '' : 's'} against yours)`);
+    for (;;) {
+      const a = await ask('  [k]eep mine / [r]eplace with new / write [n]ew as .shipline-new / show [d]iff: ');
+      if (a === 'd' || a === 'diff') {
+        console.log(c.diff.join('\n'));
+      } else if (FILE_CHOICES[a]) {
+        c.choice = FILE_CHOICES[a];
+        break;
+      }
+    }
+  }
+}
+
 class StepError extends Error {
   constructor(step, cause, extra = '') {
     super(`${step}: ${cause && cause.message ? cause.message : cause}${extra}`);
@@ -238,6 +300,12 @@ function apply(root, ctx) {
       writeFileSync(abs, f.data);
     }
     for (const f of files.remove) rmSync(path.join(root, f.to), { force: true });
+    for (const c of ctx.conflicts || []) {
+      const abs = path.join(root, c.to);
+      if (c.choice === 'replace') writeFileSync(abs, c.data);
+      else if (c.choice === 'new') writeFileSync(`${abs}${SIDE_SUFFIX}`, c.data);
+      else if (c.choice === 'delete') rmSync(abs, { force: true });
+    }
     if (shared.claude.text !== undefined && shared.claude.action !== 'skip') writeFileSync(path.join(root, 'CLAUDE.md'), shared.claude.text);
     if (shared.settings.text !== undefined) {
       mkdirSync(path.join(root, '.claude'), { recursive: true });
@@ -261,7 +329,7 @@ function sortKeys(o) {
 
 // Returns a process exit code. `report` (optional) gets `outcome` for `upgrade --all`: 'upgraded', 'current',
 // 'dry-run', 'declined' or 'failed'.
-export async function runUpgrade({ target, yes = false, dryRun = false, force = false, report = {} } = {}) {
+export async function runUpgrade({ target, yes = false, dryRun = false, force = false, perFile = true, ask = defaultAsk, report = {} } = {}) {
   const root = path.resolve(target || process.cwd());
   report.outcome = 'failed';
   if (!existsSync(root) || !lstatSync(root).isDirectory()) {
@@ -297,6 +365,18 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     rulesPlan = planRules(root);
   } catch (e) {
     console.error(`shipline: ${e.message}`);
+    return 1;
+  }
+
+  // The scripts in .shipline/bin/ must all be the same version (new ones may need new exports from lib.mjs), so an
+  // edited one stops the whole upgrade before anything is written, unless --force replaces them all.
+  const editedBin = force ? [] : files.skip.filter((f) => !f.removed && /^\.shipline\/bin\/[^/]+$/.test(f.to) && f.to !== VERSION_FILE);
+  if (editedBin.length) {
+    const lines = [
+      `shipline: .shipline/bin/ has local edits (${editedBin.map((f) => f.to.replace('.shipline/bin/', '')).join(', ')}). Its scripts must all be the same version, so upgrade won't replace only some of them. Save your edits, run \`shipline upgrade --force\`, then re-apply them. Nothing was changed.`,
+    ];
+    for (const f of editedBin) lines.push('', `  ${f.to}: changes it would get`, ...f.diff);
+    console.error(lines.join('\n'));
     return 1;
   }
 
@@ -340,8 +420,26 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
   if (shared.readNotGuarded) {
     warnings.push('Your Shipline hook entries in .claude/settings.json were edited, so reading credential files (the Read and Grep tools) is not guarded. Add Read and Grep to the PreToolUse matcher to enable it.');
   }
+  if (shared.noRunHook) {
+    warnings.push('Your Shipline hook entries in .claude/settings.json were edited and still run the hook scripts directly, so a crashing hook turns its checks off without a warning. Change them to run `node "$CLAUDE_PROJECT_DIR/.shipline/bin/run-hook.mjs" <guard|session-start|prompt-submit|record-answer>`.');
+  }
   if (warnings.length) out.push('', 'Warnings', ...warnings.map((w) => `  ! ${w}`));
   console.log(out.join('\n'));
+
+  // Edited Shipline files (outside .shipline/bin/, which stays all or nothing, see above): asked about one by one in a
+  // terminal; with --yes (and for `upgrade --all`) the new version is written next to the file as <file>.shipline-new.
+  const conflicts = files.skip.filter((f) => !/^\.shipline\/bin\/[^/]+$/.test(f.to) || f.removed);
+  const interactive = !yes && perFile;
+  for (const c of conflicts) c.choice = c.removed ? 'keep' : 'new';
+  if (conflicts.length) {
+    const lines = ['', 'Edited files'];
+    for (const c of conflicts) {
+      if (dryRun && interactive) lines.push(`  ? ${c.to}: you would be asked: ${c.removed ? 'keep or delete' : 'keep mine, replace, write .shipline-new, or show the diff'}`);
+      else if (c.removed) lines.push(`  = keep     ${c.to} (no longer shipped; your edit stays)`);
+      else lines.push(`  + new      ${c.to}${SIDE_SUFFIX}${interactive ? ' (unless you choose otherwise)' : ''}`);
+    }
+    console.log(lines.join('\n'));
+  }
 
   if (dryRun) {
     console.log('\nDry run, nothing written.');
@@ -354,9 +452,8 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
       console.error('\nshipline: not a terminal, so there is nobody to confirm. Re-run with --yes to apply, or --dry-run to preview.');
       return 1;
     }
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const answer = (await rl.question('\nApply these changes? [y/N] ')).trim().toLowerCase();
-    rl.close();
+    if (interactive && conflicts.length) await askConflicts(conflicts, ask);
+    const answer = await ask('\nApply these changes? [y/N] ');
     if (answer !== 'y' && answer !== 'yes') {
       console.log('Cancelled, nothing was changed.');
       report.outcome = 'declined';
@@ -364,12 +461,23 @@ export async function runUpgrade({ target, yes = false, dryRun = false, force = 
     }
   }
 
+  for (const c of conflicts) if (c.choice === 'replace') files.hashes[c.to] = c.newHash;
+  for (const c of conflicts) if (c.choice === 'delete') delete files.hashes[c.to];
   try {
-    apply(root, { files, shared, rulesPlan, excluded });
+    apply(root, { files, shared, rulesPlan, excluded, conflicts });
   } catch (e) {
     console.error(`shipline: ${e.message}`);
     return 1;
   }
+
+  // The new interface may use a different store folder: bring this checkout's tasks over now, not on the first hook run.
+  try {
+    storeDir(root);
+  } catch (e) {
+    console.warn(`shipline: ${e.message}`);
+  }
+  const sideFiles = conflicts.filter((c) => c.choice === 'new').map((c) => `${c.to}${SIDE_SUFFIX}`);
+  if (sideFiles.length) console.log(`\nYour edited files were kept. Merge these by hand, then delete the ${SIDE_SUFFIX} files:\n${sideFiles.map((f) => `  ${f}`).join('\n')}`);
 
   console.log(`\nUpgraded to ${PACKAGE_VERSION} (interface ${INTERFACE}).
 
@@ -400,7 +508,7 @@ export async function runUpgradeAll({ yes = false, dryRun = false, force = false
     console.log(`\n=== ${p.root} ===`);
     const report = {};
     try {
-      await runUpgrade({ target: p.root, yes, dryRun, force, report });
+      await runUpgrade({ target: p.root, yes, dryRun, force, perFile: false, report });
     } catch (e) {
       console.error(`shipline: ${e && e.message ? e.message : e}`);
       report.outcome = 'failed';

@@ -127,6 +127,7 @@ function ProjectCard({
         )}
         {p.upgradeAvailable && <span className="text-notice-reminder">Upgrade available</span>}
       </div>
+      {p.note && <div className="text-xs text-muted-foreground">{p.note}</div>}
       <div className="flex flex-wrap gap-2">
         {p.state === 'ok' && (
           <Button size="xs" onClick={() => onNewChat(p.id)}>

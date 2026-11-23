@@ -5,7 +5,7 @@
 // `"<node>" "<script>"` with absolute paths, which both shells read the same way.
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { IS_WIN, git, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
 import { fingerprint } from '../templates/shipline/bin/lib.mjs';
@@ -39,6 +39,7 @@ before(() => {
   const w = (name, body) => writeFileSync(path.join(scripts, name), body);
   w('pass.js', "console.log('all good');\n");
   w('fail3.js', "console.log('checking');\nconsole.error('lint error: no-unused-vars');\nprocess.exit(3);\n");
+  w('writes.js', "require('node:fs').writeFileSync('coverage.txt', String(Date.now()) + Math.random());\nprocess.exit(Number(process.argv[2] || 0));\n");
   w('kill.js', "process.kill(process.pid, 'SIGKILL');\n");
   w('lines.js', "for (let i = 1; i <= 100; i++) console.log('line ' + i);\nprocess.exit(1);\n");
   w('wide.js', "for (let i = 1; i <= 40; i++) console.log(String(i).padStart(3, '0') + 'x'.repeat(196));\nprocess.exit(1);\n");
@@ -156,11 +157,83 @@ describe('stage.mjs check', () => {
     assert.ok(Date.parse(second.ran_at) >= Date.parse(first.ran_at));
   });
 
+  // Plan A, A2: a check that writes files git doesn't ignore is recorded for the code as it is after the run.
+  test('a command that writes a file: the note lists it and the recorded fingerprint is the post-run one', () => {
+    setCommands({ test: `${script('writes.js')} 0` });
+    const r = check();
+    assert.equal(r.code, 0, `${r.stdout}\n${r.stderr}`);
+    assert.match(r.stdout, /Note: the checks changed these files: coverage\.txt\. The result is recorded for the code as it is now\. Add generated files to \.gitignore/);
+    assert.equal(manifest().checks.fingerprint, fingerprint(dir), 'not stale: the gate compares against the current code');
+    // A source edit after the run still makes the record stale.
+    writeFileSync(path.join(dir, 'src', 'a.js'), 'export const a = 2;\n');
+    try {
+      assert.notEqual(manifest().checks.fingerprint, fingerprint(dir));
+    } finally {
+      git(dir, 'checkout', '--', 'src/a.js');
+      rmSync(path.join(dir, 'coverage.txt'), { force: true });
+    }
+  });
+
+  test('a command that changes nothing prints no note', () => {
+    setCommands({ test: script('pass.js') });
+    assert.doesNotMatch(check().stdout, /the checks changed these files/);
+  });
+
+  test('check --expect-fail records the post-run fingerprint too', () => {
+    const repo = makeRepo({ commitInit: true });
+    try {
+      const cfgFile = path.join(repo, '.shipline', 'config.yml');
+      const text = readFileSync(cfgFile, 'utf8')
+        .replace(/fail_first:\n {2}level: \w+/, 'fail_first:\n  level: proof')
+        .replace(/\ncommands:\n(?: {2}[^\n]*\n)*/, `\ncommands:\n  test: '${`${script('writes.js')} 1`.replace(/'/g, "''")}'\n  lint: ""\n  build: ""\n`);
+      writeFileSync(cfgFile, text);
+      const started = stage(repo, ['start', '--workflow', 'bugfix', '--title', 'ff task'], 'ff-s');
+      assert.equal(started.code, 0, started.stderr);
+      const tasks = path.join(storeOf(repo), 'tasks');
+      const mf = path.join(tasks, readdirSync(tasks)[0], 'manifest.json');
+      const m = JSON.parse(readFileSync(mf, 'utf8'));
+      m.stages.find((x) => x.id === 'ticket').status = 'skipped';
+      writeFileSync(mf, JSON.stringify(m));
+      const r = stage(repo, ['check', '--expect-fail'], 'ff-s');
+      assert.equal(r.code, 0, `${r.stdout}\n${r.stderr}`);
+      assert.match(r.stdout, /Failing as expected/);
+      assert.match(r.stdout, /Note: the checks changed these files: coverage\.txt\./);
+      assert.equal(JSON.parse(readFileSync(mf, 'utf8')).fail_first.fingerprint, fingerprint(repo));
+    } finally {
+      removeDir(repo);
+    }
+  });
+
   test('check writes nothing into the repo', () => {
     setCommands({ test: script('pass.js') });
     const before = git(dir, 'status', '--porcelain', '--untracked-files=all');
     assert.equal(check().code, 0);
     assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=all'), before);
+  });
+});
+
+// A "racily clean" index entry: the file was rewritten with the same size and its mtime is not older than the index
+// itself. Git re-reads such entries instead of trusting the stat cache, but only if the index it reads keeps its
+// original mtime. fingerprint() copies the index, so the copy must keep that mtime (a same-size edit made in the same
+// second as the last index write was otherwise missed, and Verify trusted a stale check run).
+describe('fingerprint(root) with a racily clean index entry', () => {
+  test('a same-size edit whose mtime equals the index mtime still changes the fingerprint', () => {
+    const repo = makeRepo({ init: false });
+    try {
+      git(repo, 'config', 'core.trustctime', 'false'); // the rewrite changes ctime; only mtime and size may decide
+      const file = path.join(repo, 'racy.txt');
+      writeFileSync(file, 'one\n');
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-q', '-m', 'racy');
+      const before = fingerprint(repo);
+      const cached = statSync(file);
+      writeFileSync(file, 'two\n'); // same size
+      utimesSync(file, cached.atime, cached.mtime); // same mtime as the cached stat
+      utimesSync(path.join(repo, '.git', 'index'), cached.atime, cached.mtime); // index no newer than the entry
+      assert.notEqual(fingerprint(repo), before);
+    } finally {
+      removeDir(repo);
+    }
   });
 });
 

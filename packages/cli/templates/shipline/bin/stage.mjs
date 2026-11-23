@@ -4,6 +4,11 @@
 //   node .shipline/bin/stage.mjs start --workflow feature --title "Add export" [--ticket PROJ-12 | 123] [--ui true|false]
 //   node .shipline/bin/stage.mjs resume <task folder name or absolute path>
 //   node .shipline/bin/stage.mjs status [--json] [--verbose]   (without a session: the unfinished tasks on this branch)
+//   node .shipline/bin/stage.mjs status --all                  (every task in the store, with age and done/abandoned marker)
+//   node .shipline/bin/stage.mjs abandon [--reason "..."] [--task <folder>]   (the developer confirms; resume undoes it)
+//   node .shipline/bin/stage.mjs side --files a.md,docs/b.md --reason "..."   (the developer confirms; 30 minutes)
+//   node .shipline/bin/stage.mjs side done
+//   node .shipline/bin/stage.mjs explain                       (the last denial or question for this session, and the way past it)
 //   node .shipline/bin/stage.mjs advance
 //   node .shipline/bin/stage.mjs skip [--reason "..."]
 //   node .shipline/bin/stage.mjs reopen <stage>
@@ -20,6 +25,7 @@
 // with `checks: true` (verify) can't finish without a passing run on the current code, unless the developer accepts.
 // `check` also records the scope of the change (test, lint and CI files it edits, files outside the plan); when
 // there is any, finishing that stage needs the developer's answer to a `scope` question too.
+// With SHIPLINE_NONINTERACTIVE=1 nothing can be asked: see non_interactive in config.yml.
 // Session: $SHIPLINE_SESSION (set by the SessionStart hook) or --session <id>. Task override: --task <folder>.
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
@@ -29,7 +35,8 @@ import {
   findRoot, loadConfig, needsAnswer, loadWorkflow, listWorkflows, readManifest, manifestPath, readSession, statePath,
   tasksDir, writeJson, isDone, currentStage, slugify, stageEnforcement, confirmQuestion, readApprovals,
   consumeApproval, CONFIRM_OPTIONS, sameStage, findStage, fingerprint, findSection, sectionProblems, scopeOf, scopeText,
-  listOpenTasks, currentBranch, draftsDir, draftsTmpDir, parseYaml, isInside,
+  listOpenTasks, listAllTasks, currentBranch, draftsDir, draftsTmpDir, parseYaml, isInside, failFirstLevel,
+  bindSession, readOwner, writeOwner, activeOtherOwner, ownerWarning, readDecision,
 } from './lib.mjs';
 import { validateWorkflow } from './workflow-check.mjs';
 
@@ -93,10 +100,15 @@ function resolveTask(given) {
   return path.isAbsolute(t) ? t : path.join(tasksBase, t);
 }
 
-function activeTaskDir() {
+// allowLast: with no binding, fall back to the task this session just finished (`last_task`), and say so.
+function activeTaskDir(allowLast = false) {
   if (typeof flags.task === 'string') return resolveTask(flags.task);
   if (!sessionId) die('no session id. Pass --session <id> (it is in the SessionStart context) or set SHIPLINE_SESSION.');
   const s = readSession(root, sessionId);
+  if (s && !s.task_dir && allowLast && typeof s.last_task === 'string' && s.last_task) {
+    console.error(`(task ${s.last_task}, finished in this session)`); // stderr: pr-summary output is pasted as is
+    return s.last_task;
+  }
   if (!s || !s.task_dir) die('this session has no active task. Use `start` or `resume` first.');
   return s.task_dir;
 }
@@ -115,7 +127,41 @@ function save(taskDir, manifest) {
 
 function bind(taskDir, workflow) {
   if (!sessionId) die('no session id. Pass --session <id> or set SHIPLINE_SESSION.');
-  writeJson(statePath(root, sessionId), { session_id: sessionId, workflow, task_dir: taskDir, started: now() });
+  bindSession(root, sessionId, taskDir, workflow);
+  writeOwner(taskDir, sessionId);
+}
+
+// Removes this session's binding when it is bound to taskDir. keepLast: the state keeps `last_task` (a finished task),
+// so pr-summary and status still find it.
+function unbind(taskDir, keepLast = false) {
+  if (!sessionId) return false;
+  const st = readSession(root, sessionId);
+  if (!st || !st.task_dir || path.resolve(st.task_dir) !== path.resolve(taskDir)) return false;
+  if (keepLast) writeJson(statePath(root, sessionId), { session_id: sessionId, last_task: taskDir });
+  else rmSync(statePath(root, sessionId), { force: true });
+  return true;
+}
+
+const nonInteractive = process.env.SHIPLINE_NONINTERACTIVE === '1';
+
+// A command that needs the developer's answer, in a run where nobody can give it: ends with the policy message.
+function denyNonInteractive(detail) {
+  die(
+    "This stage needs the developer's answer, and this is a non-interactive run (SHIPLINE_NONINTERACTIVE=1). " +
+      'Set non_interactive: checks_pass in .shipline/config.yml to let passing checks advance, or run interactively.' +
+      (detail ? ` (${detail})` : ''),
+  );
+}
+
+// null when the latest `check` ran on the current code and every command passed; else what is missing or failing.
+function checksProblem(manifest) {
+  const ch = manifest.checks && Array.isArray(manifest.checks.results) ? manifest.checks : null;
+  if (!ch || !ch.results.length) return 'no check has been run: run `stage.mjs check`';
+  const failed = ch.results.filter((r) => r.exit !== 0).map((r) => r.name);
+  if (failed.length) return `checks failing: ${failed.join(', ')}`;
+  const current = fingerprint(root);
+  if (!ch.fingerprint || !current || current !== ch.fingerprint) return 'the checks did not run on the current code: run `stage.mjs check` again';
+  return null;
 }
 
 // The commit the task starts from (`git rev-parse HEAD`), or null outside git or with no commits. The scope check
@@ -166,22 +212,39 @@ function sections(sc) {
 
 // ---------- fail-first (config.yml `fail_first`) ----------
 
-// off | note | section | proof for this stage of this workflow: the configured level when the stage is Reproduce of a
-// listed workflow, else off. An unknown workflow id in the list never matches.
-function failFirstLevel(stageId, wf) {
-  const ff = cfg.fail_first;
-  if (!ff || ff.level === 'off' || stageId !== 'reproduce' || !ff.workflows.includes(wf.id)) return 'off';
-  return ff.level;
-}
+// failFirstLevel (lib.mjs) with this run's config and the workflow's id.
+const ffLevel = (stageId, wf) => failFirstLevel(cfg, stageId, wf.id);
 
 // The built-in note printed with Reproduce, before the repo's own rules; null when fail_first doesn't apply.
 function failFirstNote(stageId, wf) {
-  const level = failFirstLevel(stageId, wf);
+  const level = ffLevel(stageId, wf);
   if (level === 'off') return null;
   const lines = ['Shipline (fail-first): before changing any code, write a test that reproduces this bug and fails on the current code. Name it in reproduction.md.'];
   if (level === 'section') lines.push('reproduction.md must have a `## Failing test` section naming the test and showing its failing output.');
   if (level === 'proof') lines.push('Run `node .shipline/bin/stage.mjs check --expect-fail [test file or name]` to record that it fails. Reproduce can\'t finish until a failing run is recorded.');
   return lines.join('\n');
+}
+
+// The code after a check run: { fp, note }. When the commands changed files (coverage reports, tsbuildinfo,
+// `eslint --fix`), fp is the post-run fingerprint and note says which files; otherwise fp is the pre-run one.
+function afterRun(pre) {
+  if (pre === null) return { fp: pre, note: null };
+  const post = fingerprint(root);
+  if (post === null || post === pre) return { fp: pre, note: null };
+  let list = '';
+  try {
+    const names = execFileSync('git', ['diff-tree', '-r', '--name-only', pre, post], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .split('\n')
+      .filter(Boolean);
+    if (names.length) list = `: ${names.slice(0, 10).join(', ')}${names.length > 10 ? `, +${names.length - 10} more` : ''}`;
+  } catch {
+    // No list; the note is still printed.
+  }
+  return {
+    fp: post,
+    note: `Note: the checks changed these files${list}. The result is recorded for the code as it is now. Add generated files to .gitignore to keep them out of the diff.`,
+  };
 }
 
 // Arguments `check --expect-fail` may append to the test command: no spaces, quotes, shell characters or `..` segments.
@@ -262,7 +325,16 @@ function questionText(q) {
 // (and clears pending_confirm), or ends the process after printing the question to ask.
 function requireAnswer(kind, stageId, taskDir, manifest, extra) {
   const verb =
-    kind === 'advance' ? 'confirm advancing' : kind === 'accept' ? 'decide whether to finish with failed checks' : kind === 'scope' ? 'decide whether to finish with edits to test, lint or CI files or files outside the plan' : 'confirm skipping';
+    kind === 'abandon' ? 'confirm abandoning the task' : kind === 'side' ? 'allow edits outside the task stages' : kind === 'advance' ? 'confirm advancing' : kind === 'accept' ? 'decide whether to finish with failed checks' : kind === 'scope' ? 'decide whether to finish with edits to test, lint or CI files or files outside the plan' : 'confirm skipping';
+  if (nonInteractive) {
+    // Only `advance` can be approved without a developer, and only by passing checks on the current code.
+    if (kind === 'advance' && cfg.non_interactive === 'checks_pass') {
+      const problem = checksProblem(manifest);
+      if (!problem) return { at: now(), non_interactive: true };
+      denyNonInteractive(problem);
+    }
+    denyNonInteractive();
+  }
   if (!sessionId) die(`no session id; confirmations need the session that asked the question. Pass --session <id> or set SHIPLINE_SESSION.`);
   const q = confirmQuestion(stageId, kind, manifest.task.slug, extra);
   const st = readSession(root, sessionId) || { session_id: sessionId };
@@ -293,7 +365,7 @@ function requireAnswer(kind, stageId, taskDir, manifest, extra) {
   console.error(
     `shipline: stage "${stageId}" needs the developer to ${verb}${declined ? ' (they answered "' + CONFIRM_OPTIONS[kind].no + '" last time)' : ''}.\n` +
       `${questionText(q)}\n` +
-      `Then run \`${cmd}\` again. Do not pass any flag or edit any progress file to get around this.`,
+      `Then run \`${cmd}\` again${kind === 'abandon' || kind === 'side' ? ' with exactly the same arguments' : ''}. Do not pass any flag or edit any progress file to get around this.`,
   );
   process.exit(1);
 }
@@ -566,11 +638,16 @@ switch (cmd) {
         key = `issue-${issue}`;
       } else key = flags.ticket.toUpperCase();
     }
-    const slug = slugify(flags.slug || flags.title);
+    const baseSlug = slugify(flags.slug || flags.title);
     if (!flags.slug && !flags.title) die('--title (or --slug) is required.');
+    // A folder that exists (open, done or abandoned) is never reused: -2, -3, ... for the folder and the suggested branch.
+    let slug = baseSlug;
+    let taskDir = path.join(tasksBase, key ? `${key}-${slug}` : slug);
+    for (let n = 2; existsSync(taskDir); n++) {
+      slug = `${baseSlug}-${n}`;
+      taskDir = path.join(tasksBase, key ? `${key}-${slug}` : slug);
+    }
     const vars = { key, slug, type: typeof flags.type === 'string' ? flags.type : wf.branch_type || wf.id };
-    const taskDir = path.join(tasksBase, key ? `${key}-${slug}` : slug);
-    if (existsSync(manifestPath(root, taskDir))) die(`${taskDir} already exists. Use: resume ${taskDir}`);
     const ui = flags.ui === 'true' ? true : flags.ui === 'false' ? false : null;
     const manifest = {
       version: 1,
@@ -593,6 +670,7 @@ switch (cmd) {
     mkdirSync(taskDir, { recursive: true });
     bind(taskDir, wf.id);
     save(taskDir, manifest);
+    if (slug !== baseSlug) console.log(`A task folder for "${baseSlug}" already exists; using ${path.basename(taskDir)}.`);
     console.log(`Started ${wf.name || wf.id} task in ${taskDir}\nSuggested branch: ${manifest.task.branch}\n\n${describeCurrent(taskDir, manifest, wf)}`);
     break;
   }
@@ -601,18 +679,28 @@ switch (cmd) {
     if (!pos[1]) die('usage: resume <task folder name or absolute path>');
     const taskDir = resolveTask(pos[1]);
     const { manifest, wf } = load(taskDir);
+    const other = sessionId ? activeOtherOwner(taskDir, sessionId) : null;
+    if (manifest.abandoned) {
+      delete manifest.abandoned;
+      save(taskDir, manifest);
+    }
     bind(taskDir, wf.id);
+    if (other) console.log(ownerWarning(other));
     console.log(`Resumed ${taskDir} (${wf.id} workflow).\nSuggested branch: ${manifest.task.branch}\n\n${statusText(taskDir, manifest, wf)}`);
     break;
   }
 
   case 'status': {
+    if (flags.all) {
+      listEverything();
+      break;
+    }
     // No session and no --task: say which unfinished tasks belong to this branch instead of failing.
     if (typeof flags.task !== 'string' && !sessionId) {
       listBranchTasks();
       break;
     }
-    const taskDir = activeTaskDir();
+    const taskDir = activeTaskDir(true);
     const { manifest, wf } = load(taskDir);
     if (flags.json) console.log(JSON.stringify({ task_dir: taskDir, ...manifest }, null, 2));
     else {
@@ -643,13 +731,13 @@ switch (cmd) {
       }
       if (sc.artifact) {
         const wanted = sections(sc);
-        if (failFirstLevel(cur.id, wf) === 'section' && !wanted.some((h) => h.trim().replace(/:+$/, '').trim().toLowerCase() === 'failing test')) wanted.push('Failing test');
+        if (ffLevel(cur.id, wf) === 'section' && !wanted.some((h) => h.trim().replace(/:+$/, '').trim().toLowerCase() === 'failing test')) wanted.push('Failing test');
         if (wanted.length) {
           const problems = sectionProblems(readFileSync(path.join(taskDir, sc.artifact), 'utf8'), wanted);
           if (problems.length) die(`${sc.artifact} is missing: ${problems.join(', ')}.`);
         }
       }
-      if (failFirstLevel(cur.id, wf) === 'proof') {
+      if (ffLevel(cur.id, wf) === 'proof') {
         if (!configuredCommands().some(([n]) => n === 'test')) {
           die('fail_first is set to proof but no test command is configured. Set commands.test in .shipline/config.yml, or skip this stage with a reason (`stage.mjs skip --reason "..."`).');
         }
@@ -661,7 +749,10 @@ switch (cmd) {
       if (sc.checks === true) gateChecks(taskDir, manifest, cur);
       if (needsAnswer(sc, cfg)) {
         const a = requireAnswer('advance', cur.id, taskDir, manifest);
-        cur.confirmed = { via: 'answer', at: a.at };
+        if (a.non_interactive) {
+          cur.confirmed = { via: 'non_interactive', at: a.at };
+          cur.approved_by = 'non_interactive';
+        } else cur.confirmed = { via: 'answer', at: a.at };
       } else {
         // No question is needed (the stage doesn't ask, or light mode is on). An "Advance" answer the developer
         // already gave for a pending question on this stage is still used; otherwise the stage finishes as auto.
@@ -686,6 +777,57 @@ switch (cmd) {
     activateNext(manifest, wf);
     save(taskDir, manifest);
     console.log(`${cmd === 'advance' ? 'Done' : 'Skipped'}: ${cur.id}\n\n${describeCurrent(taskDir, manifest, wf)}`);
+    // The last stage is done: this session stops tracking the task (the next request is a new one).
+    if (manifest.complete && unbind(taskDir, true)) console.log(`\nTask ${path.basename(taskDir)} is complete; this session is no longer tracking a task.`);
+    break;
+  }
+
+  case 'abandon': {
+    const taskDir = activeTaskDir();
+    const manifest = readManifest(root, taskDir);
+    if (!manifest) die(`no manifest.json in ${taskDir}`);
+    if (manifest.abandoned) die(`${path.basename(taskDir)} is already abandoned. Resume it with: stage.mjs resume ${path.basename(taskDir)}`);
+    if (!currentStage(manifest)) die(`${path.basename(taskDir)} is complete; there is nothing to abandon.`);
+    const reason = typeof flags.reason === 'string' ? flags.reason.trim() : '';
+    requireAnswer('abandon', 'abandon', taskDir, manifest, { reason });
+    manifest.abandoned = { at: now(), reason };
+    save(taskDir, manifest);
+    unbind(taskDir);
+    console.log(`Abandoned ${path.basename(taskDir)}. Resume it any time with stage.mjs resume ${path.basename(taskDir)}.`);
+    break;
+  }
+
+  case 'side': {
+    if (!sessionId) die('no session id. Pass --session <id> or set SHIPLINE_SESSION.');
+    const st = readSession(root, sessionId);
+    if (!st || !st.task_dir) {
+      console.log('No task is active; nothing blocks this edit.');
+      break;
+    }
+    if (pos[1] === 'done') {
+      const { side_pass: _gone, ...rest } = st;
+      writeJson(statePath(root, sessionId), rest);
+      console.log('Side pass cleared.');
+      break;
+    }
+    const files = sideFiles(flags.files);
+    const reason = typeof flags.reason === 'string' ? flags.reason.trim() : '';
+    if (!reason) die('side needs --reason "why this edit is unrelated to the task".');
+    const taskDir = st.task_dir;
+    const manifest = readManifest(root, taskDir);
+    if (!manifest) die(`no manifest.json in ${taskDir}`);
+    requireAnswer('side', 'side', taskDir, manifest, { files, reason });
+    const expires = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    writeJson(statePath(root, sessionId), { ...(readSession(root, sessionId) || st), side_pass: { files, reason, expires_at: expires } });
+    manifest.side_passes = [...(Array.isArray(manifest.side_passes) ? manifest.side_passes : []), { at: now(), session: sessionId, files, reason }];
+    save(taskDir, manifest);
+    console.log(`Side pass active for 30 minutes (until ${expires}): ${files.join(', ')}. Stage rules still apply to every other file, and guardrails still apply to these. End it with: stage.mjs side done`);
+    break;
+  }
+
+  case 'explain': {
+    if (!sessionId) die('no session id. Pass --session <id> or set SHIPLINE_SESSION.');
+    explain(readDecision(root, sessionId));
     break;
   }
 
@@ -744,21 +886,23 @@ switch (cmd) {
       printScope(manifest.checks.scope, wf);
       break;
     }
-    // The fingerprint is taken before the commands run: it is the code they saw.
+    // The fingerprint is taken before the commands run; afterRun() replaces it if they changed any files.
     const fp = fingerprint(root);
     if (fp === null) console.log('Note: this is not a git repository (or git failed), so the checks cannot be tied to a version of the code.');
     const results = commands.map(([name, command]) => {
       console.log(`Running ${name}: ${command}`);
       return runCommand(name, command);
     });
-    manifest.checks = { fingerprint: fp, ran_at: now(), results };
+    const post = afterRun(fp);
+    manifest.checks = { fingerprint: post.fp, ran_at: now(), results };
     recordScope(taskDir, manifest, wf);
     save(taskDir, manifest);
     const failed = results.filter((r) => r.exit !== 0);
     console.log(`\n${checksLine(results)}`);
     printScope(manifest.checks.scope, wf);
     for (const r of failed) console.log(`\n--- ${r.name} (${r.exit === null ? 'did not run' : `exit ${r.exit}`}) last output ---\n${r.tail}`);
-    console.log(`\nFingerprint: ${fp ? fp.slice(0, 12) : 'none'}`);
+    if (post.note) console.log(`\n${post.note}`);
+    console.log(`\nFingerprint: ${post.fp ? post.fp.slice(0, 12) : 'none'}`);
     const ffFacts = failFirstFacts(manifest);
     if (ffFacts) console.log(failFirstLine(ffFacts));
     if (failed.length) process.exit(1);
@@ -766,7 +910,7 @@ switch (cmd) {
   }
 
   case 'pr-summary': {
-    const taskDir = activeTaskDir();
+    const taskDir = activeTaskDir(true);
     const { manifest, wf } = load(taskDir);
     const closes = cfg.tracker === 'github' && Number.isInteger(manifest.task.issue) ? `Closes #${manifest.task.issue}\n` : '';
     console.log(closes + prSummary(taskDir, manifest, wf));
@@ -784,7 +928,7 @@ switch (cmd) {
     break;
 
   default:
-    console.log('usage: stage.mjs workflows [--shipped] | start | resume <task> | status | advance | skip | reopen <stage> | flag ui true|false | check | pr-summary | validate <path> | draft --tmp | draft <id> --from <folder>');
+    console.log('usage: stage.mjs workflows [--shipped] | start | resume <task> | status [--all] | advance | skip | abandon [--reason ...] | side --files a,b --reason ... | side done | explain | reopen <stage> | flag ui true|false | check | pr-summary | validate <path> | draft --tmp | draft <id> --from <folder>');
     process.exit(cmd ? 1 : 0);
 }
 
@@ -792,7 +936,7 @@ switch (cmd) {
 // as manifest.fail_first. Valid only at Reproduce of a workflow fail_first applies to.
 function expectFail(taskDir, manifest, wf) {
   const cur = currentStage(manifest);
-  if (!cur || failFirstLevel(cur.id, wf) === 'off') {
+  if (!cur || ffLevel(cur.id, wf) === 'off') {
     die('check --expect-fail only applies at the Reproduce stage of a workflow listed in fail_first (and fail_first must not be off).');
   }
   const extras = expectFailExtras();
@@ -807,14 +951,77 @@ function expectFail(taskDir, manifest, wf) {
   const fp = fingerprint(root);
   console.log(`Running test: ${command}`);
   const r = runCommand('test', command);
+  const post = afterRun(fp);
   if (r.exit === null) die(`the test command did not run:\n${r.tail}`);
   if (r.exit === 0) {
     console.log('The test passed, so it doesn\'t reproduce the bug: nothing recorded.');
     process.exit(1);
   }
-  manifest.fail_first = { fingerprint: fp, ran_at: now(), command, exit: r.exit, tail: r.tail };
+  manifest.fail_first = { fingerprint: post.fp, ran_at: now(), command, exit: r.exit, tail: r.tail };
   save(taskDir, manifest);
   console.log(`${r.tail}\n\nFailing as expected (exit ${r.exit}): recorded.`);
+  if (post.note) console.log(`\n${post.note}`);
+}
+
+// `side --files`: repo-relative paths, no globs, 1 to 10. Returns them sorted and deduplicated.
+function sideFiles(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) die('side needs --files a.md,docs/b.md (repo-relative paths, 1 to 10).');
+  const files = [...new Set(raw.split(',').map((f) => f.trim().replace(/\\/g, '/').replace(/^\.\//, '')).filter(Boolean))].sort();
+  if (!files.length || files.length > 10) die('side takes 1 to 10 files.');
+  for (const f of files) {
+    if (/[*?[\]{}]/.test(f)) die(`side takes exact file paths, not globs: ${f}`);
+    if (path.isAbsolute(f) || /^[A-Za-z]:/.test(f) || f.split('/').includes('..')) die(`side takes paths inside the repo, relative to its root: ${f}`);
+  }
+  return files;
+}
+
+// `explain`: the last deny or ask this session got, and the way past it.
+function explain(d) {
+  if (!d) {
+    console.log('No Shipline denial recorded for this session.');
+    return;
+  }
+  const lines = [`${d.at}: ${d.decision === 'deny' ? 'denied' : 'asked about'} ${d.tool}${d.target ? ` on ${d.target}` : ''}.`, d.reason];
+  if (d.kind === 'stage') {
+    lines.push('', `Rule: the "${d.id}" stage of this task hasn't been finished.`, `Way past it: finish "${d.id}" and run stage.mjs advance.`);
+    if (d.tool !== 'Bash' && d.target) lines.push(`If this edit is unrelated to the task: stage.mjs side --files ${d.target} --reason "..." (the developer confirms).`);
+  } else if (d.kind === 'rail') {
+    const level = cfg.rails && cfg.rails[d.id];
+    lines.push('', `Rule: guardrail ${d.id}${level ? ` (currently ${level})` : ''}.`, `The developer can change it with rails.${d.id}: ask|off in .shipline/config.yml (or Setup, Guardrails).`);
+  } else if (d.kind === 'protected') {
+    lines.push('', `Rule: protected_paths entry ${d.id || '(unknown)'} in .shipline/config.yml.`, 'The developer approves or declines it when asked; remove the entry to stop the question.');
+  } else {
+    lines.push('', 'Rule: progress and approvals change only through stage.mjs and the developer\'s answers.');
+  }
+  console.log(lines.join('\n'));
+}
+
+function ageText(ms) {
+  if (!ms) return 'age unknown';
+  const d = Math.floor((Date.now() - ms) / 86400000);
+  return d < 1 ? 'today' : `${d}d ago`;
+}
+
+// `status --all`: every task in the store.
+function listEverything() {
+  let tasks;
+  try {
+    tasks = listAllTasks(root);
+  } catch (e) {
+    die(e.message);
+  }
+  tasks.sort((a, b) => b.newest - a.newest);
+  if (flags.json) {
+    console.log(JSON.stringify({ tasks: tasks.map((t) => ({ slug: t.slug, workflow: t.workflow, stage: t.next, branch: t.branch || null, state: t.state, last_activity: t.newest ? new Date(t.newest).toISOString() : null, task_dir: t.dir })) }, null, 2));
+    return;
+  }
+  if (!tasks.length) {
+    console.log('No tasks.');
+    return;
+  }
+  for (const t of tasks) {
+    console.log(`${t.slug} (${t.workflow}) stage: ${t.next || 'none'}, ${ageText(t.newest)}, branch: ${t.branch || 'none'}${t.state === 'open' ? '' : ` [${t.state}]`}`);
+  }
 }
 
 function uiWork(manifest) {
@@ -874,6 +1081,7 @@ function listBranchTasks() {
 
 // How a finished stage was decided: 'answer' (the developer's own answer), 'auto' (no question was needed), or null.
 function provenance(ms, sc) {
+  if (ms.status === 'done' && ms.approved_by === 'non_interactive') return 'non_interactive';
   if (ms.status === 'done') return ms.confirmed && ms.confirmed.via === 'answer' ? 'answer' : needsAnswer(sc, cfg) ? null : 'auto';
   if (ms.status === 'skipped') return ms.skipped ? (ms.skipped.via === 'answer' ? 'answer' : 'auto') : 'auto';
   return null;
@@ -1022,7 +1230,7 @@ function sectionBlock(taskDir, wf, heading) {
 }
 
 function prSummary(taskDir, manifest, wf) {
-  const label = { answer: 'your answer', auto: 'auto' };
+  const label = { answer: 'your answer', auto: 'auto', non_interactive: 'auto (non-interactive)' };
   const rows = [];
   const data = [];
   for (const ms of manifest.stages) {
@@ -1034,6 +1242,8 @@ function prSummary(taskDir, manifest, wf) {
   }
   const out = ['### Shipline', '| Stage | Status | Confirmed |', '| --- | --- | --- |', ...rows];
   const json = { v: 2, workflow: wf.id, task: manifest.task.slug, stages: data };
+  const headless = data.filter((d) => d.confirmed === 'non_interactive');
+  if (headless.length) out.push('', `Advanced without a developer answer (non-interactive, checks passed): ${headless.map((d) => d.id).join(', ')}`);
 
   const checkStage = wf.stages.find((st) => st.checks === true);
   if (checkStage) {

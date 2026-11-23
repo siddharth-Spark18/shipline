@@ -1,5 +1,5 @@
 // The interactive questions of `shipline init`. Imported only by init's interactive path, so `ui`, `upgrade`
-// and `uninstall` never load @inquirer/prompts. Node 18+.
+// and `uninstall` never load @inquirer/prompts. Node 22+.
 
 import { DEFAULT_BRANCH_PATTERN } from './install.mjs';
 import { branchPatternError } from './setup-schema.mjs';
@@ -10,8 +10,8 @@ async function loadPrompts() {
   try {
     return await import('@inquirer/prompts');
   } catch (e) {
-    // @inquirer/prompts 8 needs Node 20.17+; init and the hooks otherwise run on Node 18.
-    throw new Error(`the interactive questions could not be loaded (${e.message}). They need Node 20.17 or newer; on older Node, run \`init --yes\`.`);
+    // The CLI needs Node 22 (engines), which @inquirer/prompts 8 supports; a failure here is an install problem.
+    throw new Error(`the interactive questions could not be loaded (${e.message}). The shipline CLI needs Node 22 or newer; reinstall it, or run \`init --yes\`.`);
   }
 }
 

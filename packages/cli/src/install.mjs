@@ -1,5 +1,5 @@
 // What `shipline init` and the browser wizard share: what can be chosen, the plan for a selection (which reads
-// files and writes nothing), and the all-or-nothing write. Node 18+, no dependencies.
+// files and writes nothing), and the all-or-nothing write. Node 22+, no dependencies.
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { detectEol, isInside, parseYaml, toEol } from '../templates/shipline/bin/lib.mjs';
@@ -14,7 +14,7 @@ import { detectUi } from './detect-ui.mjs';
 import {
   CONFIRMATIONS, FAIL_FIRST_LEVELS, RAIL_IDS, TRACKERS, branchPatternError, configLayout, headerFor, validateConfig, validateWorkflow,
 } from './setup-schema.mjs';
-import { storeDir } from './store.mjs';
+import { storeDirFor } from './store.mjs';
 import { emitConfig, emitWorkflow } from './yaml-emit.mjs';
 
 function readIfExists(file) {
@@ -680,7 +680,7 @@ export function applyInstall(root, plan, { base = null } = {}) {
   }
   // The store must be writable before anything is installed (SHIPLINE_HOME, or ~/.shipline).
   try {
-    storeDir(root);
+    storeDirFor(root, INTERFACE); // VERSION isn't written yet: this install is the current interface
   } catch (e) {
     throw codedError('store', e.message);
   }

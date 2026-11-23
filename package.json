@@ -6,7 +6,10 @@
   "scripts": {
     "build:ui": "pnpm --filter @shipline/ui build",
     "test": "pnpm --filter ./packages/cli test",
-    "test:cli": "pnpm --filter ./packages/cli test"
+    "test:cli": "pnpm --filter ./packages/cli test",
+    "format": "prettier --write packages/ui/src packages/cli/src/ui",
+    "format:check": "prettier --check packages/ui/src packages/cli/src/ui",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {
     "prettier": "^3.8.3",

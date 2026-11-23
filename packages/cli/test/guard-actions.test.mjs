@@ -4,9 +4,9 @@
 // Runs the vendored guard on a real temp repo. Node 18+ (test:hooks).
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { hook, makeRepo, removeDir, stage, storeOf } from './helpers.mjs';
+import { git, hook, makeRepo, removeDir, run, stage, storeOf } from './helpers.mjs';
 import { ACTIONS, makeMatchCtx, matchAction, parseCommand } from '../templates/shipline/bin/lib.mjs';
 
 // `hold` (block) holds back every action until it is done; `soft` (warn) holds back deploys; `regex` (block)
@@ -242,5 +242,192 @@ describe('matchAction across stacks', () => {
     for (const c of ['uv publish', 'poetry publish --build', 'hatch publish', 'pdm publish', 'flit publish', 'bun publish', 'gem push x-1.0.gem', 'mvn deploy', './mvnw clean deploy', './gradlew publish', 'gradle :lib:publishToMavenCentral', 'dotnet nuget push x.nupkg'])
       assert.ok(hits('release', c), c);
     for (const c of ['uv build', 'poetry build', 'gem build x.gemspec', 'mvn package', './gradlew build', 'dotnet nuget list source']) assert.ok(!hits('release', c), c);
+  });
+});
+
+// Plan A (docs/plans/shipline-2-2-0-hotfix.md), A1 and A5: test files pass the stage blocks at Reproduce when
+// fail_first applies, and Bash commands that write repo files are checked against `tools:` blocks like a Write.
+describe('stage tools blocks: Reproduce test files and Bash writes', () => {
+  const WARN_WF = `id: tw
+name: Tw
+stages:
+  - id: tw
+    name: Tw
+    enforcement: warn
+    blocks:
+      - tools: 'Edit|Write'
+`;
+  const DOCS_WF = `id: dw
+name: Dw
+stages:
+  - id: write
+    name: Write
+    enforcement: block
+    blocks:
+      - tools: 'Edit|Write|MultiEdit|NotebookEdit'
+        allow_paths: ['docs/**']
+`;
+  let repo;
+  const setLevel = (level) => {
+    const f = path.join(repo, '.shipline', 'config.yml');
+    writeFileSync(f, readFileSync(f, 'utf8').replace(/fail_first:\n {2}level: \w+/, `fail_first:\n  level: ${level}`));
+  };
+  // Sets one stage's status in the bugfix task's manifest; returns a function that restores the file.
+  const setStatus = (id, status) => {
+    const tasks = path.join(storeOf(repo), 'tasks');
+    const mf = path.join(tasks, readdirSync(tasks).find((d) => d.includes('bugfix')), 'manifest.json');
+    const orig = readFileSync(mf, 'utf8');
+    const m = JSON.parse(orig);
+    m.stages.find((x) => x.id === id).status = status;
+    writeFileSync(mf, JSON.stringify(m));
+    return () => writeFileSync(mf, orig);
+  };
+  const write = (session, file, tool = 'Write') =>
+    hook(repo, 'guard.mjs', { session_id: session, cwd: repo, hook_event_name: 'PreToolUse', tool_name: tool, tool_input: { file_path: path.join(repo, file) } });
+  const sh = (session, command) =>
+    hook(repo, 'guard.mjs', { session_id: session, cwd: repo, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } });
+  const denied = (r) => decision(r) === 'deny';
+
+  before(() => {
+    repo = makeRepo({ commitInit: true });
+    writeFileSync(path.join(repo, '.shipline', 'workflows', 'tw.yml'), WARN_WF);
+    writeFileSync(path.join(repo, '.shipline', 'workflows', 'dw.yml'), DOCS_WF);
+    for (const [wf, session] of [['bugfix', 'bf-s'], ['feature', 'ft-s'], ['dw', 'doc-s'], ['tw', 'tw-s']]) {
+      const r = stage(repo, ['start', '--workflow', wf, '--title', `${wf} task`], session);
+      assert.equal(r.code, 0, r.stderr);
+    }
+    // Reproduce is current once the optional Ticket stage is skipped.
+    setStatus('ticket', 'skipped');
+    setLevel('proof');
+  });
+  after(() => removeDir(repo));
+
+  test('A1: at Reproduce with fail_first proof, a test file is allowed and source is denied', () => {
+    assert.ok(!denied(write('bf-s', 'test/login.test.js')), 'test write');
+    assert.ok(!denied(write('bf-s', 'src/__tests__/a.js', 'Edit')), 'Edit of a test file');
+    assert.ok(denied(write('bf-s', 'src/login.js')), 'source write');
+    assert.ok(!denied(sh('bf-s', 'cat > test/x.test.js')), 'Bash write of a test file');
+    assert.ok(denied(sh('bf-s', 'cat > src/x.js')), 'Bash write of source');
+  });
+
+  test('A1: with fail_first off, the test write is denied', () => {
+    setLevel('off');
+    try {
+      assert.ok(denied(write('bf-s', 'test/login.test.js')));
+      assert.ok(denied(sh('bf-s', 'cat > test/x.test.js')));
+    } finally {
+      setLevel('proof');
+    }
+  });
+
+  test('A1: once Reproduce is done (Root cause current), test writes are denied again', () => {
+    const restore = setStatus('reproduce', 'done');
+    try {
+      assert.ok(denied(write('bf-s', 'test/login.test.js')));
+    } finally {
+      restore();
+    }
+  });
+
+  test('A5: during Plan, Bash writes to repo files are denied with the Bash wording', () => {
+    for (const command of ['cat > src/a.js', 'sed -i s/a/b/ src/a.js', 'rm src/a.js', 'cp x src/a.js', 'echo hi | tee src/a.js', 'mv src/a.js src/b.js']) {
+      const r = sh('ft-s', command);
+      assert.equal(decision(r), 'deny', command);
+      assert.match(hso(r).permissionDecisionReason, /^Shipline \(Feature workflow, task [\w-]+\): writing src\/a\.js from Bash needs the "Plan" stage to be done first\./, command);
+    }
+  });
+
+  test('A5: writes outside the repo, and reads, are allowed', () => {
+    assert.ok(!denied(sh('ft-s', 'echo hi > /tmp/x')));
+    assert.ok(!denied(sh('ft-s', 'cat src/a.js')));
+    assert.ok(!denied(sh('ft-s', 'echo hi > /dev/null')));
+  });
+
+  test('A5: a target in allow_paths is allowed (docs-style workflow)', () => {
+    assert.ok(!denied(sh('doc-s', 'cat > docs/a.md')));
+    assert.ok(denied(sh('doc-s', 'cat > src/a.js')));
+  });
+
+  test('A5: enforcement warn gives a warning, not a deny', () => {
+    const r = sh('tw-s', 'cat > src/a.js');
+    assert.ok(!denied(r));
+    assert.match(r.json.systemMessage, /Shipline reminder: .*writing src\/a\.js from Bash/);
+  });
+});
+
+// ---------- 2.2.0, part D11: one list of commit-creating commands; concluding a conflicted operation is allowed ----------
+
+describe('D11: commit-creating git commands', () => {
+  let repo;
+  const SESSION = 'd11-s';
+  const sh = (command) => hook(repo, 'guard.mjs', { session_id: SESSION, cwd: repo, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } });
+  const isCommit = (command, r = repo) => {
+    const ctx = makeMatchCtx(r, r, {});
+    return parseCommand(command).some((p) => matchAction(p, 'commit', ctx));
+  };
+
+  before(() => {
+    repo = makeRepo({ commitInit: true });
+    writeFileSync(path.join(repo, '.shipline', 'workflows', 'acts.yml'), ACTIONS_WF);
+    const r = stage(repo, ['start', '--workflow', 'acts', '--title', 'held'], SESSION);
+    assert.equal(r.code, 0, r.stderr);
+  });
+  after(() => removeDir(repo));
+
+  test('commit, merge --commit, cherry-pick <rev>, revert <rev> and am create commits; a plain merge does not', () => {
+    for (const c of ['git commit -m x', 'git commit --amend', 'git merge --commit topic', 'git cherry-pick abc123', 'git cherry-pick -x abc123', 'git revert abc123', 'git am fix.patch', 'git -C sub commit -m x', 'cd sub && git am p.patch']) {
+      assert.ok(isCommit(c), c);
+    }
+    for (const c of ['git merge main', 'git merge topic', 'git cherry-pick --no-commit abc', 'git cherry-pick -n abc', 'git revert --no-commit abc', 'git cherry-pick --abort', 'git cherry-pick --continue', 'git revert --continue', 'git rebase --continue', 'git merge --continue', 'git am --continue', 'git am --abort', 'git status']) {
+      assert.ok(!isCommit(c), c);
+    }
+  });
+
+  test('held back by a stage actions block: cherry-pick, revert and am are denied; the --continue forms pass', () => {
+    for (const c of ['git cherry-pick abc123', 'git revert abc123', 'git am fix.patch', 'git commit -m x']) {
+      const r = sh(c);
+      assert.equal(decision(r), 'deny', c);
+    }
+    for (const c of ['git rebase --continue', 'git cherry-pick --continue', 'git revert --continue']) assert.equal(decision(sh(c)), null, c);
+  });
+
+  test('during a conflicted merge any `git commit` (including -m) is allowed; the rest stay held', () => {
+    git(repo, 'switch', '-q', '-c', 'topic');
+    writeFileSync(path.join(repo, 'src', 'a.js'), 'export const a = "topic";\n');
+    git(repo, 'commit', '-q', '-am', 'topic change');
+    git(repo, 'switch', '-q', 'main');
+    writeFileSync(path.join(repo, 'src', 'a.js'), 'export const a = "main";\n');
+    git(repo, 'commit', '-q', '-am', 'main change');
+    const merge = run('git', ['merge', 'topic'], { cwd: repo });
+    assert.notEqual(merge.code, 0, 'the merge conflicts');
+    try {
+      assert.ok(!isCommit('git commit --no-edit'));
+      assert.ok(!isCommit('git commit -m "Merge topic"'));
+      assert.equal(decision(sh('git commit --no-edit')), null);
+      assert.equal(decision(sh('git commit -am "Merge topic, resolved"')), null);
+      assert.equal(decision(sh('git merge --continue')), null);
+      assert.equal(decision(sh('git cherry-pick abc123')), 'deny', 'only `git commit` concludes an operation');
+    } finally {
+      git(repo, 'merge', '--abort');
+    }
+    // Not in progress any more: held back again.
+    assert.ok(isCommit('git commit -m x'));
+    assert.equal(decision(sh('git commit -m x')), 'deny');
+  });
+
+  test('the markers are read from the worktree\'s own git dir (a linked worktree)', () => {
+    const wt = path.join(repo, '..', `${path.basename(repo)}-wt`);
+    git(repo, 'worktree', 'add', '-q', wt, '-b', 'wt-branch');
+    try {
+      writeFileSync(path.join(wt, 'src', 'a.js'), 'export const a = "wt";\n');
+      git(wt, 'commit', '-q', '-am', 'wt change');
+      const r = run('git', ['merge', 'topic'], { cwd: wt });
+      assert.notEqual(r.code, 0, 'conflict in the worktree');
+      assert.ok(!isCommit('git commit -m x', wt), 'in progress in the worktree');
+      assert.ok(isCommit('git commit -m x', repo), 'not in progress in the main checkout');
+    } finally {
+      run('git', ['merge', '--abort'], { cwd: wt });
+      git(repo, 'worktree', 'remove', '--force', wt);
+    }
   });
 });

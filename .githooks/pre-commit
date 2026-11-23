@@ -1,0 +1,25 @@
+#!/bin/sh
+# Formats staged files in the folders CI checks with Prettier (the same list as `pnpm format:check`).
+# A file that is fully staged is formatted and re-staged. A file that also has unstaged edits is only checked, so the
+# hook never pulls unstaged work into the commit: format it yourself (`pnpm format`) and stage it again.
+# Skip once with `git commit --no-verify`.
+
+files=$(git diff --cached --name-only --diff-filter=ACMR -- packages/ui/src packages/cli/src/ui)
+[ -z "$files" ] && exit 0
+
+prettier="node_modules/.bin/prettier"
+if [ ! -x "$prettier" ]; then
+  echo "pre-commit: Prettier isn't installed (run pnpm install), so formatting wasn't checked." >&2
+  exit 0
+fi
+
+status=0
+for f in $files; do
+  if git diff --quiet -- "$f"; then
+    "$prettier" --write --ignore-unknown --log-level warn "$f" && git add -- "$f" || status=1
+  elif ! "$prettier" --check --ignore-unknown --log-level warn "$f"; then
+    echo "pre-commit: $f isn't formatted and has unstaged edits. Run \`pnpm format\`, stage it, and commit again." >&2
+    status=1
+  fi
+done
+exit $status

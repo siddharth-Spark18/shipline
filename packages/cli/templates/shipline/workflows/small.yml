@@ -12,13 +12,11 @@ stages:
   - id: implement
     name: Implement
     artifact: implementation.md
-    agent: builder
     enforcement: guide
     confirm_to_advance: false
   - id: verify
     name: Verify
     artifact: verification.md
-    agent: qa-bug-hunter
     checks: true
     sections: [Checklist]
     enforcement: block
@@ -28,6 +26,5 @@ stages:
   - id: pr
     name: Commit and PR
     artifact: pr.md
-    agent: builder
     enforcement: guide
     confirm_to_advance: false

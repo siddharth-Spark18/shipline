@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { git, hook, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
-import { needsAnswer } from '../templates/shipline/bin/lib.mjs';
+import { CONFIRM_OPTIONS, confirmQuestion, needsAnswer } from '../templates/shipline/bin/lib.mjs';
 
 // ---------- the rule ----------
 
@@ -405,6 +405,68 @@ describe('ci-check agrees with the hooks', () => {
       assert.ok(!bad.stdout.includes('Stage "plan" needs'), bad.stdout);
     } finally {
       removeDir(scratch);
+    }
+  });
+});
+
+// ---------- 2.2.0, part D: the abandon and side kinds ----------
+
+describe('confirmQuestion: abandon and side embed their arguments (lib.mjs)', () => {
+  test('the options', () => {
+    assert.deepEqual(CONFIRM_OPTIONS.abandon, { yes: 'Abandon', no: 'Keep it' });
+    assert.deepEqual(CONFIRM_OPTIONS.side, { yes: 'Allow', no: "Don't allow" });
+  });
+
+  test('abandon: the task and the reason (or "none")', () => {
+    assert.deepEqual(confirmQuestion('abandon', 'abandon', 'fix-crash', { reason: 'duplicate' }), {
+      header: 'Shipline',
+      question: 'Abandon task fix-crash? Reason: duplicate',
+      options: ['Abandon', 'Keep it'],
+    });
+    assert.equal(confirmQuestion('abandon', 'abandon', 'fix-crash', {}).question, 'Abandon task fix-crash? Reason: none');
+    assert.equal(confirmQuestion('abandon', 'abandon', 'fix-crash').question, 'Abandon task fix-crash? Reason: none');
+  });
+
+  test('side: the sorted file list, the task and the reason; another list is another question', () => {
+    const q = confirmQuestion('write', 'side', 'add-export', { files: ['docs/a.md', 'README.md'], reason: 'typo' });
+    assert.equal(q.question, 'Allow edits to README.md, docs/a.md outside the stages of task add-export? Reason: typo');
+    assert.deepEqual(q.options, ['Allow', "Don't allow"]);
+    assert.equal(confirmQuestion('write', 'side', 'add-export', { files: ['README.md', 'docs/a.md'], reason: 'typo' }).question, q.question);
+    assert.notEqual(confirmQuestion('write', 'side', 'add-export', { files: ['README.md'], reason: 'typo' }).question, q.question);
+    assert.notEqual(confirmQuestion('write', 'side', 'add-export', { files: ['README.md', 'docs/a.md'], reason: 'other' }).question, q.question);
+  });
+
+  test('an unknown kind still throws', () => {
+    assert.throws(() => confirmQuestion('x', 'nope', 'slug'), /unknown confirmation kind/);
+  });
+
+  test('record-answer stores an answer for the abandon and side kinds only for the exact pending question', () => {
+    const repo = makeRepo({ commitInit: true });
+    try {
+      assert.equal(stage(repo, ['start', '--workflow', 'small', '--title', 'Rec task'], 'rec-s').code, 0);
+      const first = stage(repo, ['abandon', '--reason', 'r'], 'rec-s');
+      assert.equal(first.code, 1);
+      const q = 'Abandon task rec-task? Reason: r';
+      const send = (question, label) =>
+        hook(repo, 'record-answer.mjs', {
+          session_id: 'rec-s',
+          cwd: repo,
+          hook_event_name: 'PostToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_input: { questions: [{ question, header: 'Shipline', options: [{ label }], multiSelect: false }] },
+          tool_response: { answers: { [question]: label } },
+        });
+      send('Abandon task rec-task? Reason: something else', 'Abandon'); // not the pending question
+      send(q, 'Maybe'); // not one of the fixed options
+      const file = path.join(storeOf(repo), 'approvals', 'rec-s.jsonl');
+      assert.equal(existsSync(file), false);
+      send(q, 'Abandon');
+      const rec = JSON.parse(readFileSync(file, 'utf8').trim());
+      assert.equal(rec.kind, 'abandon');
+      assert.equal(rec.question, q);
+      assert.equal(rec.answer, 'Abandon');
+    } finally {
+      removeDir(repo);
     }
   });
 });

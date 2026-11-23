@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { git, hook, makeRepo, removeDir, runInit, stage, storeOf, tmpDir } from './helpers.mjs';
-import { scopeOf, sensitiveKind } from '../templates/shipline/bin/lib.mjs';
+import { scopeOf, scopeText, sensitiveKind } from '../templates/shipline/bin/lib.mjs';
 
 // plan (its "Files to touch" is optional here) -> verify (checks) -> pr.
 const workflow = (id, confirm) => `id: ${id}
@@ -43,7 +43,10 @@ const taskDir = (slug) => path.join(storeOf(dir), 'tasks', slug);
 const manifestOf = (slug) => JSON.parse(readFileSync(path.join(taskDir(slug), 'manifest.json'), 'utf8'));
 const stageOf = (slug, id) => manifestOf(slug).stages.find((s) => s.id === id);
 const sessionState = (session) => JSON.parse(readFileSync(path.join(storeOf(dir), 'state', `${session}.json`), 'utf8'));
-const write = (rel, text = 'x\n') => {
+// Test and lint files these tests edit exist in the baseline commit with this text, so writing them is a modification
+// (a newly added test file is not "sensitive": see the D10 tests below).
+const BASELINE = ['test/a.test.js', 'test/b.test.js', 'src/b.spec.ts', 'pkg/x_test.go', 'app/test_views.py', 'app/views_test.py', 'web/__tests__/a.js', 'tests/e2e/b.py', 'eslint.config.mjs', 'pyproject/ruff.toml', '.prettierrc', 'config/app.yml', '.eslintrc.json', '.github/workflows/ci.yml'];
+const write = (rel, text = 'changed\n') => {
   mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
   writeFileSync(path.join(dir, rel), text);
 };
@@ -107,7 +110,7 @@ function atVerify({ wf = 'scope', plan = PLAN } = {}) {
 // Removes what a test wrote into the repo (tracked files back to HEAD, untracked ones deleted; .shipline kept).
 function cleanRepo() {
   rmSync(path.join(dir, 'node_modules'), { recursive: true, force: true }); // ignored, so git clean keeps it
-  git(dir, 'checkout', '-q', '--', 'src');
+  git(dir, 'checkout', '-q', '--', 'src', ...BASELINE);
   git(dir, 'clean', '-fdq', '-e', '.shipline');
 }
 
@@ -118,6 +121,10 @@ before(() => {
   writeFileSync(path.join(scripts, 'fail3.js'), "console.log('lint error');\nprocess.exit(3);\n");
   writeFileSync(path.join(dir, '.shipline', 'workflows', 'scope.yml'), workflow('scope', false));
   writeFileSync(path.join(dir, '.shipline', 'workflows', 'scopeconfirm.yml'), workflow('scopeconfirm', true));
+  for (const f of BASELINE) {
+    mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+    writeFileSync(path.join(dir, f), 'x\n');
+  }
   git(dir, 'add', '-A');
   git(dir, 'commit', '-q', '-m', 'scope workflows');
   configText = readFileSync(path.join(dir, '.shipline', 'config.yml'), 'utf8');
@@ -497,5 +504,90 @@ describe('sensitiveKind across stacks', () => {
   test('ordinary source files are not sensitive', () => {
     for (const f of ['src/main.rs', 'app/models/user.rb', 'lib/foo.ex', 'src/Foo.java', 'Program.cs', 'index.php', 'Sources/App/main.swift', 'specification.md'])
       assert.equal(sensitiveKind(f, cfg), null, f);
+  });
+});
+
+// ---------- 2.2.0, part D10: the diff starts at the merge-base; a newly added test file is not sensitive ----------
+
+describe('D10: scope base and added test files', () => {
+  let repo;
+  const cfg = { scope_check: { enabled: true, sensitive_extra: [] } };
+  const put = (rel, text) => {
+    mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+    writeFileSync(path.join(repo, rel), text);
+  };
+  const commit = (msg) => {
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', msg);
+    return git(repo, 'rev-parse', 'HEAD');
+  };
+  before(() => {
+    repo = tmpDir('shipline-scope-base-');
+    git(repo, 'init', '-q');
+    git(repo, 'checkout', '-q', '-b', 'main');
+    git(repo, 'config', 'user.name', 'Shipline Test');
+    git(repo, 'config', 'user.email', 'test@example.com');
+    git(repo, 'config', 'commit.gpgsign', 'false');
+    put('src/a.js', 'a\n');
+    put('test/old.test.js', 'old\n');
+    put('test/gone.test.js', 'gone\n');
+  });
+  after(() => removeDir(repo));
+
+  test('a branch rebased onto a newer main shows only its own files; on main the task base_commit is used', () => {
+    const m1 = commit('m1');
+    git(repo, 'switch', '-q', '-c', 'feature/x');
+    put('src/feature.js', 'f\n');
+    commit('feature work');
+    git(repo, 'switch', '-q', 'main');
+    put('src/upstream.js', 'u\n');
+    commit('upstream work');
+    git(repo, 'switch', '-q', 'feature/x');
+    git(repo, 'rebase', '-q', 'main');
+    // The task started at m1, before the rebase: the old base_commit would pull the upstream file into the scope.
+    const sc = scopeOf(repo, { task: { base_commit: m1 } }, null, cfg);
+    assert.deepEqual(sc.changed, ['src/feature.js']);
+    assert.match(sc.base, /^merge-base with main [0-9a-f]{7}$/);
+    assert.equal(sc.base, `merge-base with main ${git(repo, 'rev-parse', 'main').slice(0, 7)}`);
+    assert.match(scopeText(sc, cfg, false), /\(since merge-base with main [0-9a-f]{7}\)$/);
+    // On the default branch the task's base_commit is the base, and no base is named.
+    git(repo, 'switch', '-q', 'main');
+    const onMain = scopeOf(repo, { task: { base_commit: m1 } }, null, cfg);
+    assert.deepEqual(onMain.changed, ['src/upstream.js']);
+    assert.equal(onMain.base, undefined);
+    assert.doesNotMatch(scopeText(onMain, cfg, false), /since/);
+  });
+
+  test('a detached HEAD or a repo with no default branch resolves nothing: the task base_commit is used', () => {
+    const head = git(repo, 'rev-parse', 'HEAD');
+    git(repo, 'switch', '-q', 'feature/x');
+    git(repo, 'checkout', '-q', '--detach');
+    try {
+      const sc = scopeOf(repo, { task: { base_commit: head } }, null, cfg);
+      assert.equal(sc.base, undefined);
+    } finally {
+      git(repo, 'switch', '-q', 'main');
+    }
+  });
+
+  test('an added (or untracked) test file is not sensitive; a modified, deleted or lint/CI file still is', () => {
+    git(repo, 'switch', '-q', 'main');
+    const base = git(repo, 'rev-parse', 'HEAD');
+    put('test/new.test.js', 'new\n'); // untracked
+    put('test/staged.test.js', 'staged\n');
+    git(repo, 'add', 'test/staged.test.js'); // added to the index
+    put('test/old.test.js', 'changed\n'); // modified
+    git(repo, 'rm', '-q', 'test/gone.test.js'); // deleted
+    put('.eslintrc.json', '{}\n'); // a new lint file: still sensitive
+    put('src/b.js', 'b\n');
+    try {
+      const sc = scopeOf(repo, { task: { base_commit: base } }, null, cfg);
+      assert.deepEqual(sc.changed, ['.eslintrc.json', 'src/b.js', 'test/gone.test.js', 'test/new.test.js', 'test/old.test.js', 'test/staged.test.js']);
+      assert.deepEqual(sc.sensitive, ['.eslintrc.json', 'test/gone.test.js', 'test/old.test.js']);
+      assert.equal(sensitiveKind('test/new.test.js', cfg), 'test', 'the kind itself is unchanged');
+    } finally {
+      git(repo, 'reset', '-q', '--hard', base);
+      git(repo, 'clean', '-fdq');
+    }
   });
 });

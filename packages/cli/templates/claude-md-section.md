@@ -8,5 +8,5 @@ This repo uses Shipline: tasks follow a defined workflow (Feature, Bugfix, Hotfi
 - If a hook denies a tool call, finish the missing stage or tell the developer; never work around it.
 - Confirmations (a stage that needs the developer's OK, or skipping a required stage) work only through the AskUserQuestion that `stage.mjs` prints; never pass `--confirmed` or `--force`, and never edit progress files in the task store.
 - Quick questions and chatter do not start a workflow.
-- Customize with `/shipline-setup` or `npx @forgeyard/shipline ui`; add or change a workflow with `/shipline-workflow-designer`. Requires Node 18+ (Node 20+ for the UI).
+- Customize with `/shipline-setup` or `npx @forgeyard/shipline ui`; add or change a workflow with `/shipline-workflow-designer`. The hooks need Node 18+; the `shipline` CLI and UI need Node 22+.
 <!-- shipline:end -->

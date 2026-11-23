@@ -1,6 +1,6 @@
 // The machine-wide project registry: $SHIPLINE_HOME/projects.json lists every repo with Shipline, so one
 // `shipline ui` server can serve them all and `upgrade --all` can find them. Registered by `init`, `ui` and
-// `upgrade`, removed by `uninstall`; seeded once from the stores that already exist. Node 20+, no dependencies.
+// `upgrade`, removed by `uninstall`; seeded once from the stores that already exist. Node 22+, no dependencies.
 //
 //   { "version": 1, "projects": [ { "id", "root", "group", "addedAt" } ] }
 //
@@ -161,6 +161,29 @@ export function unregisterProject(rootOrId) {
     return projects.filter((p) => p.id !== id);
   });
   return found;
+}
+
+// Removes several repos (by id or root) in one write. Returns how many were listed.
+export function unregisterProjects(rootsOrIds) {
+  const ids = new Set(rootsOrIds.map((r) => (/^[0-9a-f]{12}$/.test(r) ? r : projectId(r))));
+  let removed = 0;
+  update((projects) => {
+    removed = projects.filter((p) => ids.has(p.id)).length;
+    return projects.filter((p) => !ids.has(p.id));
+  });
+  return removed;
+}
+
+// `relink`: the repo moved from oldRoot to newRoot. Drops the old entry and adds the new one (keeping `addedAt`).
+export function relinkProject(oldRoot, newRoot) {
+  const oldId = projectId(oldRoot);
+  const fresh = entryFor(newRoot);
+  update((projects) => {
+    const old = projects.find((p) => p.id === oldId);
+    const prev = projects.find((p) => p.id === fresh.id);
+    const entry = { ...fresh, addedAt: (prev && prev.addedAt) || (old && old.addedAt) || fresh.addedAt };
+    return [...projects.filter((p) => p.id !== oldId && p.id !== fresh.id), entry].sort((a, b) => a.root.localeCompare(b.root));
+  });
 }
 
 // A registry that can't be written is a warning, never a failed command.

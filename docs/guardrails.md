@@ -85,6 +85,10 @@ fail_first:
 - When a failing run is recorded, Verify's output and `pr-summary` show "Fail-first: failed before (exit N on
   `<fingerprint>`), passed after (on `<fingerprint>`)", using the latest test result for the "after". The CI check shows
   it for information and never fails on it.
+- At Reproduce of a workflow `fail_first` applies to, test files (`test/`, `*.test.*`, `*_test.go`, and the other
+  patterns the scope check treats as tests) can be written even though the Root cause stage blocks edits, so Claude can
+  write the failing test. Source files stay blocked until Root cause is done. With `fail_first: off`, or for a workflow
+  not listed, nothing changes.
 - Skipping Reproduce with `stage.mjs skip --reason "..."` still works (with your confirmation when the stage is
   required): that is your override. The setting is read when you advance, so it applies from the next Reproduce advance
   of a task started earlier. Listing a workflow with no `reproduce` stage gives a warning in Setup and does nothing.
@@ -99,14 +103,47 @@ through the file tools and, best effort, through Bash (`>`, `>>`, `tee`, `sed -i
 script counts when its name or its `package.json` body matches. `{ bash: 'regex' }` still works as before. Shipped
 verify stages use `actions: [commit, pr]`.
 
-**Verify scope check.** `stage.mjs check` also compares the working tree with the commit the task started from
-(`base_commit`) and records which changed files are tests, lint config or CI config, and which are not listed in the
+**Credential rail details.** A file name ending in `.example`, `.sample`, `.template` or `.dist` is never a
+credential. Commands that load a credential file into the environment (`source .env`, `. .env`, `--env-file .env`,
+`dotenv -e .env`, `export $(cat .env)`) ask, whatever the rail's level. Reading a `.env.<name>` file
+(`.env.development`, `.env.test`) asks too; `.env`, `.env.local` and `.env.prod*` stay denied. `printenv NAME` and
+`env | grep NAME` are allowed unless a name contains KEY, TOKEN, SECRET, PASS, PWD, CREDENTIAL, AUTH, PRIVATE, SESSION
+or COOKIE; a bare `env`/`printenv` is still denied. Grep asks only when its `path` is a credential file or its `glob`
+names one (`.env*`, `*.pem`), not for `**/*` (accepted risk: an un-ignored `.env` that a broad glob matches).
+
+**Commit-creating commands.** `commit` means `git commit`, `git merge --commit`, `git cherry-pick <rev>`,
+`git revert <rev>` and `git am`; a plain `git merge <x>` is not one. While a conflicted merge, cherry-pick, revert or
+rebase is in progress (markers in the worktree's git dir), any `git commit` (including `-m`) is allowed, as are the
+`--continue` forms.
+
+**Worktrees.** Hooks resolve the repo root from the call's folder (the git toplevel with `.shipline/config.yml`), so a
+Claude Code worktree is its own root, and `.claude/worktrees/**` isn't treated as agent configuration.
+
+**Non-interactive runs and the PR check.** A stage a headless run advanced on passing checks shows as `non_interactive`
+in the PR summary; the PR check fails it as "needs the developer's confirmation" unless `ci.allow_non_interactive: true`
+is set in `config.yml` (default false), in which case it prints "Advanced without a developer answer (checks passed)".
+
+**Non-interactive runs.** With `SHIPLINE_NONINTERACTIVE=1` a guardrail `ask` is returned as a deny ("non-interactive
+run: this needs a developer's approval"). Every deny or ask is recorded; `stage.mjs explain` prints the last one.
+
+**Verify scope check.** `stage.mjs check` also compares the working tree with the merge-base with the default
+branch (so a rebased branch shows only its own files; the scope line says `since merge-base with main abc1234`), or with the commit the task started from
+(`base_commit`) on the default branch or when no merge-base resolves, and records which changed files are tests (a newly added test file doesn't count), lint config or CI config, and which are not listed in the
 plan's "Files to touch" (lockfiles, `.shipline/` and `.claude/` are ignored). If there are any, finishing the stage
 asks you an extra question, and `pr-summary` shows a Scope line and the two lists. The CI check shows it for
 information and never fails on it. Turn it off with `scope_check: { enabled: false }`; add globs with
 `scope_check.sensitive_extra`.
 
-**Failure modes.** If the code that protects the task store throws, only that step is skipped and the rails still run.
+**Stage blocks and Bash.** A stage's `tools:` blocks (for example "no source edits until Plan is done") also apply to
+Bash commands that write a repo file: `>` and `>>`, `tee`, `sed -i`, `mv`, `cp` and `rm` are checked like a Write to
+that path, with the same `allow_paths`. Writes outside the repo are not checked. Writes Bash makes indirectly
+(`python -c`, `node -e`, `npm run <script>`, editors, build tools) are not detected. Glob isn't gated: it lists file
+names, never their contents.
+
+**Failure modes.** A hook that crashes (for example a syntax error in `.shipline/bin/lib.mjs`) doesn't block your work,
+but it says so: every hook runs through `.shipline/bin/run-hook.mjs`, which prints "Shipline <hook> hook crashed: ..."
+on each affected call, and the Node-missing warning appears on every hook event. If the hook had already printed its
+decision before crashing, the warning goes to stderr only. If the code that protects the task store throws, only that step is skipped and the rails still run.
 If `config.yml` can't be read, the rails use their defaults (and ask before edits to `.shipline/config.yml`, which may
 be the file you are fixing); every call says so.
 

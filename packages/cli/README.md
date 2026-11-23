@@ -36,8 +36,10 @@ Commit all of it so teammates get the same flow.
 | `ui` | Opens the local web UI (the setup wizard if Shipline isn't installed). One server serves every repo on the machine; a second run hands over to it. Flags: `--remote`, `--port`, `--no-open`, `--dir <path>` |
 | `upgrade` | Updates the installed files to this version. Flags: `--yes`, `--dry-run`, `--force`, `--dir <path>`, or `--all` for every registered repo |
 | `uninstall` | Removes what `init` installed. Flags: `--yes`, `--dry-run`, `--purge`, `--dir <path>` |
+| `prune` | Removes the task data of repos that no longer exist. Flags: `--dry-run`, `--yes` |
+| `relink` | Gives a moved repo the task data of its old path. Flags: `--from <old path>`, `--dry-run`, `--dir <path>` |
 
-Run `npx @forgeyard/shipline <command> --help` for details.
+Run `npx @forgeyard/shipline <command> --help` for details, and `npx @forgeyard/shipline@latest upgrade` to update (`@latest` avoids npx's cached older copy).
 
 ## Use it from your phone
 

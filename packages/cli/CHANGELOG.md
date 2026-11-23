@@ -4,6 +4,100 @@ All notable changes to `@forgeyard/shipline` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.2.0] - 2026-11-20
+
+Fixes to enforcement: a bugfix can get past Reproduce, Verify no longer loops on checks that write files, a crashing
+hook says so, and `upgrade` keeps `.shipline/bin/` at one version. **The hook contract (INTERFACE) is now 2**:
+`upgrade` rewrites the hook entries in `.claude/settings.json`; restart running Claude Code sessions afterwards.
+
+### Store, CLI and docs
+
+- **Collision-proof task store keys, shared by worktrees (INTERFACE 2).** The store folder is now
+  `<last 80 characters of the encoded main checkout path>-<10 hex of its sha256>`, so `~/c/my-app` and `~/c/my/app`
+  no longer collide and very long paths work. Every `git worktree` of a repo resolves to the main checkout's store, so
+  tasks are shared; config and workflows still come from each worktree's own `.shipline/`. Existing stores move
+  lazily and never lose data: a checkout's old folder is renamed to the new key, or merged task by task when the
+  shared store already exists (the old folder is kept as `<old>.migrated-<date>`). A checkout whose hooks are still
+  interface 1 keeps its old per-checkout store until it is upgraded.
+- **`shipline prune`** removes the stores of repos that are gone (and migration backups older than 30 days); a store
+  that a worktree you still have uses is kept.
+- **`shipline relink --from <old path>`** gives a moved repo the task data of its old path.
+- **`init` in a subfolder of a git repo** says so and asks before installing there; command detection takes the
+  package manager from the git root's lockfile when the folder has none.
+- **`upgrade` handles edited files one by one**: keep yours, replace, write `<file>.shipline-new`, or show the diff.
+  `--yes` and `upgrade --all` write the `.shipline-new` side files; `uninstall` removes them.
+- **Help:** `shipline help` and `--help` print every command's help; `help <command>` prints one. Running `init` where
+  Shipline is already set up says so and how to update.
+- **Publish safety:** the release workflow requires the tag commit to be on `main` with a passing `ci` check on its
+  merged PR, and publishes one tag at a time.
+- **Docs:** `--yes` installs the four default workflows, the `ci:` config block is documented, CONTRIBUTING describes
+  the PR-only `ci` check, and upgrade is shown as `npx @forgeyard/shipline@latest upgrade`.
+
+### Fixed
+
+- **Verify could trust a stale check run after a same-size edit.** The code fingerprint copies git's index to reuse its
+  stat cache, but the copy got a fresh mtime, so git trusted "racily clean" entries and missed a same-size edit made
+  in the same second as the last index write. The copy now keeps the index's mtime.
+- **Bugfix couldn't get past Reproduce with `fail_first: proof`.** The Root cause stage blocked every edit, including
+  the failing test Reproduce asks for. At Reproduce of a workflow `fail_first` applies to, test files are now allowed
+  through the stage blocks (file tools and Bash).
+- **Verify looped forever when a check command wrote files git doesn't ignore** (coverage reports, `tsbuildinfo`,
+  `eslint --fix`). `check` (and `check --expect-fail`) now records the code as it is after the commands ran and lists
+  the files they changed.
+- **A crashing hook silently turned enforcement off.** Hooks now run through `.shipline/bin/run-hook.mjs`: a crash
+  (for example a syntax error in `lib.mjs`) still lets the call through, but prints "Shipline <hook> hook crashed" on
+  every affected call. The node-missing warning now shows on every hook event, not only at session start.
+- **`upgrade` could leave `.shipline/bin/` at mixed versions.** If any script there was edited, `upgrade` now refuses
+  before writing anything (exit 1) unless `--force`. It also warns when edited hook entries in `settings.json` still
+  run the scripts directly.
+- **Plan and Root cause blocks could be bypassed through Bash.** `cat > src/a.js`, `sed -i`, `tee`, `mv`, `cp` and `rm`
+  on repo files are now checked against stage `tools:` blocks like a Write. Indirect writes (interpreters, build
+  tools) are still not detected.
+
+### Added (task lifecycle and dev-loop, part D)
+
+- **`/clear`, a new session or a second terminal keeps enforcement.** SessionStart binds a session that has no task to
+  the single open task on the current branch (not on a detached HEAD; several matches are listed and asked about). If
+  another Claude session worked on the task in the last 10 minutes, both are told.
+- **`stage.mjs abandon [--reason "..."]`** (the developer confirms). Abandoned tasks leave every list and the UI's
+  unfinished counts; `resume` brings one back. A title that matches an existing folder now gets `-2`, `-3`, ... instead
+  of failing.
+- **`stage.mjs side --files a,b --reason "..."`** (the developer confirms): a 30-minute pass that lets exactly those
+  files through the stage blocks. Rails and protected paths still apply. `side done` ends it.
+- **`stage.mjs explain`** prints the last denial or question of the session, the rule behind it and the way past it.
+- **`stage.mjs status --all`** lists every task in the store with its age; session start shows task ages and collapses
+  tasks idle longer than `stale_task_days` (default 14) into one count.
+- **Headless runs:** with `SHIPLINE_NONINTERACTIVE=1`, `non_interactive: deny` (the default) makes every command that
+  needs an answer fail with an explanation; `checks_pass` lets `advance` pass a `confirm_to_advance` stage when the
+  latest check passed on the current code (recorded as `approved_by: non_interactive`, noted in the PR summary).
+  Skip, accept, scope, abandon and side are never auto-approved, and guardrail asks become denies.
+- Setup: `non_interactive` and `stale_task_days` in the config form; the task panel shows abandoned tasks and another
+  active session.
+
+### Changed (part D)
+
+- When a task's last stage finishes, the session stops tracking it.
+- Credentials rail: names ending in `.example`, `.sample`, `.template` or `.dist` are never credentials; commands that
+  load a credential file into the environment (`source .env`, `--env-file .env`, `dotenv -e`, `export $(cat .env)`) and
+  reads of `.env.<name>` files other than local/prod ask instead of deny; `printenv NAME` and `env | grep NAME` are
+  allowed for non-secret names; Grep asks only when its glob names a credential file.
+- The Verify scope check diffs from the merge-base with the default branch (so a rebased branch shows only its own
+  files), and a newly added test file is not "sensitive".
+- One list of commit-creating git commands (`commit`, `merge --commit`, `cherry-pick`, `revert`, `am`); finishing a
+  conflicted merge, rebase or cherry-pick is allowed.
+- Worktrees: the repo root is the git toplevel of the call's cwd, and `.claude/worktrees/**` is not agent config. A
+  worktree has its own task store until the store is shared.
+- Small change no longer suggests the builder and qa-bug-hunter agents.
+
+### Changed
+
+- **INTERFACE 2** (hook entries run `run-hook.mjs`; Bash writes count against stage blocks).
+- The qa-bug-hunter agent runs `stage.mjs check` instead of the test, lint and build commands itself, so Verify no
+  longer runs the suite twice.
+- Node wording corrected: the hooks need Node 18+; the `shipline` CLI and UI need Node 22+. The dead "Node below 20"
+  branch of the init wizard was removed.
+- Docs: Glob isn't gated (it lists names, never contents).
+
 ## [2.1.0] - 2026-11-17
 
 A new guardrail against slopsquatted packages, an optional fail-first test requirement for bugfixes, and a redesigned

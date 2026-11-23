@@ -12,7 +12,7 @@ import {
   FAKE_CLAUDE_MJS, IS_WIN, cleanEnv, git, homeFor, livePids, makeRepo, removeDir, run, runInit, stage, storeOf, tmpDir,
   writeCmdShim,
 } from './helpers.mjs';
-import { encodePath } from '../templates/shipline/bin/lib.mjs';
+import { encodePath, mainRoot, sameRoot, storeKey } from '../templates/shipline/bin/lib.mjs';
 
 const major = Number(process.versions.node.split('.')[0]);
 const WIN_ONLY = !IS_WIN && 'Windows only (cmd.exe, taskkill, tasklist, drive letters, NUL); the platform-neutral rules are in paths-eol.test.mjs';
@@ -56,11 +56,13 @@ describe('a repo on a drive-letter path', { skip: WIN_ONLY }, () => {
     assert.equal(s.code, 0, s.stderr);
 
     const projects = path.join(homeFor(dir), 'projects');
-    const folder = encodePath(dir);
-    assert.match(folder, /^[A-Za-z]--/, 'C:\\... becomes C--...');
+    // Interface 2 key: <encoded main checkout path>-<hash>.
+    assert.match(encodePath(dir), /^[A-Za-z]--/, 'C:\\... becomes C--...');
+    const folder = storeKey(mainRoot(dir));
+    assert.match(folder, /^[A-Za-z]--.*-[0-9a-f]{10}$/);
     assert.equal(storeOf(dir), path.join(projects, folder));
     assert.deepEqual(readdirSync(projects), [folder]);
-    assert.equal(JSON.parse(readFileSync(path.join(projects, folder, 'repo.json'), 'utf8')).root, dir);
+    assert.ok(sameRoot(JSON.parse(readFileSync(path.join(projects, folder, 'repo.json'), 'utf8')).root, dir));
     assert.ok(readdirSync(path.join(projects, folder, 'tasks')).length >= 1, 'the task folder is in the store');
 
     // The same repo reached with the other drive-letter case: same store (NTFS is case-insensitive, so

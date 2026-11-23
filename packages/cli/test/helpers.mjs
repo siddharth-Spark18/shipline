@@ -69,7 +69,8 @@ export function git(cwd, ...args) {
 
 export function tmpDir(prefix = 'shipline-test-') {
   // realpath: on macOS os.tmpdir() is a symlink (/var -> /private/var).
-  const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), prefix)));
+  // .native: on Windows CI os.tmpdir() is an 8.3 short path (RUNNER~1); git prints the long one, so use that.
+  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), prefix)));
   HOMES.set(dir, realpathSync(mkdtempSync(path.join(os.tmpdir(), 'shipline-home-'))));
   return dir;
 }

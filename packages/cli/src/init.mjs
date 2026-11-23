@@ -74,8 +74,10 @@ function enclosingRepo(root) {
   try {
     const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
     if (!top) return null;
-    const realTop = realpathSync(path.resolve(root, top));
-    return sameRoot(realTop, realpathSync(root)) ? null : realTop;
+    // .native on both sides: on Windows it expands 8.3 short names (C:\Users\RUNNER~1\...), which git never prints, so
+    // the plain realpathSync would see a repo root as a subfolder of itself.
+    const realTop = realpathSync.native(path.resolve(root, top));
+    return sameRoot(realTop, realpathSync.native(root)) ? null : realTop;
   } catch {
     return null;
   }
@@ -140,7 +142,9 @@ To update it, run: npx @forgeyard/shipline@latest upgrade
     const text = `This folder is inside the git repo at ${outer}. Shipline's hooks only load when Claude Code starts in ${root}; most teams install at the repo root.`;
     if (dryRun) console.log(`Note: ${text}\n`);
     else if (yes) console.log(`Note: ${text}\nContinuing because of --yes.\n`);
-    else if (!prompts && !process.stdin.isTTY) {
+    // Without a terminal nobody can answer the stdin question (even when the other questions are injected), so stop
+    // instead of waiting forever. A caller that passes its own `ask` answers it itself.
+    else if (ask === askYesNo && !process.stdin.isTTY) {
       console.error(`shipline: ${text}\nRun it from ${outer}, or pass --yes to install here anyway.`);
       return 1;
     } else {

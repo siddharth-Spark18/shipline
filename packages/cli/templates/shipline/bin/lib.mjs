@@ -150,8 +150,9 @@ function cwdToplevel(start) {
   let realTop;
   let realCwd;
   try {
-    realTop = realpathSync(top);
-    realCwd = realpathSync(cwd);
+    // .native: on Windows it expands 8.3 short names (C:\Users\RUNNER~1\...), which git never prints.
+    realTop = realpathSync.native(top);
+    realCwd = realpathSync.native(cwd);
   } catch {
     return null;
   }
@@ -380,6 +381,14 @@ function realRoot(root) {
   }
 }
 
+function nativeReal(p) {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    return p;
+  }
+}
+
 // ---- store keys (interface 2) ----
 // The 2.1 key was encodePath(realpath), which collides ("my-app" vs "my/app") and can outgrow a file name. Interface 2
 // names the store <last 80 characters of the encoded main checkout path>-<10 hex of sha256 of that path>, and the main
@@ -392,26 +401,28 @@ const MIGRATION_DONE = new Set(); // `${home}\0${real root}` whose old-scheme st
 
 // The store folder name for a main checkout path.
 export function storeKey(main) {
-  const real = String(main);
+  // On Windows the drive letter's case varies by caller (C:\ vs c:\) but names the same folder: one spelling for the key.
+  const real = process.platform === 'win32' ? String(main).replace(/^[a-z]:/, (d) => d.toUpperCase()) : String(main);
   const hash = createHash('sha256').update(process.platform === 'win32' ? real.toLowerCase() : real).digest('hex').slice(0, 10);
   return `${encodePath(real).slice(-KEY_READABLE_MAX)}-${hash}`;
 }
 
 // The checkout that names the store: for a git repo the main checkout (also when `root` is a linked worktree), else
 // the real path of `root`. A subfolder install, a submodule, a bare repo or a --separate-git-dir layout (common dir
-// not named .git, or root not the top of its work tree) keeps its own real path.
+// not named .git, or root not the top of its work tree) keeps its own real path. Always the native real path: on
+// Windows that expands 8.3 short names, so it matches what git prints and the store key doesn't depend on the spelling.
 export function mainRoot(root) {
   const real = realRoot(root);
   const cached = MAIN_ROOTS.get(real);
   if (cached) return cached;
-  let main = real;
+  let main = nativeReal(real);
   try {
     const out = execFileSync('git', ['rev-parse', '--show-toplevel', '--git-common-dir'], { cwd: real, stdio: ['ignore', 'pipe', 'ignore'] })
       .toString()
       .split(/\r?\n/);
-    const top = realpathSync(path.resolve(real, out[0].trim()));
+    const top = realpathSync.native(path.resolve(real, out[0].trim()));
     const common = path.resolve(real, out[1].trim());
-    if (sameRoot(top, real) && path.basename(common) === '.git') main = realpathSync(path.dirname(common));
+    if (sameRoot(top, main) && path.basename(common) === '.git') main = realpathSync.native(path.dirname(common));
   } catch {
     // Not a git repo, bare, or git is missing: the checkout is its own main root.
   }

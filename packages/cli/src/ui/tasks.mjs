@@ -66,7 +66,11 @@ function readOwnerOf(dir) {
     const o = JSON.parse(readFileSync(path.join(dir, 'owner.json'), 'utf8'));
     if (!o || typeof o.session !== 'string') return null;
     const seen = Date.parse(o.last_seen);
-    return { session: o.session, last_seen: o.last_seen, active: Number.isFinite(seen) && Date.now() - seen < 10 * 60 * 1000 };
+    return {
+      session: o.session,
+      last_seen: o.last_seen,
+      active: Number.isFinite(seen) && Date.now() - seen < 10 * 60 * 1000,
+    };
   } catch {
     return null;
   }

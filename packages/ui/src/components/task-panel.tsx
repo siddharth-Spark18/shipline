@@ -262,8 +262,11 @@ function formatDate(iso: string | null | undefined): string {
 /** The abandoned banner, and the owner line when another session is working on the task. */
 function TaskNotes({ task, chatId }: { task: Task; chatId?: string | null }) {
   const owner = task.owner;
-  const other = owner && owner.active && owner.session !== (chatId ?? '').replace(/[^A-Za-z0-9_-]/g, '_');
-  const minutes = owner ? Math.max(0, Math.round((Date.now() - Date.parse(owner.last_seen)) / 60000)) : 0;
+  const other =
+    owner && owner.active && owner.session !== (chatId ?? '').replace(/[^A-Za-z0-9_-]/g, '_');
+  const minutes = owner
+    ? Math.max(0, Math.round((Date.now() - Date.parse(owner.last_seen)) / 60000))
+    : 0;
   if (!task.abandoned && !other) return null;
   return (
     <div className="flex flex-col gap-1 text-xs">

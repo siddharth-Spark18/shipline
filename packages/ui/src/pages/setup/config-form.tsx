@@ -214,8 +214,18 @@ export function ConfigForm({
         <TextField
           id="cfg-stale-task-days"
           label="Stale task days"
-          value={model.stale_task_days === undefined || model.stale_task_days === null ? '' : String(model.stale_task_days)}
-          error={model.stale_task_days !== undefined && model.stale_task_days !== null && model.stale_task_days < 1 ? 'Must be 1 or more' : null}
+          value={
+            model.stale_task_days === undefined || model.stale_task_days === null
+              ? ''
+              : String(model.stale_task_days)
+          }
+          error={
+            model.stale_task_days !== undefined &&
+            model.stale_task_days !== null &&
+            model.stale_task_days < 1
+              ? 'Must be 1 or more'
+              : null
+          }
           hint="Tasks idle longer than this are listed as a count at session start (default 14)."
           onChange={setStaleDays}
         />

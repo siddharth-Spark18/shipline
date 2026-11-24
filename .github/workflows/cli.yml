@@ -37,7 +37,9 @@ jobs:
           fi
 
   # Every supported Node line (engines.node >=22): 22 and 24 are maintenance LTS, 26 is the active LTS.
-  # Ubuntu runs all three; macOS and Windows run the oldest and newest (macOS runners are scarce).
+  # The oldest (22) and newest (26) supported Node on Linux, plus Windows on 22 (where path bugs show up). macOS is
+  # left out: the suite is run there locally before every PR. The UI typecheck, format check and UI build run once,
+  # on the Linux Node 22 job.
   test:
     name: test (Node ${{ matrix.node }}, ${{ matrix.os }})
     needs: changes
@@ -45,11 +47,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        node: [22, 24, 26]
-        exclude:
-          - { os: macos-latest, node: 24 }
-          - { os: windows-latest, node: 24 }
+        include:
+          - { os: ubuntu-latest, node: 22, full: true }
+          - { os: ubuntu-latest, node: 26 }
+          - { os: windows-latest, node: 22 }
     runs-on: ${{ matrix.os }}
     steps:
       # Windows: keep LF in the checkout so the fixtures and templates match byte for byte.
@@ -63,21 +64,45 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter ./packages/cli test
-      - run: pnpm --filter @shipline/ui typecheck
+      - if: matrix.full
+        run: pnpm --filter @shipline/ui typecheck
       # Limited to new code so it doesn't reformat the templates or fail on existing files.
-      - if: runner.os == 'Linux' && matrix.node == 26
+      - if: matrix.full
         run: pnpm format:check # the folder list lives in package.json, shared with the pre-commit hook
       # Build plus the 400 KB gzip size check (check-ui.mjs).
-      - run: node packages/cli/scripts/build-ui.mjs
+      - if: matrix.full
+        run: node packages/cli/scripts/build-ui.mjs
+
+  # The hook scripts copied into repos promise Node 18 (docs/install.md, the hooks' own "needs Node.js 18" message).
+  # Install with a current Node (pnpm and the UI toolchain need it), then run the hooks subset on Node 18.
+  hooks-node18:
+    name: hooks (Node 18, ubuntu-latest)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 18
+      - run: node --version && node scripts/run-tests.mjs hooks
+        working-directory: packages/cli
 
   # The one required status check (main's ruleset): passes when the tests passed or were skipped (no code changes),
   # fails when any test job failed or was cancelled.
   ci:
     if: always()
-    needs: [changes, test]
+    needs: [changes, test, hooks-node18]
     runs-on: ubuntu-latest
     steps:
       - run: |
-          echo "changes: ${{ needs.changes.result }}, test: ${{ needs.test.result }}"
+          echo "changes: ${{ needs.changes.result }}, test: ${{ needs.test.result }}, hooks-node18: ${{ needs.hooks-node18.result }}"
           [ "${{ needs.changes.result }}" = success ] || exit 1
           case "${{ needs.test.result }}" in success|skipped) ;; *) exit 1 ;; esac
+          case "${{ needs.hooks-node18.result }}" in success|skipped) ;; *) exit 1 ;; esac

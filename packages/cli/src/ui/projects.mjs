@@ -84,8 +84,8 @@ export function createProjects(app) {
       banners,
       connectFns,
       hub: {
-        send: (type, data) => {
-          app.hub.send(type, { ...data, repoId: id });
+        send: (type, data, eventId) => {
+          app.hub.send(type, { ...data, repoId: id }, eventId);
           // A task's stages changed: the flat chat list carries them.
           if (type === 'tasks') scheduleChange();
         },

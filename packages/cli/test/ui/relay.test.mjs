@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
 import net from 'node:net';
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { CLI_ROOT, makeRepo, removeDir } from '../helpers.mjs';
@@ -24,7 +24,8 @@ import {
   waitUntil,
 } from './chat-helpers.mjs';
 import { relayRequestOptions } from '../../src/ui/relay.mjs';
-import { DENY_MESSAGE, PROMPT_TIMEOUT_MS, timeoutMessage } from '../../src/ui/prompts.mjs';
+import { MCP_TOOL_TIMEOUT_ENV } from '../../src/ui/claude.mjs';
+import { ALLOW_FOR_CHAT_SUPPORTED, DENY_MESSAGE, PROMPT_TIMEOUT_MS, timeoutMessage } from '../../src/ui/prompts.mjs';
 
 const RELAY = path.join(CLI_ROOT, 'src', 'ui', 'relay.mjs');
 const PKG_VERSION = JSON.parse(readFileSync(path.join(CLI_ROOT, 'package.json'), 'utf8')).version;
@@ -236,9 +237,12 @@ describe('no timeouts on the wait', () => {
     }
   });
 
-  test('PROMPT_TIMEOUT_MS defaults to 300 000 (5 minutes)', () => {
-    assert.equal(PROMPT_TIMEOUT_MS, 300_000);
-    assert.equal(timeoutMessage(PROMPT_TIMEOUT_MS), 'No answer within 5 minutes');
+  // Chat reliability C1.8: raised from 5 to 25 minutes (a stdio MCP call is also cut at 30 minutes idle), and the MCP
+  // tool timeout given to claude is above it.
+  test('PROMPT_TIMEOUT_MS defaults to 1 500 000 (25 minutes); the MCP tool timeout passed to claude is a minute above it', () => {
+    assert.equal(PROMPT_TIMEOUT_MS, 1_500_000);
+    assert.equal(timeoutMessage(PROMPT_TIMEOUT_MS), 'No answer within 25 minutes');
+    assert.equal(MCP_TOOL_TIMEOUT_ENV, String(PROMPT_TIMEOUT_MS + 60_000));
   });
 });
 
@@ -260,7 +264,10 @@ describe('POST /api/relay', () => {
     const since = ev.mark();
     const pending = relayPost(ui, secret, { tool_name: 'Bash', input: { command: 'npm test' }, tool_use_id: 'toolu_a' });
     const p = await ev.waitFor(isPrompt, WAIT_MS, since);
-    assert.deepEqual(Object.keys(p.data).sort(), ['chatId', 'expiresAt', 'id', 'input', 'repoId', 'tool']);
+    // allowForChat and rule (C1.7): whether "Allow for this chat" is offered, and the rule options 2 and 3 would remember.
+    assert.deepEqual(Object.keys(p.data).sort(), ['allowForChat', 'chatId', 'expiresAt', 'id', 'input', 'repoId', 'rule', 'tool']);
+    assert.equal(p.data.allowForChat, ALLOW_FOR_CHAT_SUPPORTED);
+    assert.equal(p.data.rule, 'Bash(npm test:*)');
     assert.equal(p.data.chatId, id);
     assert.equal(p.data.tool, 'Bash');
     assert.deepEqual(p.data.input, { command: 'npm test' });
@@ -437,6 +444,142 @@ describe('round trips through claude and the relay', () => {
       await stopChat(ui, ev, id);
     } finally {
       if (existsSync(mcpJson)) unlinkSync(mcpJson);
+    }
+  });
+});
+
+describe('answer kinds (chat reliability C1.7)', () => {
+  const settingsFile = () => path.join(dir, '.claude', 'settings.local.json');
+  const cleanSettings = () => rmSync(settingsFile(), { force: true });
+
+  // Starts the permission-turn script, waits for its prompt and answers it with `body`. Returns the prompt, the API
+  // response and the relay's answer to claude.
+  async function answerWith(body) {
+    fake.script('permission-turn');
+    const since = ev.mark();
+    const id = await startChat(ui, ev);
+    try {
+      const p = await ev.waitFor(isPrompt, 10_000, since);
+      const r = await api(ui, 'POST', `/api/prompts/${p.data.id}`, { body });
+      if (r.status === 200) await ev.waitFor(isEventType(id, 'result'), 10_000, since);
+      return { p: p.data, r, answer: fake.relayAnswers()[0] && fake.relayAnswers()[0].answer, since, id };
+    } finally {
+      await stopChat(ui, ev, id);
+    }
+  }
+
+  const SESSION_RULE = {
+    type: 'addRules',
+    rules: [{ toolName: 'Bash', ruleContent: 'git status:*' }],
+    behavior: 'allow',
+    destination: 'session',
+  };
+
+  test('the prompt carries the rule the options would remember', async () => {
+    const { p } = await answerWith({ decision: 'allow' });
+    assert.equal(p.rule, 'Bash(git status:*)');
+    assert.equal(p.allowForChat, true);
+  });
+
+  test('allow_chat: the permission answer carries updatedPermissions (destination session); nothing is written to the repo', async () => {
+    cleanSettings();
+    const { r, answer } = await answerWith({ decision: 'allow_chat' });
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(answer, { behavior: 'allow', updatedInput: { command: 'git status -s' }, updatedPermissions: [SESSION_RULE] });
+    assert.equal(existsSync(settingsFile()), false);
+  });
+
+  test('allow_repo: the rule is appended to .claude/settings.local.json without clobbering it, and also applies to this chat', async () => {
+    mkdirSync(path.dirname(settingsFile()), { recursive: true });
+    writeFileSync(settingsFile(), JSON.stringify({ env: { A: '1' }, permissions: { allow: ['Read'], deny: ['Bash(rm:*)'] } }, null, 2));
+    try {
+      const { r, answer } = await answerWith({ decision: 'allow_repo' });
+      assert.equal(r.status, 200, r.text);
+      assert.deepEqual(answer.updatedPermissions, [SESSION_RULE]);
+      const file = readFileSync(settingsFile(), 'utf8');
+      assert.deepEqual(JSON.parse(file), { env: { A: '1' }, permissions: { allow: ['Read', 'Bash(git status:*)'], deny: ['Bash(rm:*)'] } });
+      assert.ok(file.endsWith('\n') && file.includes('\n  "env"'), '2-space JSON');
+    } finally {
+      cleanSettings();
+    }
+  });
+
+  test('allow_repo creates the file when it is missing', async () => {
+    cleanSettings();
+    try {
+      const { r } = await answerWith({ decision: 'allow_repo' });
+      assert.equal(r.status, 200, r.text);
+      assert.deepEqual(JSON.parse(readFileSync(settingsFile(), 'utf8')), { permissions: { allow: ['Bash(git status:*)'] } });
+    } finally {
+      cleanSettings();
+    }
+  });
+
+  test('allow_repo with an unreadable settings file: 409 settings-unreadable naming the file, and the prompt stays pending', async () => {
+    mkdirSync(path.dirname(settingsFile()), { recursive: true });
+    writeFileSync(settingsFile(), '{ not json');
+    fake.script('permission-turn');
+    const since = ev.mark();
+    const id = await startChat(ui, ev);
+    try {
+      const p = await ev.waitFor(isPrompt, 10_000, since);
+      const r = await api(ui, 'POST', `/api/prompts/${p.data.id}`, { body: { decision: 'allow_repo' } });
+      assert.equal(r.status, 409);
+      assert.equal(r.json.error.code, 'settings-unreadable');
+      assert.ok(r.json.error.message.includes('settings.local.json'));
+      assert.equal(readFileSync(settingsFile(), 'utf8'), '{ not json', 'the file is left alone');
+      assert.equal(ev.events.slice(since).some(resolvedOf(p.data.id)), false, 'still pending');
+      // It can still be answered.
+      const ok = await api(ui, 'POST', `/api/prompts/${p.data.id}`, { body: { decision: 'allow' } });
+      assert.equal(ok.status, 200);
+    } finally {
+      cleanSettings();
+      await stopChat(ui, ev, id);
+    }
+  });
+
+  test('deny with a message: claude gets the message; without one (or blank) the fixed deny message', async () => {
+    const withMsg = await answerWith({ decision: 'deny', message: '  use pnpm instead  ' });
+    assert.deepEqual(withMsg.answer, { behavior: 'deny', message: 'use pnpm instead' });
+    const toolResult = ev.events.slice(withMsg.since).find(isEventType(withMsg.id, 'user'));
+    assert.deepEqual(toolResult.data.notices, [{ kind: 'you-denied', toolUseId: 'toolu_perm1' }]);
+    const blank = await answerWith({ decision: 'deny', message: '   ' });
+    assert.deepEqual(blank.answer, { behavior: 'deny', message: DENY_MESSAGE });
+    const bare = await answerWith({ decision: 'deny' });
+    assert.deepEqual(bare.answer, { behavior: 'deny', message: DENY_MESSAGE });
+  });
+
+  test('bad bodies: an unknown decision, a message that is not a string', async () => {
+    fake.script('permission-turn');
+    const since = ev.mark();
+    const id = await startChat(ui, ev);
+    try {
+      const p = await ev.waitFor(isPrompt, 10_000, since);
+      for (const body of [{ decision: 'maybe' }, { decision: 'deny', message: 5 }]) {
+        const r = await api(ui, 'POST', `/api/prompts/${p.data.id}`, { body });
+        assert.equal(r.status, 400, JSON.stringify(body));
+      }
+      await api(ui, 'POST', `/api/prompts/${p.data.id}`, { body: { decision: 'deny' } });
+    } finally {
+      await stopChat(ui, ev, id);
+    }
+  });
+
+  test('a question (AskUserQuestion) has no rule: allow_chat and allow_repo are 400 no-rule, and the prompt stays pending', async () => {
+    fake.script('relay-ask');
+    const since = ev.mark();
+    const id = await startChat(ui, ev);
+    try {
+      const p = await ev.waitFor(isPrompt, 10_000, since);
+      assert.equal(p.data.rule, null);
+      for (const decision of ['allow_chat', 'allow_repo']) {
+        const r = await api(ui, 'POST', `/api/prompts/${p.data.id}`, { body: { decision } });
+        assert.equal(r.status, 400, decision);
+        assert.equal(r.json.error.code, 'no-rule');
+      }
+      await api(ui, 'POST', `/api/prompts/${p.data.id}`, { body: { decision: 'deny' } });
+    } finally {
+      await stopChat(ui, ev, id);
     }
   });
 });

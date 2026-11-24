@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { ArrowLeftIcon, PanelRightCloseIcon, PanelRightOpenIcon, SquareIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -15,12 +15,21 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { StageTrail } from '@/components/stage-dots';
 import { ChatTasksPanel } from '@/components/task-panel';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, getCurrentRepo } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
 import { useDrafts, useMediaQuery, usePrompts, useTasks } from '@/lib/queries';
+import { setViewingChat } from '@/lib/notifications';
 import { sameStage } from '@/lib/stages';
 import type {
   ChatSummary,
@@ -28,10 +37,11 @@ import type {
   ImageData,
   Project,
   PromptEvent,
+  QueuedMessage,
   Task,
   VersionState,
 } from '@/lib/types';
-import { chatStore, useChatLive } from '@/pages/chat/chat-store';
+import { chatStore, resultOf, useChatLive } from '@/pages/chat/chat-store';
 import { ChatControls } from '@/pages/chat/chat-controls';
 import { Composer } from '@/pages/chat/composer';
 import { DecisionDock } from '@/pages/chat/decision-dock';
@@ -41,11 +51,15 @@ import {
   DraftReadyNotice,
   FatalNotice,
   LockHeldNotice,
+  NotSentNotice,
+  NotifyBanner,
   OrphansNotice,
+  QueuedNotice,
   ResultLine,
   TicketNotice,
 } from '@/pages/chat/notices';
-import { mergeHistory, normalizeHistory } from '@/pages/chat/timeline';
+import { NotificationSettings } from '@/pages/chat/notification-settings';
+import { buildItems } from '@/pages/chat/timeline';
 
 /** Why the chat can't be started or continued right now. Cleared by the next success. */
 interface Blocker {
@@ -59,15 +73,13 @@ const NOTE_KEY = 'shipline.chat.terminalNote';
 const normDir = (p: string) => p.replace(/\/+$/, '');
 
 /**
- * GET /api/chats/<id>: the history, the ticket notice's data and the chat's tasks. Shared by the page (right
- * panel) and the open chat; they use one query. Refetched on `tasks` and chat `task` events (see lib/events.ts).
+ * GET /api/chats/<id>: the last page of the chat's log, the ticket notice's data and the chat's tasks. Shared by the page
+ * (right panel) and the open chat; they use one query. Refetched on `tasks` and chat `task` events (see lib/events.ts).
+ * The open chat hands the page to the chat store (chatStore.loadPage), which keeps the log up to date from SSE events.
  */
 function useChatDetail(id: string | null) {
   return useQuery({
     queryKey: queryKeys.chat(id ?? ''),
-    // History from Claude's session file overlaps what this page already streamed. The overlap
-    // is removed when the two are merged (by tool id / text), not by trimming live items:
-    // the session file keeps growing during a turn, so a count taken before the fetch is wrong.
     queryFn: () => api.chat(id as string),
     enabled: id !== null,
     gcTime: 0,
@@ -266,7 +278,6 @@ export default function ChatPage({
   const startChat = async (text: string, images: ImageData[]): Promise<boolean> => {
     try {
       const { id } = await api.createChat(text, images);
-      chatStore.addUser(id, text, true, images);
       setBlocker(null);
       select(id);
       void queryClient.invalidateQueries({ queryKey: queryKeys.chats });
@@ -482,10 +493,22 @@ function ChatView({
   const live = useChatLive(id);
   const detail = useChatDetail(id);
   const drafts = useDrafts();
+  const repoId = getCurrentRepo();
+
+  // Every page load (open, refetch after a task or turn event) goes to the store, which merges it with what streamed in.
+  useEffect(() => {
+    if (detail.data && repoId) chatStore.loadPage(id, repoId, detail.data);
+  }, [id, repoId, detail.data]);
+  // Prompts of the chat on screen do not notify while the tab is in front.
+  useEffect(() => {
+    setViewingChat(id);
+    return () => setViewingChat(null);
+  }, [id]);
 
   const chat = detail.data?.chat ?? summary;
-  const history = useMemo(() => normalizeHistory(detail.data?.history), [detail.data]);
-  const items = useMemo(() => mergeHistory(history, live.items), [history, live.items]);
+  const items = useMemo(() => buildItems(live.entries, live.shells), [live.entries, live.shells]);
+  const result = useMemo(() => resultOf(live), [live]);
+  const queue: QueuedMessage | null = live.queue ?? detail.data?.queue ?? null;
 
   const ended = live.ended ?? chat?.status === 'ended';
   const busy = live.busy ?? chat?.busy ?? false;
@@ -513,7 +536,35 @@ function ChatView({
     void queryClient.invalidateQueries({ queryKey: queryKeys.chat(id) });
   };
 
+  // The message typed ahead is edited by taking its text back into the box; the next Queue replaces it.
+  const [editing, setEditing] = useState<QueuedMessage | null>(null);
+  const [fill, setFill] = useState<{ text: string; nonce: number } | undefined>();
+  const [resuming, setResuming] = useState(false);
+
+  // Claude is working: the message waits on the server and goes out when the turn is over.
+  const queueMessage = async (text: string, images: ImageData[]): Promise<boolean> => {
+    try {
+      const r = await api.putQueue(id, text, images, editing?.id);
+      chatStore.setQueue(id, r.queue);
+      if (r.sent) chatStore.turnStarted(id); // the turn had just ended: it went out at once
+      setEditing(null);
+      onOk();
+      return true;
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'queue-sent') {
+        toast.info('The queued message was already sent.');
+        setEditing(null);
+        chatStore.setQueue(id, null);
+        return false;
+      }
+      if (e instanceof ApiError && e.code === 'chat-ended') refresh();
+      onError(e);
+      return false;
+    }
+  };
+
   const send = async (text: string, images: ImageData[] = []): Promise<boolean> => {
+    if (busy && !ended) return queueMessage(text, images);
     // An ended chat is continued first (with the model / effort picked in the composer), then the message goes out.
     if (ended) {
       try {
@@ -525,13 +576,12 @@ function ChatView({
         return false;
       }
     }
-    const itemId = chatStore.addUser(id, text, false, images);
     try {
       await api.sendMessage(id, text, images);
+      chatStore.turnStarted(id); // the server echoes the message to every tab; this only covers the gap before `busy` arrives
       onOk();
       return true;
     } catch (e) {
-      chatStore.dropItem(id, itemId);
       // 409 busy means a turn is running that this page did not know about.
       chatStore.setBusy(id, e instanceof ApiError && e.code === 'busy');
       if (e instanceof ApiError && e.code === 'chat-ended') {
@@ -542,24 +592,92 @@ function ChatView({
     }
   };
 
-  // Esc interrupts the current turn (the chat stays active). Not when something else already took the key: the
-  // composer's slash menu (defaultPrevented) or an open dialog or sheet, which close on Esc as usual.
+  const editQueue = () => {
+    if (!queue) return;
+    setEditing(queue);
+    setFill({ text: queue.text, nonce: Date.now() });
+  };
+
+  const cancelQueue = async () => {
+    try {
+      await api.deleteQueue(id, queue?.id);
+      chatStore.setQueue(id, null);
+      setEditing(null);
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'queue-sent') {
+        toast.info('The queued message was already sent.');
+        chatStore.setQueue(id, null);
+        setEditing(null);
+      } else onError(e);
+    }
+  };
+
+  // The chat ended with a message still queued: resume the chat and the server sends it (attachments included).
+  const resumeAndSend = async () => {
+    setResuming(true);
+    try {
+      await api.continueChat(id, true);
+      chatStore.resumed(id);
+      refresh();
+    } catch (e) {
+      onError(e);
+    } finally {
+      setResuming(false);
+    }
+  };
+
+  // Interrupt ends the current turn (the chat stays active). One request at a time; a failure is shown, never silent.
+  const interruptingNow = useRef(false);
+  const [interrupting, setInterrupting] = useState(false);
+  const interrupt = useCallback(async () => {
+    if (interruptingNow.current) return;
+    interruptingNow.current = true;
+    setInterrupting(true);
+    try {
+      await api.interruptChat(id);
+    } catch (err) {
+      if (!(err instanceof ApiError && err.code === 'not-busy'))
+        // not-busy: the turn just ended
+        toast.error(err instanceof Error ? err.message : 'Could not interrupt Claude.');
+    } finally {
+      interruptingNow.current = false;
+      setInterrupting(false);
+    }
+  }, [id]);
+
+  // Esc interrupts the current turn. Not when something else already took the key: the composer's slash menu or a
+  // permission card's deny field (defaultPrevented) or an open dialog or sheet, which close on Esc as usual.
   const canInterrupt = busy && !ended;
   useEffect(() => {
     if (!canInterrupt) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
       if (document.querySelector('[role="dialog"][data-state="open"]')) return;
-      api.interruptChat(id).catch((err: unknown) => {
-        if (err instanceof ApiError && err.code === 'not-busy') return; // the turn just ended
-        toast.error(err instanceof Error ? err.message : 'Could not interrupt Claude.');
-      });
+      void interrupt();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [canInterrupt, id]);
+  }, [canInterrupt, interrupt]);
+
+  // "Load earlier": the entries before the first one this page holds.
+  const loadEarlier = async () => {
+    const s = chatStore.get(id);
+    if (s.loadingEarlier || !s.hasEarlier || s.entries.length === 0) return;
+    chatStore.setLoadingEarlier(id, true);
+    try {
+      const r = await api.chatEarlier(id, s.entries[0].pos);
+      // Nothing came back although the server says there is more (entries that left its memory): stop asking.
+      chatStore.prependEarlier(id, r.entries, r.entries.length > 0 && r.hasEarlier);
+    } catch (e) {
+      chatStore.setLoadingEarlier(id, false);
+      toast.error(e instanceof Error ? e.message : 'Could not load earlier messages.');
+    }
+  };
+
+  const [endOpen, setEndOpen] = useState(false);
 
   const stop = async () => {
+    setEndOpen(false);
     try {
       await api.stopChat(id);
       refresh();
@@ -634,12 +752,13 @@ function ChatView({
               variant="outline"
               size="icon"
               className="size-11 shrink-0"
-              aria-label="Stop"
-              onClick={() => void stop()}
+              aria-label="End chat"
+              onClick={() => setEndOpen(true)}
             >
               <SquareIcon />
             </Button>
           )}
+          <NotificationSettings mobile />
           {panelButton}
         </MobileHeader>
       ) : (
@@ -658,14 +777,34 @@ function ChatView({
           <span className="flex-1" />
           <Badge variant={ended ? 'secondary' : 'default'}>{ended ? 'Ended' : 'Active'}</Badge>
           {!ended && (
-            <Button variant="outline" size="xs" onClick={() => void stop()}>
+            <Button variant="outline" size="xs" onClick={() => setEndOpen(true)}>
               <SquareIcon />
-              Stop
+              End chat
             </Button>
           )}
+          <NotificationSettings />
           {panelButton}
         </div>
       )}
+
+      <Dialog open={endOpen} onOpenChange={setEndOpen}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>End this chat?</DialogTitle>
+            <DialogDescription>
+              Claude&apos;s process is stopped; you can resume it later.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEndOpen(false)}>
+              Keep going
+            </Button>
+            <Button variant="destructive" onClick={() => void stop()}>
+              End chat
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {detail.data?.unavailable && (
         <p className="text-xs text-muted-foreground">
@@ -680,18 +819,40 @@ function ChatView({
         busy={busy}
         busySince={busySince}
         ended={Boolean(ended)}
+        loaded={live.loaded}
+        hasEarlier={live.hasEarlier}
+        loadingEarlier={live.loadingEarlier}
+        interrupting={interrupting}
+        onLoadEarlier={() => void loadEarlier()}
+        onInterrupt={() => void interrupt()}
         onSendToClaude={(text) => send(text)}
       />
 
       {live.fatal && <FatalNotice chatId={id} fatal={live.fatal} onNewChat={onNewChat} />}
       {live.orphans && <OrphansNotice onKill={() => void killOrphans()} killing={killing} />}
-      {live.result && <ResultLine result={live.result} />}
+      {result && <ResultLine result={result} />}
       {project && <DraftReadyNotice drafts={newDrafts} readOnly={readOnly} />}
       {ticketProblem && !ended && ticketProblem.status !== 'connected' && (
         <TicketNotice tracker={ticketProblem.tracker} status={ticketProblem.status} />
       )}
 
+      {!ended && prompts.length > 0 && <NotifyBanner />}
       {!ended && <DecisionDock prompts={prompts} />}
+      {queue && !ended && (
+        <QueuedNotice
+          queue={queue}
+          onEdit={queue.images === 0 ? editQueue : undefined}
+          onCancel={() => void cancelQueue()}
+        />
+      )}
+      {queue && ended && (
+        <NotSentNotice
+          queue={queue}
+          busy={resuming}
+          onResumeAndSend={() => void resumeAndSend()}
+          onDiscard={() => void cancelQueue()}
+        />
+      )}
 
       {missing ? (
         <ClaudeMissingNotice code={missing.code} message={missing.message} />
@@ -701,6 +862,7 @@ function ChatView({
           busy={busy}
           ended={Boolean(ended)}
           chatId={id}
+          fill={fill}
           onShellError={(e) => {
             if (e instanceof ApiError && e.code === 'chat-ended') refresh();
             onError(e);

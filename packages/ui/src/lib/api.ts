@@ -4,8 +4,10 @@ import type {
   AgentsChange,
   AgentsPreviewResponse,
   ApiErrorEnvelope,
+  ChatCatchUp,
   ChatCommand,
   ChatControls,
+  ChatEarlier,
   CiChange,
   ClaimBody,
   CiPreviewResponse,
@@ -25,6 +27,7 @@ import type {
   PreviewResponse,
   PickedControls,
   PromptAnswer,
+  QueueResponse,
   RemoteInfo,
   SaveRequest,
   SaveResponse,
@@ -97,7 +100,7 @@ function repoPath(path: string): string {
 }
 
 async function request<T>(
-  method: 'GET' | 'POST' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   path: string,
   body?: unknown,
 ): Promise<T> {
@@ -136,7 +139,11 @@ async function request<T>(
 }
 
 /** A call to the current repo's routes. */
-function repoRequest<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+function repoRequest<T>(
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  path: string,
+  body?: unknown,
+): Promise<T> {
   return request<T>(method, repoPath(path), body);
 }
 
@@ -219,7 +226,38 @@ export const api = {
   file: (path: string, mode: FileMode) =>
     repoRequest<FileResponse>('GET', `/api/file?path=${encodeURIComponent(path)}&mode=${mode}`),
   chats: () => repoRequest<ChatsResponse>('GET', '/api/chats'),
+  /** The chat and the last page (200) of its log. */
   chat: (id: string) => repoRequest<ChatDetail>('GET', `/api/chats/${encodeURIComponent(id)}`),
+  /** Older entries ("Load earlier"): the last `limit` with pos < `before`. */
+  chatEarlier: (id: string, before: number, limit = 200) =>
+    repoRequest<ChatEarlier>(
+      'GET',
+      `/api/chats/${encodeURIComponent(id)}/events?before=${before}&limit=${limit}`,
+    ),
+  /** What changed in a chat's log after `since`. Names the repo: a reconnect catches up chats that are not on screen. 410 `gap`: load the page again. */
+  chatCatchUp: (repoId: string, id: string, since: number, epoch: string) =>
+    request<ChatCatchUp>(
+      'GET',
+      `/api/repos/${encodeURIComponent(repoId)}/chats/${encodeURIComponent(id)}/events?since=${since}&epoch=${encodeURIComponent(epoch)}`,
+    ),
+  /** One image of a chat, by the reference an entry carries (404: no longer available). */
+  chatImage: (id: string, ref: string) =>
+    repoRequest<ImageData>(
+      'GET',
+      `/api/chats/${encodeURIComponent(id)}/images/${encodeURIComponent(ref)}`,
+    ),
+  /** Sets the message typed ahead (`queueId`: the one being edited; 409 `queue-sent` when it already went out). */
+  putQueue: (id: string, text: string, images: ImageData[] = [], queueId?: number) =>
+    repoRequest<QueueResponse>('PUT', `/api/chats/${encodeURIComponent(id)}/queue`, {
+      text,
+      ...(images.length > 0 ? { images } : {}),
+      ...(queueId !== undefined ? { id: queueId } : {}),
+    }),
+  deleteQueue: (id: string, queueId?: number) =>
+    repoRequest<{ ok: true }>(
+      'DELETE',
+      `/api/chats/${encodeURIComponent(id)}/queue${queueId !== undefined ? `?id=${queueId}` : ''}`,
+    ),
   createChat: (message: string, images: ImageData[] = []) =>
     repoRequest<{ id: string }>('POST', '/api/chats', {
       message,
@@ -259,8 +297,13 @@ export const api = {
     repoRequest<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/interrupt`),
   killChat: (id: string) =>
     repoRequest<{ killed: true }>('POST', `/api/chats/${encodeURIComponent(id)}/kill`),
-  continueChat: (id: string) =>
-    repoRequest<{ ok: true }>('POST', `/api/chats/${encodeURIComponent(id)}/continue`),
+  /** `sendQueued`: the queued message that was not sent when the chat ended goes out as soon as it is running. */
+  continueChat: (id: string, sendQueued = false) =>
+    repoRequest<{ ok: true }>(
+      'POST',
+      `/api/chats/${encodeURIComponent(id)}/continue`,
+      sendQueued ? { sendQueued: true } : undefined,
+    ),
   answerPrompt: (id: string, answer: PromptAnswer) =>
     repoRequest<{ ok: true }>('POST', `/api/prompts/${encodeURIComponent(id)}`, answer),
 };

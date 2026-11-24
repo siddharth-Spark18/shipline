@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { createChatLog, createFolder, DEFAULT_PAGE } from './chat-log.mjs';
 import { MCP_TOOL_TIMEOUT_ENV, buildArgs, findClaude, startSpec } from './claude.mjs';
 import {
   controlRequest,
@@ -41,6 +42,7 @@ import {
   parseLine,
   userMessage,
 } from './stream.mjs';
+import { readEntries, transcriptSignature } from './transcript.mjs';
 import { watchState } from './watch.mjs';
 
 const STDERR_TAIL_BYTES = 4096;
@@ -55,6 +57,7 @@ const TRUST_MESSAGE = /this workspace has not been trusted/;
 const TRUST_PATH = /projects\["([^"]+)"\]/;
 const CONTROL_LABEL = { model: 'model', effort: 'effort', permissionMode: 'mode' };
 const CONTROL_KEYS = Object.keys(CONTROL_LABEL);
+const MAX_LOGS = 12; // chat logs kept in memory; the one of a running chat is never dropped
 
 const pickKeys = (o) => {
   const out = {};
@@ -117,6 +120,70 @@ export function createChats(app) {
   // chatId -> { mcpServers, slashCommands, terminalSlashCommands } from the chat's last system/init. Kept after the
   // chat ends (until the server stops) so the Jira notice and the command list still work.
   const inits = new Map();
+  // chatId -> { log, folder, sig, live }: the ordered log of each chat opened or run since the server started. A chat that is
+  // not running keeps its log only while its transcript file is unchanged (sig), so a terminal session in between
+  // shows up on the next open.
+  const logs = new Map();
+  // chatId -> { id, text, images }: the one message typed ahead while the chat works. In memory; it outlives the
+  // chat's process (an ended chat shows it as "not sent"), not the server.
+  const queues = new Map();
+  let queueSeq = 0;
+
+  function buildLog(id, { running, busy }) {
+    const t = readEntries(root, id, { running, busy });
+    const log = createChatLog({ history: t.unavailable ? [] : t.entries });
+    return {
+      log,
+      folder: createFolder(log),
+      sig: transcriptSignature(root, id),
+      live: running,
+      unavailable: Boolean(t.unavailable),
+    };
+  }
+
+  function rememberLog(id, entry) {
+    logs.delete(id);
+    logs.set(id, entry);
+    for (const [other, e] of logs) {
+      if (logs.size <= MAX_LOGS) break;
+      if (!e.live && other !== id) logs.delete(other);
+    }
+  }
+
+  // The log of a chat: the running one's, or one built from its transcript (reused while the file is unchanged).
+  function logFor(id) {
+    const cached = logs.get(id);
+    if (cached && (cached.live || cached.sig === transcriptSignature(root, id))) {
+      rememberLog(id, cached);
+      return cached;
+    }
+    const fresh = buildLog(id, { running: false, busy: false });
+    rememberLog(id, fresh);
+    return fresh;
+  }
+
+  // Sends a `chat` event; `changes` are the log entries it created or changed (the tab folds them in by pos).
+  function emitChat(chat, payload, changes) {
+    const entry = logs.get(chat.id);
+    if (changes && changes.length && entry) {
+      payload.epoch = entry.log.epoch;
+      payload.entries = changes;
+      app.hub.send('chat', payload, `${app.id}:${chat.id}:${entry.log.epoch}:${entry.log.version}`);
+    } else emit(payload);
+  }
+
+  // Tool calls that never got a result are marked cancelled: the turn ended, was interrupted, or the chat stopped.
+  function cancelOpenTools(chat) {
+    const entry = logs.get(chat.id);
+    if (!entry) return;
+    const changes = entry.folder.cancelOpen();
+    if (changes.length)
+      emitChat(chat, { chatId: chat.id, kind: 'tools_cancelled', ids: changes[0].ids }, changes);
+  }
+
+  const queueView = (q) => (q ? { id: q.id, text: q.text, images: q.images.length } : null);
+  const emitQueue = (chatId) =>
+    emit({ chatId, kind: 'queue', queue: queueView(queues.get(chatId)) });
 
   function clearOrphans(chatId, announce) {
     const o = orphans.get(chatId);
@@ -238,7 +305,8 @@ export function createChats(app) {
     const notices = annotate(chat, event);
     const payload = { chatId: chat.id, kind: 'event', event };
     if (notices.length) payload.notices = notices;
-    emit(payload);
+    const entry = logs.get(chat.id);
+    emitChat(chat, payload, entry ? entry.folder.ingest(event, notices) : []);
     if (isResult(event)) afterTurn(chat);
   }
 
@@ -443,7 +511,20 @@ export function createChats(app) {
       persistControls(chat); // pending is empty now; applyChanges stores what stuck
       await applyChanges(chat, changes);
     }
-    refreshContext(chat);
+    sendQueued(chat);
+    refreshContext(chat); // returns at once when the queued message started a turn
+  }
+
+  // The message typed ahead goes out when the turn is over (also after an interrupt), unless the chat is mid-change
+  // or a prompt is waiting. The queue is taken before it is written, so an edit that arrives later sees a new turn.
+  function sendQueued(chat) {
+    const q = queues.get(chat.id);
+    if (!q || chat.done || chat.stopping || chat.busy || chat.applying > 0) return false;
+    if (app.prompts.pendingFor(chat.id).length > 0) return false;
+    queues.delete(chat.id);
+    emitQueue(chat.id);
+    writeUser(chat, q.text, q.images, 'queue');
+    return true;
   }
 
   // Runs once per chat, when the child is gone: cleanup first, then the final SSE event.
@@ -460,6 +541,12 @@ export function createChats(app) {
     const stderrTail = chat.stderr.toString('utf8');
     log('chat-exit', { chatId: chat.id, code, signal, stopping: chat.stopping, stderrTail });
     failWaiters(chat);
+    cancelOpenTools(chat);
+    const entry = logs.get(chat.id);
+    if (entry) {
+      entry.live = false;
+      entry.sig = transcriptSignature(root, chat.id);
+    }
     if (chat.stateWatch) chat.stateWatch.close();
     stopShells(chat.id).catch(() => {});
     bindTask(chat);
@@ -531,7 +618,7 @@ export function createChats(app) {
 
   // Takes the lock and spawns claude. `message` (and `images`) is the first user message for a new chat.
   // `claudeVersion` is only for the log.
-  async function begin({ id, resume, message, images, claudeVersion }) {
+  async function begin({ id, resume, message, images, claudeVersion, sendQueued: withQueue }) {
     if (active)
       throw new HttpError(409, 'chat-active', 'A chat is already active here.', {
         chatId: active.id,
@@ -612,6 +699,9 @@ export function createChats(app) {
     }
     chat.child = child;
     active = chat;
+    // A new chat starts with an empty log; a continued one with its transcript (rebuilt, so the epoch changes and an
+    // open tab refetches).
+    rememberLog(id, buildLog(id, { running: true, busy: false }));
     errorUnseen.delete(id);
     changed();
 
@@ -665,6 +755,7 @@ export function createChats(app) {
       log('control-failed', { chatId: id, what: 'startup', message: e && e.message }),
     );
     if (!resume) writeUser(chat, message, images);
+    else if (withQueue) sendQueued(chat);
     return id;
   }
 
@@ -685,9 +776,17 @@ export function createChats(app) {
     });
   }
 
-  function writeUser(chat, text, images) {
+  // Writes one user message to claude and tells every tab (stream-json never echoes it).
+  function writeUser(chat, text, images, from = 'composer') {
     setBusy(chat, true);
     chat.child.stdin.write(userMessage(text, images));
+    const entry = logs.get(chat.id);
+    if (entry)
+      emitChat(
+        chat,
+        { chatId: chat.id, kind: 'user', from },
+        entry.folder.echo(text, images, from),
+      );
   }
 
   return {
@@ -771,8 +870,8 @@ export function createChats(app) {
     },
 
     // Existing chat, same uuid, --resume.
-    resume({ id, claudeVersion }) {
-      return begin({ id, resume: true, claudeVersion });
+    resume({ id, claudeVersion, sendQueued }) {
+      return begin({ id, resume: true, claudeVersion, sendQueued });
     },
 
     send(id, text, images) {
@@ -786,6 +885,65 @@ export function createChats(app) {
       if (chat.busy || chat.applying > 0)
         throw new HttpError(409, 'busy', 'Claude is still answering the last message.');
       writeUser(chat, text, images);
+    },
+
+    // The chat's ordered log, built from its transcript when it has none yet: { log, unavailable }.
+    log: (id) => logFor(id),
+
+    // Entries before `pos` (the last `limit` of them), from memory and, below it, from the transcript again.
+    // { entries, hasEarlier }
+    earlier(id, before, limit = DEFAULT_PAGE) {
+      const { log } = logFor(id);
+      const mem = log.slice(before, limit);
+      let entries = mem;
+      const lowest = mem.length ? mem[0].pos : Math.min(before ?? log.lastPos + 1, log.firstPos);
+      const want = limit - mem.length;
+      if (want > 0 && lowest > 1) {
+        // Positions below the live part are the transcript's own; live entries that left memory are gone.
+        const upTo = Math.min(lowest - 1, log.historyCount);
+        const t = upTo >= 1 ? readEntries(root, id, {}) : null;
+        if (t && !t.unavailable) {
+          const from = Math.max(0, upTo - want);
+          const older = t.entries
+            .slice(from, upTo)
+            .map(({ key, ...e }, i) => ({ ...e, pos: from + i + 1, ver: from + i + 1 }));
+          entries = [...older, ...mem];
+        }
+      }
+      return { entries, hasEarlier: entries.length > 0 ? entries[0].pos > 1 : lowest > 1 };
+    },
+
+    // The queued message of a chat (running or ended) for the UI: { id, text, images } or null.
+    queue: (id) => queueView(queues.get(id)),
+
+    // PUT queue: stores (or replaces) the one queued message while the chat works. `expect` is the id of the queued
+    // message being edited; when it was already sent (or cancelled) this is 409 queue-sent. When the turn has just
+    // ended the message is sent at once. Returns { queued, sent, queue }.
+    setQueue(id, { text, images }, expect) {
+      const chat = state(id);
+      if (!chat || chat.stopping || chat.done)
+        throw new HttpError(409, 'chat-ended', 'This chat has ended.');
+      const cur = queues.get(id);
+      if (expect !== undefined && (!cur || cur.id !== expect))
+        throw new HttpError(409, 'queue-sent', 'The queued message was already sent.');
+      if (!cur && !chat.busy && chat.applying === 0) {
+        writeUser(chat, text, images, 'composer');
+        return { queued: false, sent: true, queue: null };
+      }
+      const q = { id: ++queueSeq, text, images };
+      queues.set(id, q);
+      emitQueue(id);
+      return { queued: true, sent: false, queue: queueView(q) };
+    },
+
+    // DELETE queue: drops the queued message (also an ended chat's). Same 409 as setQueue for an edit that came too late.
+    clearQueue(id, expect) {
+      const cur = queues.get(id);
+      if (expect !== undefined && (!cur || cur.id !== expect))
+        throw new HttpError(409, 'queue-sent', 'The queued message was already sent.');
+      if (!cur) return;
+      queues.delete(id);
+      emitQueue(id);
     },
 
     // { busy, busySince } for a live chat; false and null otherwise.
@@ -811,7 +969,10 @@ export function createChats(app) {
       if (!chat.busy || chat.done) return;
       clearTimeout(chat.interruptTimer);
       chat.interruptTimer = setTimeout(() => {
-        if (chat.busy && !chat.done) setBusy(chat, false);
+        if (!chat.busy || chat.done) return;
+        cancelOpenTools(chat);
+        setBusy(chat, false);
+        sendQueued(chat);
       }, INTERRUPT_RESULT_MS);
       chat.interruptTimer.unref();
     },

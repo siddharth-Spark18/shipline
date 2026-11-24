@@ -149,12 +149,36 @@ terminal, port or browser tab per repo.
 To update every repo at once: `npx @forgeyard/shipline upgrade --all` (see [Upgrade and uninstall](install.md#upgrade-and-uninstall)).
 
 - **Chat:** talk to Claude in the repo. While Claude works, a row at the end of the messages shows what it is
-  doing and for how long. On desktop, **Esc** stops the current turn and the chat stays active; **Stop** in the
-  header ends the whole chat. Permission and question prompts dock above the message box, on desktop and phone,
-  and an answered question stays in the history as one line. A chat can always be continued in a terminal with
+  doing and for how long, with an **Interrupt** button (on desktop **Esc** does the same): it ends the current turn
+  and the chat stays active. **End chat** in the header (with a confirmation) stops Claude's process; you can resume
+  the chat later. Tool calls that never got a result (a turn that was interrupted, an ended or crashed chat) are
+  marked *Cancelled*. Permission and question prompts dock above the message box, on desktop and phone, and an
+  answered question stays in the history as one line. A chat can always be continued in a terminal with
   `claude --resume <id>`. One chat can work through several tasks: its side panel lists every task it touched
   (the current one with its stages and files), plus a collapsible list of the working-tree changes. Unfinished
   tasks no chat is working on appear on the new-chat screen with **Resume**.
+  - **Type ahead.** The message box stays usable while Claude works: **Send** becomes **Queue**, and the message
+    (one per chat, text and images) is shown above the box in every tab with **Edit** and **Cancel**. It is sent
+    when the turn ends, including after an Interrupt, so the usual use is "stop, and do this instead". If the chat
+    ends first, the message stays as "Not sent: the chat ended" with **Resume and send** and **Discard**. The queue
+    lives in the server's memory: restarting the server (which ends running chats anyway) loses it.
+  - **Permission prompts** offer four answers, in this order and with keys 1 to 4: **Allow once**, **Allow for this
+    chat** (Claude Code remembers the rule until the chat ends), **Always allow in this repo** (the rule is added to
+    `permissions.allow` in `.claude/settings.local.json`; if that file isn't valid JSON nothing is changed and the
+    prompt stays open) and **Deny**, which takes an optional message ("use pnpm instead") that Claude sees. Options 2
+    and 3 show the exact rule first: for Bash the command's first word (two words for `git`, `npm`, `pnpm`,
+    `docker` and similar tools, `python -m <module>`) followed by `:*`, the exact command when it chains or pipes
+    commands, the domain for `WebFetch`, the tool name for anything else. Enter allows once, Esc goes to the deny
+    message. A prompt waits 25 minutes (a countdown shows how long is left), then is denied.
+  - **Notifications.** The first time a prompt waits and the browser hasn't been asked, a banner offers to turn
+    notifications on. The bell in the chat header chooses, per device, what notifies: permission prompts and
+    questions, stage gates, a finished turn (only while the tab is hidden) and a chat that stopped unexpectedly.
+    Clicking one opens that chat; a prompt notifies once more in its last minute. The tab title shows `(n)` while
+    n chats wait for you. Notifications need an open Shipline tab and a secure origin (`127.0.0.1` or the Tailscale
+    HTTPS address); on an iPhone add Shipline to the Home Screen, otherwise only the title badge works.
+  - **Long chats and reconnecting.** The chat opens on its last 200 messages with **Load earlier** at the top. If a
+    phone sleeps or the connection drops, the chat catches up from the server when it wakes, so "working" never sticks
+    and no message is lost or reordered. **Shift+Tab** in the message box cycles the permission mode.
 - **Setup:** forms for `config.yml`, each workflow and each rules file. Saving shows a diff first, keeps the
   fields it doesn't know, and lists open tasks that still use an old stage list. Commit the files after saving.
 

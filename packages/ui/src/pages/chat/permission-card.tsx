@@ -1,14 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ShieldQuestionIcon } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { cn } from 'cn';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { ApiError, api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
+import { LAST_MINUTE_MS } from '@/lib/notifications';
 import type { PromptAnswer, PromptEvent } from '@/lib/types';
-import { chatStore } from '@/pages/chat/chat-store';
 import { inputSummary, toMs } from '@/pages/chat/timeline';
 
 /** Seconds left until `expiresAt`, ticking once a second. */
@@ -25,6 +27,7 @@ function useCountdown(expiresAt: number | string): number | null {
   return secs;
 }
 
+/** "Denied automatically in 12:34"; in the last minute it turns warning-coloured. */
 export function Countdown({ expiresAt }: { expiresAt: number | string }) {
   const secs = useCountdown(expiresAt);
   if (secs === null) return null;
@@ -33,10 +36,13 @@ export function Countdown({ expiresAt }: { expiresAt: number | string }) {
   const s = String(secs % 60).padStart(2, '0');
   return (
     <span
-      className="text-xs text-muted-foreground tabular-nums"
+      className={cn(
+        'text-xs tabular-nums',
+        secs * 1000 <= LAST_MINUTE_MS ? 'font-medium text-enf-warn' : 'text-muted-foreground',
+      )}
       title="Denied automatically when the time runs out"
     >
-      Denied in {m}:{s}
+      Denied automatically in {m}:{s}
     </span>
   );
 }
@@ -55,7 +61,8 @@ export function useAnswerPrompt(prompt: PromptEvent) {
     setPending(true);
     try {
       await api.answerPrompt(prompt.id, body);
-      if (body.decision === 'deny') chatStore.recordDenied(prompt.chatId, prompt.tool);
+      if (body.decision === 'allow_repo' && prompt.rule)
+        toast.success(`Always allowed in this repo: ${prompt.rule}`);
       remove();
     } catch (e) {
       if (e instanceof ApiError && e.code === 'not-found') {
@@ -178,7 +185,157 @@ export function PermissionSummary({ prompt }: { prompt: PromptEvent }) {
   );
 }
 
-/** An Allow/Deny card for one permission prompt. */
+const OPTION = 'h-auto min-h-8 w-full justify-start gap-2 py-1.5 text-left';
+const OPTION_BIG = 'h-auto min-h-12 w-full justify-start gap-2 py-2 text-left text-base';
+
+/**
+ * The answers to one permission prompt, in the same order on the card and in the dock: Allow once (1), Allow for this
+ * chat (2), Always allow in this repo (3), Deny (4, with an optional message for Claude). Options 2 and 3 show the exact
+ * rule they would remember, and are left out when there is none (or, for 2, when this Claude Code cannot do it).
+ * Keys, while this block has focus: 1-4, Enter = allow once, Esc = the deny message field; in the field Enter denies
+ * and Esc goes back.
+ */
+export function PermissionActions({
+  prompt,
+  pending,
+  answer,
+}: {
+  prompt: PromptEvent;
+  pending: boolean;
+  answer: (body: PromptAnswer) => Promise<void>;
+}) {
+  const mobile = useIsMobile();
+  const box = useRef<HTMLDivElement>(null);
+  const field = useRef<HTMLInputElement>(null);
+  const [denying, setDenying] = useState(false);
+  const [reason, setReason] = useState('');
+  const rule = prompt.rule ?? null;
+  const chatOk = prompt.allowForChat === true && rule !== null;
+  const repoOk = rule !== null;
+  const className = mobile ? OPTION_BIG : OPTION;
+  const size = mobile ? 'lg' : 'default';
+
+  useEffect(() => {
+    if (denying) field.current?.focus();
+  }, [denying]);
+
+  const allowOnce = () => void answer({ decision: 'allow' });
+  const allowChat = () => void answer({ decision: 'allow_chat' });
+  const allowRepo = () => void answer({ decision: 'allow_repo' });
+  const deny = () =>
+    void answer({ decision: 'deny', ...(reason.trim() ? { message: reason } : {}) });
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.nativeEvent.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.target instanceof HTMLInputElement) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (!pending) deny();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setDenying(false);
+        box.current?.focus({ preventScroll: true });
+      }
+      return;
+    }
+    if (pending) return;
+    if (e.key === '1') allowOnce();
+    else if (e.key === '2' && chatOk) allowChat();
+    else if (e.key === '3' && repoOk) allowRepo();
+    else if (e.key === '4' || e.key === 'Escape') setDenying(true);
+    // Enter on a focused button presses that button; on the block itself it is the first option.
+    else if (e.key === 'Enter' && e.target === box.current) allowOnce();
+    else return;
+    e.preventDefault();
+  };
+
+  const number = (n: number) => (
+    <span className="font-mono text-xs text-muted-foreground" aria-hidden>
+      {n}
+    </span>
+  );
+  const ruleText = (r: string) => (
+    <code className="ml-auto min-w-0 truncate font-mono text-xs text-muted-foreground" title={r}>
+      {r}
+    </code>
+  );
+
+  return (
+    <div
+      ref={box}
+      tabIndex={-1}
+      data-permission-actions=""
+      onKeyDown={onKeyDown}
+      className="flex flex-col gap-2 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+    >
+      <Button size={size} className={className} disabled={pending} onClick={allowOnce}>
+        {number(1)}
+        Allow once
+      </Button>
+      {chatOk && rule && (
+        <Button
+          size={size}
+          variant="outline"
+          className={className}
+          disabled={pending}
+          onClick={allowChat}
+        >
+          {number(2)}
+          Allow for this chat
+          {ruleText(rule)}
+        </Button>
+      )}
+      {repoOk && rule && (
+        <Button
+          size={size}
+          variant="outline"
+          className={className}
+          disabled={pending}
+          onClick={allowRepo}
+        >
+          {number(3)}
+          Always allow in this repo
+          {ruleText(rule)}
+        </Button>
+      )}
+      {denying ? (
+        <div className="flex items-center gap-2">
+          <Input
+            ref={field}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Tell Claude why, or what to do instead (optional)"
+            aria-label="Message for Claude"
+            className={mobile ? 'h-12' : undefined}
+            disabled={pending}
+          />
+          <Button
+            size={size}
+            variant="outline"
+            className={mobile ? 'h-12 shrink-0' : 'shrink-0'}
+            disabled={pending}
+            onClick={deny}
+          >
+            Deny
+          </Button>
+        </div>
+      ) : (
+        <Button
+          size={size}
+          variant="outline"
+          className={className}
+          disabled={pending}
+          onClick={() => setDenying(true)}
+        >
+          {number(4)}
+          Deny
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** A card for one permission prompt: the call, then the four answers. */
 export function PermissionCard({ prompt }: { prompt: PromptEvent }) {
   const { answer, pending } = useAnswerPrompt(prompt);
   return (
@@ -192,19 +349,9 @@ export function PermissionCard({ prompt }: { prompt: PromptEvent }) {
       <CardContent>
         <InputPreview tool={prompt.tool} input={prompt.input} />
       </CardContent>
-      <CardFooter className="flex items-center gap-2">
-        <Button size="sm" disabled={pending} onClick={() => void answer({ decision: 'allow' })}>
-          Allow
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={pending}
-          onClick={() => void answer({ decision: 'deny' })}
-        >
-          Deny
-        </Button>
-        <span className="ml-auto">
+      <CardFooter className="flex-col items-stretch gap-2">
+        <PermissionActions prompt={prompt} pending={pending} answer={answer} />
+        <span className="self-end">
           <Countdown expiresAt={prompt.expiresAt} />
         </span>
       </CardFooter>

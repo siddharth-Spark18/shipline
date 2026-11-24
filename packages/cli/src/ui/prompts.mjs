@@ -6,13 +6,24 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { safeEqual } from './auth.mjs';
 import { HttpError } from './http.mjs';
+import { appendAllowRule, ruleFor, splitRule } from './local-settings.mjs';
 import { log } from './log.mjs';
 import { uiStateDir } from './sessions.mjs';
 
-// How long a prompt waits for the developer: 5 minutes.
-// Not checked (chat test Q5): whether a permission-prompt call can wait 10 minutes, so the limit was lowered to
-// something assumed safe (see claude.mjs MCP_TOOL_TIMEOUT_ENV).
-export const PROMPT_TIMEOUT_MS = 300_000;
+// How long a prompt waits for the developer: 25 minutes.
+// Checked in the claude 2.1.331 binary (not with a live 30-minute call): a stdio MCP server's tool call has no
+// wall-clock limit but MCP_TOOL_TIMEOUT (default about 28 hours; claude.mjs sets it above this), and the call is also
+// cut after a stdio idle timeout of 30 minutes (CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT). The relay sends nothing while it
+// waits, so the wait stays well under 30 minutes.
+export const PROMPT_TIMEOUT_MS = 1_500_000;
+
+// Claude Code reads `updatedPermissions` in a permission-prompt tool's allow answer (2.1.331: the answer's schema has
+// `updatedPermissions: PermissionUpdate[]`, an `addRules` entry with destination `session` lasts for the chat's
+// session). Checked in the binary, not with a live call; if a Claude Code ever stops honouring it, set this to false and
+// the cards stop offering "Allow for this chat".
+export const ALLOW_FOR_CHAT_SUPPORTED = true;
+
+const REASON_LIMIT = 2000;
 
 export const DENY_MESSAGE = 'Denied by the developer in Shipline UI';
 // Verified 2026-11-04 (claude 2.1.317): AskUserQuestion arrives here and is answered through updatedInput.answers.
@@ -22,6 +33,8 @@ const RELAY_PATH = fileURLToPath(new URL('./relay.mjs', import.meta.url));
 
 export const timeoutMessage = (ms) =>
   `No answer within ${Number((ms / 60_000).toFixed(2))} minutes`;
+
+const DECISIONS = ['allow', 'allow_chat', 'allow_repo', 'deny'];
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -39,12 +52,15 @@ export function createPrompts(app) {
   const secrets = new Map(); // chatId -> this spawn's secret
   const denied = []; // prompts the developer denied on a card, for the "You denied" notice
 
+  // `rule` is what "Allow for this chat" and "Always allow in this repo" would remember (null: not offered).
   const view = (p) => ({
     id: p.id,
     chatId: p.chatId,
     tool: p.tool,
     input: p.input,
     expiresAt: p.expiresAt,
+    allowForChat: ALLOW_FOR_CHAT_SUPPORTED,
+    rule: ruleFor(p.tool, p.input),
   });
 
   // Pending prompts are sent again on every SSE connect, so reloading the tab doesn't lose them.
@@ -118,26 +134,58 @@ export function createPrompts(app) {
   function answerHandler({ params, body }) {
     const p = pending.get(params.id);
     if (!p) throw new HttpError(404, 'not-found', 'No such prompt, or it is already resolved');
-    if (!isObject(body) || (body.decision !== 'allow' && body.decision !== 'deny'))
-      throw new HttpError(400, 'bad-request', 'decision must be "allow" or "deny"');
+    if (!isObject(body) || !DECISIONS.includes(body.decision))
+      throw new HttpError(
+        400,
+        'bad-request',
+        'decision must be "allow", "allow_chat", "allow_repo" or "deny"',
+      );
     if (body.answers !== undefined && !isObject(body.answers))
       throw new HttpError(400, 'bad-request', 'answers must be an object');
-    if (body.decision === 'allow') {
-      const updatedInput =
-        p.tool === ASK_USER_QUESTION && body.answers
-          ? { ...p.input, answers: body.answers }
-          : p.input;
-      settle(p, 'allow', { behavior: 'allow', updatedInput });
-    } else {
+    if (body.message !== undefined && typeof body.message !== 'string')
+      throw new HttpError(400, 'bad-request', 'message must be a string');
+    if (body.decision === 'deny') {
       p.byUser = true;
-      settle(p, 'deny', { behavior: 'deny', message: DENY_MESSAGE });
+      const reason = (body.message || '').trim().slice(0, REASON_LIMIT);
+      settle(p, 'deny', { behavior: 'deny', message: reason || DENY_MESSAGE });
+      return { ok: true };
     }
+    const updatedInput =
+      p.tool === ASK_USER_QUESTION && body.answers
+        ? { ...p.input, answers: body.answers }
+        : p.input;
+    const answer = { behavior: 'allow', updatedInput };
+    if (body.decision !== 'allow') {
+      const rule = ruleFor(p.tool, p.input);
+      if (!rule)
+        throw new HttpError(
+          400,
+          'no-rule',
+          'There is no permission rule to remember for this call.',
+        );
+      if (body.decision === 'allow_chat' && !ALLOW_FOR_CHAT_SUPPORTED)
+        throw new HttpError(
+          400,
+          'not-supported',
+          'This Claude Code cannot allow a tool for one chat.',
+        );
+      // Repo first: when the file can't be written the error goes back and the prompt stays pending.
+      if (body.decision === 'allow_repo') appendAllowRule(root, rule);
+      if (ALLOW_FOR_CHAT_SUPPORTED)
+        answer.updatedPermissions = [
+          { type: 'addRules', rules: [splitRule(rule)], behavior: 'allow', destination: 'session' },
+        ];
+    }
+    settle(p, 'allow', answer);
     return { ok: true };
   }
 
   return {
     timeoutMs,
     pendingCount: () => pending.size,
+
+    // The views of one chat's pending prompts (what a reconnecting tab needs).
+    pendingFor: (chatId) => [...pending.values()].filter((p) => p.chatId === chatId).map(view),
 
     // What waits for the developer, for the project switcher's badge: [{ chatId, reason }] where the reason is
     // 'question' (AskUserQuestion, which also carries the stage confirmations) or 'permission'.

@@ -9,7 +9,9 @@ export function createHub({ deviceState = () => null } = {}) {
   const clients = new Set();
   const connectFns = [];
 
-  const frame = (type, data) => `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
+  // `id` (optional) becomes the frame's `id:` line, which the browser keeps as lastEventId.
+  const frame = (type, data, id) =>
+    `${id === undefined ? '' : `id: ${String(id).replace(/[\r\n]/g, ' ')}\n`}event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
 
   return {
     // deviceId tags a stream opened by a paired phone (undefined for the laptop).
@@ -46,8 +48,8 @@ export function createHub({ deviceState = () => null } = {}) {
       }
     },
 
-    send(type, data) {
-      const text = frame(type, data);
+    send(type, data, id) {
+      const text = frame(type, data, id);
       for (const c of clients) c.res.write(text);
     },
 

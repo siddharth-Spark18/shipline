@@ -51,7 +51,10 @@ function QuestionRecord({ item }: { item: ToolItem }) {
   const answers = [...text.matchAll(ANSWER_PAIR)].map((m) => m[2]).filter(Boolean);
   let mark = '✓';
   let tail: string;
-  if (!item.result) {
+  if (!item.result && item.cancelled) {
+    mark = '✕';
+    tail = 'Cancelled';
+  } else if (!item.result) {
     mark = '?';
     tail = 'Waiting for your answer';
   } else if (skipped) {
@@ -95,7 +98,12 @@ function PlainToolCall({ item }: { item: ToolItem }) {
           Error
         </Badge>
       )}
-      {!item.result && <Badge variant="outline">Running</Badge>}
+      {!item.result && item.cancelled && (
+        <Badge variant="secondary" className="text-muted-foreground">
+          Cancelled
+        </Badge>
+      )}
+      {!item.result && !item.cancelled && <Badge variant="outline">Running</Badge>}
     </>
   );
   const detail = mobile ? detailOf(item) : '';

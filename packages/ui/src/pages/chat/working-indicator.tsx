@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { SparklesIcon } from 'lucide-react';
+import { SparklesIcon, SquareIcon } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { toMs, type Item } from '@/pages/chat/timeline';
 
 const COMMAND_CHARS = 40;
@@ -19,7 +20,7 @@ export function activityOf(items: Item[]): string {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
     if (it.kind === 'user') break;
-    if (it.kind === 'text' && it.streaming && !it.streaming.done) streaming = true;
+    if (it.kind === 'text' && it.streaming) streaming = true;
     if (it.kind !== 'tool' || it.result) continue;
     const path = field(it.input, 'file_path', 'notebook_path');
     switch (it.name) {
@@ -65,16 +66,22 @@ function Elapsed({ since }: { since: string }) {
 
 /**
  * The last row of the message list while a turn runs: an animated mark, the current activity, the time since the
- * turn started and (on desktop) the Esc hint. Only the activity is announced, not every second.
+ * turn started, and an Interrupt button (it ends this turn; the chat stays active). On desktop the hint says Esc does
+ * the same. Only the activity is announced, not every second.
  */
 export function WorkingIndicator({
   items,
   busySince,
   mobile,
+  interrupting,
+  onInterrupt,
 }: {
   items: Item[];
   busySince: string | null;
   mobile: boolean;
+  /** An interrupt request is in flight: the button is off. */
+  interrupting: boolean;
+  onInterrupt: () => void;
 }) {
   return (
     <div className="flex min-w-0 items-center gap-2 py-1 text-sm text-muted-foreground">
@@ -86,7 +93,18 @@ export function WorkingIndicator({
         {activityOf(items)}
       </span>
       {busySince && <Elapsed since={busySince} />}
-      {!mobile && <span aria-hidden>· Esc to stop</span>}
+      {!mobile && <span aria-hidden>· Esc or Interrupt to stop this turn</span>}
+      <Button
+        type="button"
+        variant="outline"
+        size={mobile ? 'default' : 'xs'}
+        className={mobile ? 'ml-auto h-11 shrink-0 px-4' : 'ml-auto shrink-0'}
+        disabled={interrupting}
+        onClick={onInterrupt}
+      >
+        <SquareIcon />
+        {interrupting ? 'Interrupting...' : 'Interrupt'}
+      </Button>
     </div>
   );
 }

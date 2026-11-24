@@ -585,8 +585,18 @@ export interface ChatEvent extends Partial<RepoTagged> {
     | 'orphans-cleared'
     | 'controls'
     | 'context'
-    | 'busy';
+    | 'busy'
+    | 'user'
+    | 'queue'
+    | 'tools_cancelled';
   event?: unknown;
+  /** The log's epoch and the entries this event created or changed (kinds `event`, `user`, `tools_cancelled`). */
+  epoch?: string;
+  entries?: ChatEntry[];
+  /** kind 'tools_cancelled': the tool calls that never got a result. */
+  ids?: string[];
+  /** kind 'queue': the queued message after the change (null: none). */
+  queue?: QueuedMessage | null;
   /** kind 'busy': a turn started or ended, and when the running one started. */
   busy?: boolean;
   busySince?: string | null;
@@ -605,6 +615,55 @@ export interface ChatEvent extends Partial<RepoTagged> {
   code?: number | null;
   stderrTail?: string;
   resumeCommand?: string;
+}
+
+/**
+ * One entry of a chat's server-ordered log (GET /api/chats/<id>, `entries` of a chat event). `pos` is its place in the
+ * chat, `ver` the log version it was last created or changed at. A streaming text growth arrives as
+ * `{ pos, ver, type: 'text', delta }`.
+ */
+export type ChatEntry = { pos: number; ver: number } & (
+  | { type: 'user'; text: string; images?: string[]; from?: 'composer' | 'queue' }
+  | { type: 'image'; ref: string | null; media_type: string }
+  | {
+      type: 'text';
+      text: string;
+      streaming?: boolean;
+      done?: boolean;
+      msgId?: string;
+      delta?: string;
+    }
+  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  | {
+      type: 'tool_result';
+      toolUseId: string;
+      text: string;
+      isError: boolean;
+      outcome?: 'blocked' | 'denied';
+    }
+  | { type: 'notice'; level: NoticeLevel; text: string }
+  | { type: 'compact'; text: string }
+  | {
+      type: 'result';
+      result: {
+        costUsd?: number;
+        durationMs?: number;
+        turns?: number;
+        inputTokens?: number;
+        outputTokens?: number;
+        isError: boolean;
+      };
+    }
+  | { type: 'tools_cancelled'; ids: string[] }
+);
+
+export type NoticeLevel = 'blocked' | 'reminder' | 'notice' | 'denied' | 'usage-limit' | 'info';
+
+/** The one message typed ahead while Claude works (`images` is how many it carries). */
+export interface QueuedMessage {
+  id: number;
+  text: string;
+  images: number;
 }
 
 /** An image on the wire: base64 with no `data:` prefix. */
@@ -702,12 +761,17 @@ export interface ChatsResponse {
 }
 
 /**
- * GET /api/chats/<id>. `history` is the server's reading of Claude's session file; its entry shape
- * is not in the API table, so it stays `unknown` and is normalized in pages/chat/timeline.ts.
+ * GET /api/chats/<id>?limit=200: the chat, the last page of its log, and what the page needs around it. `entries` is
+ * the last `limit` entries by pos; `has_earlier` says there are older ones (GET .../events?before=<pos>).
  */
 export interface ChatDetail {
   chat: ChatSummary;
-  history: unknown[] | null;
+  epoch: string;
+  version: number;
+  entries: ChatEntry[];
+  has_earlier: boolean;
+  queue: QueuedMessage | null;
+  /** Claude's session file could not be read: the log starts empty, the chat can still be continued. */
   unavailable?: boolean;
   /** Whether the repo's tracker can be used in this chat; null when there is nothing to report. */
   ticket?: TicketStatus | null;
@@ -725,10 +789,37 @@ export interface TicketStatus {
   status: TrackerConnection;
 }
 
+/** GET .../chats/<id>/events?since=<version>&epoch=<epoch> (410 `gap` when the client has to refetch the page). */
+export interface ChatCatchUp {
+  entries: ChatEntry[];
+  version: number;
+  busy: boolean;
+  busySince: string | null;
+  ended: boolean;
+  prompts: PromptEvent[];
+  queue: QueuedMessage | null;
+}
+
+/** GET .../chats/<id>/events?before=<pos>&limit=200. */
+export interface ChatEarlier {
+  entries: ChatEntry[];
+  hasEarlier: boolean;
+}
+
+/** PUT .../chats/<id>/queue. `sent`: the chat was idle, so the message went out at once. */
+export interface QueueResponse {
+  queued: boolean;
+  sent: boolean;
+  queue: QueuedMessage | null;
+}
+
 export interface PromptAnswer {
-  decision: 'allow' | 'deny';
+  /** allow once, allow for this chat, always allow in this repo (settings.local.json), or deny. */
+  decision: 'allow' | 'allow_chat' | 'allow_repo' | 'deny';
   /** AskUserQuestion: { [question text]: label }, multi-select labels joined by ", ". */
   answers?: Record<string, string>;
+  /** decision `deny`: what to tell Claude. */
+  message?: string;
 }
 
 export interface PromptEvent extends Partial<RepoTagged> {
@@ -737,6 +828,10 @@ export interface PromptEvent extends Partial<RepoTagged> {
   tool: string;
   input: unknown;
   expiresAt: number | string;
+  /** Whether "Allow for this chat" can be offered with this Claude Code. */
+  allowForChat?: boolean;
+  /** What options 2 and 3 would remember (`Bash(git status:*)`, `Edit`); null when there is nothing to remember. */
+  rule?: string | null;
 }
 
 export interface PromptResolvedEvent extends Partial<RepoTagged> {

@@ -1,4 +1,5 @@
-// Chat API handlers (served under /api/repos/:repoId): GET/POST /api/chats, GET /api/chats/<id>, <id>/message, /stop, /interrupt, /kill, /continue, plus
+// Chat API handlers (served under /api/repos/:repoId): GET/POST /api/chats, GET /api/chats/<id>, <id>/message, /stop, /interrupt, /kill, /continue,
+// <id>/events (catch-up and older entries), <id>/images/<ref>, <id>/queue (PUT, DELETE), plus
 // /api/chat/commands, /api/chat/controls and /api/trust.
 // Node 20+, no dependencies.
 import { MIN_CLAUDE_VERSION, claudeHealth } from './claude.mjs';
@@ -11,7 +12,8 @@ import { sameStage } from '../../templates/shipline/bin/lib.mjs';
 import { chatTasks } from './tasks.mjs';
 import { ticketStatus } from './tracker.mjs';
 import { trustRepo } from './trust.mjs';
-import { readHistory } from './transcript.mjs';
+import { DEFAULT_PAGE } from './chat-log.mjs';
+import { readTranscriptImage } from './transcript.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -39,6 +41,28 @@ function parseImages(images) {
     if ((data.length / 4) * 3 - pad > MAX_IMAGE_BYTES) throw badImage(`${at}: larger than 5 MB`);
     return { media_type: img.media_type, data };
   });
+}
+
+const PAGE_MAX = 1000;
+
+// ?limit=: a positive integer up to PAGE_MAX, default 200.
+function pageLimit(url) {
+  const raw = url && url.searchParams.get('limit');
+  if (raw === null || raw === undefined) return DEFAULT_PAGE;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1)
+    throw new HttpError(400, 'bad-request', 'limit must be a positive integer');
+  return Math.min(n, PAGE_MAX);
+}
+
+// ?name= as a non-negative integer, or undefined when absent. 400 when it is not one.
+function intParam(url, name) {
+  const raw = url.searchParams.get(name);
+  if (raw === null) return undefined;
+  const n = Number(raw);
+  if (raw === '' || !Number.isInteger(n) || n < 0)
+    throw new HttpError(400, 'bad-request', `${name} must be a non-negative integer`);
+  return n;
 }
 
 // A chat counts as active only when this server runs it, or another live server's lock names it.
@@ -117,10 +141,13 @@ export function routes(app) {
     {
       method: 'GET',
       path: '/api/chats/:id',
-      handler: async ({ params }) => {
+      handler: async ({ params, url }) => {
         const chat = withStatus(app, requireChat(app, params.id));
         app.chats.markSeen(chat.id); // opening a chat counts as seeing its error
-        const h = readHistory(root, chat.id);
+        const limit = pageLimit(url);
+        const { log, unavailable } = app.chats.log(chat.id);
+        const entries = log.slice(undefined, limit);
+        const first = entries.length ? entries[0].pos : log.lastPos + 1;
         const init = app.chats.initInfo(chat.id);
         const tasks = chatTasks(app, chat.task_dirs);
         const { cfg } = app.repo.getConfig();
@@ -131,9 +158,86 @@ export function routes(app) {
           atTicketStage: Boolean(stage && sameStage(stage.id, 'ticket')),
           ghCache,
         });
-        return h.unavailable
-          ? { chat, history: null, unavailable: true, ticket, tasks }
-          : { chat, history: h.history, ticket, tasks };
+        return {
+          chat,
+          epoch: log.epoch,
+          version: log.version,
+          entries,
+          // Entries below the in-memory part (or below this page) exist when the first one is not pos 1.
+          has_earlier: first > 1,
+          queue: app.chats.queue(chat.id),
+          ...(unavailable ? { unavailable: true } : {}),
+          ticket,
+          tasks,
+        };
+      },
+    },
+    {
+      // ?since=<version>&epoch=<epoch>: what changed after that version, with the chat's busy/ended state and its
+      // prompts. 410 gap when the client has to refetch the page. ?before=<pos>&limit=: older entries.
+      method: 'GET',
+      path: '/api/chats/:id/events',
+      handler: ({ params, url }) => {
+        const chat = withStatus(app, requireChat(app, params.id));
+        const before = intParam(url, 'before');
+        const since = intParam(url, 'since');
+        if (before !== undefined) return app.chats.earlier(chat.id, before, pageLimit(url));
+        if (since === undefined)
+          throw new HttpError(400, 'bad-request', 'since or before is required');
+        const { log } = app.chats.log(chat.id);
+        const entries = url.searchParams.get('epoch') === log.epoch ? log.since(since) : null;
+        if (!entries) throw new HttpError(410, 'gap', 'Reload the chat: this log has changed.');
+        return {
+          entries,
+          version: log.version,
+          busy: chat.busy === true,
+          busySince: chat.busySince ?? null,
+          ended: chat.status === 'ended',
+          prompts: app.prompts.pendingFor(chat.id),
+          queue: app.chats.queue(chat.id),
+        };
+      },
+    },
+    {
+      // One image of the chat: `t:<message uuid>:<index>` from the transcript, `l:<pos>:<index>` sent live.
+      method: 'GET',
+      path: '/api/chats/:id/images/:ref',
+      handler: ({ params }) => {
+        requireChat(app, params.id);
+        const m = /^([tl]):([^:]+):(\d+)$/.exec(params.ref);
+        if (!m) throw new HttpError(400, 'bad-request', 'Not an image reference');
+        const img =
+          m[1] === 't'
+            ? readTranscriptImage(root, params.id, m[2], Number(m[3]))
+            : app.chats.log(params.id).log.image(params.ref);
+        if (!img) throw new HttpError(404, 'not-found', 'Image no longer available');
+        return img;
+      },
+    },
+    {
+      method: 'PUT',
+      path: '/api/chats/:id/queue',
+      maxBody: MAX_IMAGE_BODY,
+      handler: ({ params, body }) => {
+        app.repo.requireWritable();
+        requireChat(app, params.id);
+        if (!body || typeof body.text !== 'string')
+          throw new HttpError(400, 'bad-request', 'text is required');
+        if (body.id !== undefined && !Number.isInteger(body.id))
+          throw new HttpError(400, 'bad-request', 'id must be an integer');
+        const images = parseImages(body.images);
+        if (!body.text.trim() && images.length === 0)
+          throw new HttpError(400, 'bad-request', 'text is required');
+        return app.chats.setQueue(params.id, { text: body.text, images }, body.id);
+      },
+    },
+    {
+      method: 'DELETE',
+      path: '/api/chats/:id/queue',
+      handler: ({ params, url }) => {
+        requireChat(app, params.id);
+        app.chats.clearQueue(params.id, intParam(url, 'id'));
+        return { ok: true };
       },
     },
     {
@@ -255,10 +359,15 @@ export function routes(app) {
     {
       method: 'POST',
       path: '/api/chats/:id/continue',
-      handler: async ({ params }) => {
+      handler: async ({ params, body }) => {
         requireChat(app, params.id);
         const health = await preflight();
-        await app.chats.resume({ id: params.id, claudeVersion: health.version });
+        // `sendQueued`: the message queued before the chat ended goes out as soon as claude is running again.
+        await app.chats.resume({
+          id: params.id,
+          claudeVersion: health.version,
+          sendQueued: Boolean(body && body.sendQueued === true),
+        });
         return { ok: true };
       },
     },

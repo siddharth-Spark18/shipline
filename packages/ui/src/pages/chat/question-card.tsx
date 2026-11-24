@@ -103,12 +103,7 @@ export function QuestionCard({
       answers: Object.fromEntries(questions.map((q) => [q.question, valueOf(q)])),
     });
 
-  // Keys go to the card, so it takes focus when it appears (unless the user is typing elsewhere).
-  useEffect(() => {
-    const el = document.activeElement;
-    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return;
-    box.current?.focus({ preventScroll: true });
-  }, []);
+  // Keys go to the card; the decision dock gives it focus when it appears (see DecisionDock).
   // Switching tabs can unmount the focused option; keep the keys working.
   useEffect(() => {
     const el = document.activeElement;
@@ -359,6 +354,7 @@ export function QuestionCard({
     <div
       ref={box}
       tabIndex={-1}
+      data-question-card=""
       onKeyDownCapture={onKeyDownCapture}
       onKeyDown={onKeyDown}
       className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-primary/40"

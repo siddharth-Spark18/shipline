@@ -32,6 +32,10 @@
 //                              notifications/initialized / tools/list, then tools/call approve with <json> as the
 //                              arguments. The parsed answer is appended to $FAKE_CLAUDE_RELAY_OUT and a stream-json
 //                              tool_result for arguments.tool_use_id is emitted (is_error for a deny).
+//   An `interrupt` control_request (chat reliability, C1.5) is answered with success; the fake then writes the
+//   `[Request interrupted by user]` user event and an error_during_execution result, ends the turn at once (a
+//   @wait-release stops waiting) and skips the rest of the script up to the next @wait-user.
+//   {{UUID}} in a stream line becomes a fresh uuid (the live events a real claude writes carry one).
 //   {{MCP_SERVERS}} in a stream line becomes $FAKE_CLAUDE_MCP_SERVERS (raw JSON), or the 2026-11-05 capture's list
 //   (the claude.ai Atlassian connector at needs-auth) when unset. {{MODEL}} is the resolved --model (or set_model)
 //   value, default claude-opus-5-5; {{PERMISSION_MODE}} is the current mode in control terms (manual -> default).
@@ -57,6 +61,7 @@
 //   { request_id, request, results } (results = how many result events had been emitted when it arrived).
 //   Exits 0 when stdin closes.
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
@@ -122,6 +127,7 @@ const record = (obj) => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let resultsEmitted = 0;
+let interrupted = false; // an interrupt was answered: the turn is over, the script skips to the next @wait-user
 let lastInit = null; // the last system/init written, re-sent (with the new model) after set_model
 const out = (obj) => {
   const line = typeof obj === 'string' ? obj : JSON.stringify(obj);
@@ -138,6 +144,7 @@ const out = (obj) => {
 // arguments are plain text and get the raw path.
 const fill = (s, json = false) =>
   s
+    .replaceAll('{{UUID}}', () => randomUUID())
     .replaceAll('{{SESSION_ID}}', sessionId)
     .replaceAll('{{OTHER_SESSION_ID}}', OTHER_SESSION_ID)
     .replaceAll('{{MCP_SERVERS}}', process.env.FAKE_CLAUDE_MCP_SERVERS || CAPTURED_MCP_SERVERS)
@@ -177,7 +184,7 @@ const nextUser = () => (userQueue.length ? Promise.resolve(userQueue.shift()) : 
 
 function defaultTurn(msg) {
   const text = msg.message && Array.isArray(msg.message.content) ? msg.message.content.map((b) => b.text).join('') : '';
-  out({ type: 'assistant', session_id: sessionId, message: { role: 'assistant', content: [{ type: 'text', text: `echo: ${text}` }] } });
+  out({ type: 'assistant', uuid: randomUUID(), session_id: sessionId, message: { role: 'assistant', content: [{ type: 'text', text: `echo: ${text}` }] } });
   out({ type: 'result', subtype: 'success', is_error: false, session_id: sessionId, result: `echo: ${text}`, total_cost_usd: 0.001 });
 }
 
@@ -242,6 +249,8 @@ function controlAnswer(request) {
         ],
       };
     }
+    case 'interrupt':
+      return {};
     case 'set_model':
       current.model = resolveModel(request.model);
       return { model: current.model };
@@ -271,6 +280,11 @@ function control(msg) {
     return;
   }
   out({ type: 'control_response', response: { subtype: 'success', request_id: msg.request_id, response: answer } });
+  if (request.subtype === 'interrupt') {
+    interrupted = true;
+    out({ type: 'user', uuid: randomUUID(), session_id: sessionId, message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] } });
+    out({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: sessionId, duration_ms: 10, num_turns: 1, total_cost_usd: 0 });
+  }
   if (request.subtype === 'set_model') {
     out({
       type: 'user',
@@ -357,6 +371,8 @@ async function main() {
   for (const raw of lines) {
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
+    const isUserWait = line === '@wait-user';
+    if (interrupted && !isUserWait) continue;
     if (!line.startsWith('@')) {
       out(fill(line, true));
       continue;
@@ -366,6 +382,7 @@ async function main() {
     const rest = sp < 0 ? '' : fill(line.slice(sp + 1));
     switch (cmd) {
       case '@wait-user':
+        interrupted = false;
         await nextUser();
         break;
       case '@raw':
@@ -378,7 +395,7 @@ async function main() {
         await sleep(Number(rest));
         break;
       case '@wait-release':
-        while (!existsSync(process.env.FAKE_CLAUDE_RELEASE)) await sleep(20);
+        while (!interrupted && !existsSync(process.env.FAKE_CLAUDE_RELEASE)) await sleep(20);
         break;
       case '@exit':
         // Let stdout/stderr drain first.

@@ -33,6 +33,7 @@ import {
 import { FORBIDDEN_FLAGS, MIN_CLAUDE_VERSION, PERMISSION_TOOL, buildArgs } from '../../src/ui/claude.mjs';
 import { guardDenial } from '../../src/ui/stream.mjs';
 import { initLog } from '../../src/ui/log.mjs';
+import { addChat } from '../../src/ui/sessions.mjs';
 
 const RELAY = path.join(CLI_ROOT, 'src', 'ui', 'relay.mjs');
 const OTHER_SESSION_ID = '00000000-0000-4000-8000-0000000000ff'; // fake-claude.mjs {{OTHER_SESSION_ID}}
@@ -1227,5 +1228,432 @@ describe('chat controls: model, effort, permission mode, context', () => {
     }
     const unknown = await setControls({ chat: '00000000-0000-4000-8000-00000000cafe', effort: 'low' });
     assert.equal(unknown.status, 404);
+  });
+});
+
+// ---------- chat reliability (C1.1 - C1.5, C1.9): the ordered log, catch-up, echo, cancelled tools, interrupt, queue ----------
+
+const entriesOf = (e) => e.data.entries || [];
+const page = (id, q = '') => api(ui, 'GET', `/api/chats/${id}${q}`);
+const events = (id, q) => api(ui, 'GET', `/api/chats/${id}/events?${q}`);
+const userTexts = (entries) => entries.filter((e) => e.type === 'user').map((e) => e.text);
+const sendMessage = (id, text, extra = {}) => api(ui, 'POST', `/api/chats/${id}/message`, { body: { text, ...extra } });
+const isUserEcho = (id, text) => (e) => isChat(id, 'user')(e) && entriesOf(e)[0].text === text;
+
+describe('chat log over the API (C1.1, C1.2)', () => {
+  test('a message sent from any tab is echoed to every tab, in order; repeated identical messages all stay', async () => {
+    fake.unrelease();
+    fake.script('busy-turn');
+    const tabB = await openEvents(ui);
+    const id = await startChat(ui, ev, 'go');
+    try {
+      const first = await tabB.waitFor(isUserEcho(id, 'go'), 5000);
+      assert.deepEqual(entriesOf(first).map((e) => [e.type, e.text, e.from, e.pos]), [['user', 'go', 'composer', 1]]);
+      assert.ok(entriesOf(first)[0].ver >= 1);
+      fake.release();
+      await ev.waitFor(isEventType(id, 'result'), 10_000);
+      for (let i = 0; i < 2; i++) {
+        const markA = ev.mark();
+        const markB = tabB.mark();
+        assert.equal((await sendMessage(id, 'yes')).status, 200);
+        const a = await ev.waitFor(isUserEcho(id, 'yes'), 5000, markA);
+        const b = await tabB.waitFor(isUserEcho(id, 'yes'), 5000, markB);
+        assert.deepEqual(entriesOf(a), entriesOf(b), 'the same entry reaches both tabs');
+        await ev.waitFor(isEventType(id, 'result'), 10_000, markA);
+      }
+      const r = await page(id);
+      assert.deepEqual(userTexts(r.json.entries), ['go', 'yes', 'yes']);
+      const order = r.json.entries.map((e) => `${e.type}:${e.text ?? ''}`);
+      assert.deepEqual(
+        order.filter((o) => o.startsWith('user') || o.startsWith('text')),
+        ['user:go', 'text:Working on it.', 'user:yes', 'text:echo: yes', 'user:yes', 'text:echo: yes'],
+      );
+      const pos = r.json.entries.map((e) => e.pos);
+      assert.deepEqual(pos, pos.map((_, i) => pos[0] + i), 'pos is 1-based and contiguous');
+      assert.equal(r.json.version, r.json.entries[r.json.entries.length - 1].ver);
+    } finally {
+      tabB.close();
+      fake.unrelease();
+      await stopChat(ui, ev, id);
+    }
+  });
+
+  test('live events carry the epoch and entries; the SSE id is <repo>:<chat>:<epoch>:<version>', async () => {
+    fake.unrelease();
+    fake.script('log-grow');
+    const since = ev.mark();
+    const id = await startChat(ui, ev);
+    try {
+      const delta = await ev.waitFor((e) => isChat(id, 'event')(e) && entriesOf(e).some((x) => x.delta === 'Hel'), 5000, since);
+      const epoch = (await page(id)).json.epoch;
+      assert.equal(delta.data.epoch, epoch);
+      const last = entriesOf(delta).at(-1);
+      assert.equal(delta.id, `${ui.repoId}:${id}:${epoch}:${last.ver}`);
+      assert.deepEqual(Object.keys(last).sort(), ['delta', 'pos', 'type', 'ver']);
+      // The raw event is still there for existing readers.
+      assert.equal(delta.data.event.type, 'stream_event');
+    } finally {
+      fake.release();
+      await ev.waitFor(isEventType(id, 'result'), 10_000, since);
+      fake.unrelease();
+      await stopChat(ui, ev, id);
+    }
+  });
+
+  test('catch-up: since=<version> returns created and updated entries (a block that grew comes back in full); busy, ended and prompts come from the server', async () => {
+    fake.unrelease();
+    fake.script('log-grow');
+    const since = ev.mark();
+    const id = await startChat(ui, ev);
+    try {
+      await ev.waitFor((e) => isChat(id, 'event')(e) && entriesOf(e).some((x) => x.delta === 'Hel'), 5000, since);
+      const p = await page(id);
+      const growing = p.json.entries.find((e) => e.type === 'text');
+      assert.deepEqual([growing.text, growing.streaming], ['Hel', true]);
+      fake.release();
+      await ev.waitFor(isEventType(id, 'result'), 10_000, since);
+      const c = await events(id, `since=${p.json.version}&epoch=${p.json.epoch}`);
+      assert.equal(c.status, 200, c.text);
+      const byType = Object.fromEntries(c.json.entries.map((e) => [e.type, e]));
+      assert.equal(byType.text.pos, growing.pos, 'the same entry, updated');
+      assert.equal(byType.text.text, 'Hello there.', 'full current content, not a delta');
+      assert.equal('streaming' in byType.text, false);
+      assert.ok(byType.text.ver > p.json.version);
+      assert.equal(byType.tool_use.id, 'toolu_open1');
+      assert.ok(byType.result && byType.tools_cancelled);
+      assert.deepEqual(byType.tools_cancelled.ids, ['toolu_open1']);
+      assert.ok(c.json.entries.every((e) => e.ver > p.json.version));
+      assert.deepEqual([c.json.busy, c.json.ended, c.json.prompts, c.json.queue], [false, false, [], null]);
+      assert.equal(c.json.version, (await page(id)).json.version);
+      // Up to date: nothing, same version.
+      const none = await events(id, `since=${c.json.version}&epoch=${p.json.epoch}`);
+      assert.deepEqual(none.json.entries, []);
+    } finally {
+      fake.unrelease();
+      await stopChat(ui, ev, id);
+    }
+  });
+
+  test('catch-up: another epoch, or a version ahead of the log, is 410 gap', async () => {
+    fake.script('normal-turn');
+    const since = ev.mark();
+    const id = await startChat(ui, ev);
+    try {
+      await ev.waitFor(isEventType(id, 'result'), 10_000, since);
+      const p = (await page(id)).json;
+      for (const q of [`since=${p.version}&epoch=0000000000aa`, `since=${p.version}`, `since=${p.version + 1}&epoch=${p.epoch}`]) {
+        const r = await events(id, q);
+        assert.equal(r.status, 410, q);
+        assert.equal(r.json.error.code, 'gap', q);
+      }
+      assert.equal((await events(id, `since=abc&epoch=${p.epoch}`)).status, 400);
+      assert.equal((await events(id, `since=-1&epoch=${p.epoch}`)).status, 400);
+      assert.equal((await events(id, `epoch=${p.epoch}`)).status, 400);
+    } finally {
+      await stopChat(ui, ev, id);
+    }
+  });
+
+  test('a resumed chat: history and live overlap by uuid only; the log is rebuilt (new epoch) and an old catch-up is a gap', async () => {
+    const id = '5e5e5e5e-0000-4000-8000-000000000001';
+    const projectDir = path.join(fake.claudeConfig, 'projects', dir.replace(/[^a-zA-Z0-9]/g, '-'));
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      path.join(projectDir, `${id}.jsonl`),
+      [
+        { type: 'user', uuid: 't-1', message: { role: 'user', content: 'earlier question' } },
+        { type: 'assistant', uuid: 'ev-o1', message: { role: 'assistant', content: [{ type: 'text', text: 'Already in history' }] } },
+      ]
+        .map((l) => JSON.stringify(l))
+        .join('\n') + '\n',
+    );
+    process.env.SHIPLINE_HOME = ui.home;
+    addChat(dir, { id, title: 'old', created: '2026-11-01T00:00:00.000Z', last_active: '2026-11-01T00:00:00.000Z', task_dir: null, status: 'ended' });
+    const before = (await page(id)).json;
+    assert.deepEqual(before.entries.map((e) => e.text), ['earlier question', 'Already in history']);
+    fake.script('overlap-turn');
+    const since = ev.mark();
+    assert.equal((await api(ui, 'POST', `/api/chats/${id}/continue`)).status, 200);
+    try {
+      assert.equal((await sendMessage(id, 'again')).status, 200);
+      await ev.waitFor(isEventType(id, 'result'), 10_000, since);
+      const after = (await page(id)).json;
+      assert.notEqual(after.epoch, before.epoch);
+      assert.deepEqual(
+        after.entries.filter((e) => e.type === 'user' || e.type === 'text').map((e) => e.text),
+        ['earlier question', 'Already in history', 'again', 'New reply', 'No uuid, never deduped'],
+      );
+      assert.equal((await events(id, `since=${before.version}&epoch=${before.epoch}`)).status, 410);
+    } finally {
+      await stopChat(ui, ev, id);
+    }
+  });
+
+  test('a message with images: the echo carries refs, the image route serves them, the page keeps them', async () => {
+    fake.script('normal-turn');
+    const since = ev.mark();
+    const id = await startChat(ui, ev);
+    try {
+      await ev.waitFor(isEventType(id, 'result'), 10_000, since);
+      const m = ev.mark();
+      const png = { media_type: 'image/png', data: 'iVBORw0KGgo=' };
+      assert.equal((await sendMessage(id, 'look', { images: [png, { media_type: 'image/gif', data: 'R0lGODlhAQABAA==' }] })).status, 200);
+      const echo = await ev.waitFor(isUserEcho(id, 'look'), 5000, m);
+      const entry = entriesOf(echo)[0];
+      assert.deepEqual(entry.images, [`l:${entry.pos}:0`, `l:${entry.pos}:1`]);
+      assert.equal(JSON.stringify(echo.data).includes(png.data), false, 'image data is never broadcast');
+      const img = await api(ui, 'GET', `/api/chats/${id}/images/${encodeURIComponent(entry.images[0])}`);
+      assert.deepEqual(img.json, png);
+      const p = (await page(id)).json;
+      assert.deepEqual(p.entries.find((e) => e.text === 'look').images, entry.images);
+      await ev.waitFor(isEventType(id, 'result'), 10_000, m);
+    } finally {
+      await stopChat(ui, ev, id);
+    }
+  });
+});
+
+describe('cancelled tool calls (C1.4)', () => {
+  const cancelled = (id) => isChat(id, 'tools_cancelled');
+
+  test('a turn that ends with a tool call that has no result: the result step carries tools_cancelled with its id', async () => {
+    fake.unrelease();
+    fake.script('log-grow');
+    const since = ev.mark();
+    const id = await startChat(ui, ev);
+    try {
+      fake.release();
+      const r = await ev.waitFor(isEventType(id, 'result'), 10_000, since);
+      assert.deepEqual(entriesOf(r).map((e) => e.type), ['result', 'tools_cancelled']);
+      assert.deepEqual(entriesOf(r)[1].ids, ['toolu_open1']);
+    } finally {
+      fake.unrelease();
+      await stopChat(ui, ev, id);
+    }
+  });
+
+  test('End chat: tools_cancelled comes before ended; the page has it; the process group is still killed', async () => {
+    fake.script('open-tool-hang');
+    const since = ev.mark();
+    const id = await startChat(ui, ev);
+    await ev.waitFor((e) => isChat(id, 'event')(e) && entriesOf(e).some((x) => x.type === 'tool_use'), 5000, since);
+    const pid = fake.runs()[0].pid;
+    const m = ev.mark();
+    assert.equal((await api(ui, 'POST', `/api/chats/${id}/stop`)).status, 200);
+    const c = await ev.waitFor(cancelled(id), 10_000, m);
+    assert.deepEqual(c.data.ids, ['toolu_hang1']);
+    assert.deepEqual(entriesOf(c).map((e) => e.type), ['tools_cancelled']);
+    const end = await ev.waitFor(isChat(id, 'ended'), 10_000, m);
+    assert.ok(ev.events.indexOf(c) < ev.events.indexOf(end));
+    assert.equal((await page(id)).json.entries.filter((e) => e.type === 'tools_cancelled').length, 1);
+    await waitUntil(() => !pidAlive(pid), 10_000);
+  });
+
+  test('a crash: tools_cancelled, then the fatal event', async () => {
+    fake.script('open-tool-crash');
+    const since = ev.mark();
+    const id = await startChat(ui, ev);
+    const c = await ev.waitFor(cancelled(id), 10_000, since);
+    assert.deepEqual(c.data.ids, ['toolu_crash1']);
+    const end = await ev.waitFor(isChat(id, 'fatal'), 10_000, since);
+    assert.ok(ev.events.indexOf(c) < ev.events.indexOf(end));
+    assert.equal(end.data.code, 3);
+  });
+});
+
+describe('interrupt and the queue (C1.5, C1.9)', () => {
+  const stdinFile = () => path.join(fake.scratch, 'stdin.jsonl');
+  const stdinTexts = () =>
+    existsSync(stdinFile())
+      ? readFileSync(stdinFile(), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).message.content.map((b) => b.text).join(''))
+      : [];
+  const put = (id, text, extra = {}) => api(ui, 'PUT', `/api/chats/${id}/queue`, { body: { text, ...extra } });
+  const del = (id, q = '') => api(ui, 'DELETE', `/api/chats/${id}/queue${q}`);
+  const isQueue = (id, pred = () => true) => (e) => isChat(id, 'queue')(e) && pred(e.data.queue);
+
+  // A busy chat (busy-turn waits for the release file); `body` runs with its id, and the chat is stopped after.
+  async function withBusyChat(body) {
+    rmSync(stdinFile(), { force: true });
+    fake.unrelease();
+    fake.script('busy-turn', { FAKE_CLAUDE_STDIN_OUT: stdinFile() });
+    const id = await startChat(ui, ev, 'first');
+    try {
+      await body(id);
+    } finally {
+      fake.unrelease();
+      await stopChat(ui, ev, id);
+    }
+  }
+
+  test('interrupt: 409 not-busy when idle; while busy it ends the turn (error result) and the chat stays active', async () => {
+    fake.script('normal-turn');
+    const since = ev.mark();
+    const idle = await startChat(ui, ev);
+    try {
+      await ev.waitFor(isEventType(idle, 'result'), 10_000, since);
+      const r = await api(ui, 'POST', `/api/chats/${idle}/interrupt`);
+      assert.equal(r.status, 409);
+      assert.equal(r.json.error.code, 'not-busy');
+    } finally {
+      await stopChat(ui, ev, idle);
+    }
+    await withBusyChat(async (id) => {
+      const m = ev.mark();
+      assert.equal((await api(ui, 'POST', `/api/chats/${id}/interrupt`)).status, 200);
+      const res = await ev.waitFor(isEventType(id, 'result'), 10_000, m);
+      assert.equal(res.data.event.subtype, 'error_during_execution');
+      const p = (await page(id)).json;
+      assert.equal(p.chat.status, 'active');
+      assert.ok(p.entries.some((e) => e.type === 'notice' && e.text === 'Interrupted'));
+      assert.equal(p.entries.some((e) => e.type === 'notice' && e.text.startsWith('Turn ended')), false, 'nothing more after the interrupt');
+    });
+  });
+
+  test('PUT while busy stores the message and broadcasts it; another PUT replaces it; DELETE clears it', async () => {
+    await withBusyChat(async (id) => {
+      const m = ev.mark();
+      const a = await put(id, 'then do B');
+      assert.equal(a.status, 200, a.text);
+      assert.deepEqual([a.json.queued, a.json.sent, a.json.queue.text, a.json.queue.images], [true, false, 'then do B', 0]);
+      const e1 = await ev.waitFor(isQueue(id, (q) => q && q.text === 'then do B'), 5000, m);
+      assert.equal(e1.data.queue.id, a.json.queue.id);
+      assert.deepEqual((await page(id)).json.queue, a.json.queue);
+      assert.deepEqual(stdinTexts(), ['first'], 'nothing was sent yet');
+      // Edit: replaces it (expecting the id being edited).
+      const b = await put(id, 'then do C', { id: a.json.queue.id });
+      assert.equal(b.status, 200, b.text);
+      assert.notEqual(b.json.queue.id, a.json.queue.id);
+      assert.equal((await page(id)).json.queue.text, 'then do C');
+      const m2 = ev.mark();
+      assert.equal((await del(id, `?id=${b.json.queue.id}`)).status, 200);
+      await ev.waitFor(isQueue(id, (q) => q === null), 5000, m2);
+      assert.equal((await page(id)).json.queue, null);
+      assert.equal((await del(id)).status, 200, 'clearing nothing is fine');
+      // Attachments count.
+      const withImg = await put(id, 'see this', { images: [{ media_type: 'image/png', data: 'iVBORw0KGgo=' }] });
+      assert.equal(withImg.json.queue.images, 1);
+    });
+  });
+
+  test('the queued message is sent after the turn\'s result: queue cleared, `user` echo from the queue, one stdin write', async () => {
+    await withBusyChat(async (id) => {
+      assert.equal((await put(id, 'next please')).status, 200);
+      const m = ev.mark();
+      fake.release();
+      const echo = await ev.waitFor(isUserEcho(id, 'next please'), 10_000, m);
+      assert.equal(entriesOf(echo)[0].from, 'queue');
+      const cleared = ev.events.slice(m).findIndex(isQueue(id, (q) => q === null));
+      assert.ok(cleared >= 0 && cleared < ev.events.slice(m).indexOf(echo), 'the queue is cleared before the echo');
+      const done = await ev.waitFor((e) => isEventType(id, 'result')(e) && e.data.event.result === 'echo: next please', 10_000, m);
+      assert.ok(done);
+      assert.deepEqual(stdinTexts(), ['first', 'next please']);
+      assert.equal((await page(id)).json.queue, null);
+    });
+  });
+
+  test('interrupt, then the result: the queued message (the redirect) is sent', async () => {
+    await withBusyChat(async (id) => {
+      assert.equal((await put(id, 'do this instead')).status, 200);
+      const m = ev.mark();
+      assert.equal((await api(ui, 'POST', `/api/chats/${id}/interrupt`)).status, 200);
+      const echo = await ev.waitFor(isUserEcho(id, 'do this instead'), 10_000, m);
+      assert.equal(entriesOf(echo)[0].from, 'queue');
+      await ev.waitFor((e) => isEventType(id, 'result')(e) && e.data.event.result === 'echo: do this instead', 10_000, m);
+      assert.deepEqual(stdinTexts(), ['first', 'do this instead']);
+    });
+  });
+
+  test('an edit that arrives after the message was sent is 409 queue-sent (PUT and DELETE)', async () => {
+    await withBusyChat(async (id) => {
+      const a = await put(id, 'queued once');
+      const m = ev.mark();
+      fake.release();
+      await ev.waitFor(isUserEcho(id, 'queued once'), 10_000, m);
+      const late = await put(id, 'edited too late', { id: a.json.queue.id });
+      assert.equal(late.status, 409);
+      assert.equal(late.json.error.code, 'queue-sent');
+      const lateDel = await del(id, `?id=${a.json.queue.id}`);
+      assert.equal(lateDel.status, 409);
+      assert.equal(lateDel.json.error.code, 'queue-sent');
+      await ev.waitFor(isEventType(id, 'result'), 10_000, m);
+    });
+  });
+
+  test('PUT when the chat is idle sends it at once (no queue)', async () => {
+    fake.script('normal-turn', { FAKE_CLAUDE_STDIN_OUT: stdinFile() });
+    rmSync(stdinFile(), { force: true });
+    const since = ev.mark();
+    const id = await startChat(ui, ev);
+    try {
+      await ev.waitFor(isEventType(id, 'result'), 10_000, since);
+      const m = ev.mark();
+      const r = await put(id, 'straight away');
+      assert.deepEqual([r.status, r.json.queued, r.json.sent, r.json.queue], [200, false, true, null]);
+      const echo = await ev.waitFor(isUserEcho(id, 'straight away'), 5000, m);
+      assert.equal(entriesOf(echo)[0].from, 'composer');
+    } finally {
+      await stopChat(ui, ev, id);
+    }
+  });
+
+  test('a chat that ends with a queued message keeps it (not sent); it can be discarded; PUT on an ended chat is 409 chat-ended', async () => {
+    rmSync(stdinFile(), { force: true });
+    fake.unrelease();
+    fake.script('busy-turn', { FAKE_CLAUDE_STDIN_OUT: stdinFile() });
+    const id = await startChat(ui, ev, 'first');
+    await put(id, 'never sent');
+    await stopChat(ui, ev, id);
+    const p = (await page(id)).json;
+    assert.equal(p.chat.status, 'ended');
+    assert.equal(p.queue.text, 'never sent');
+    assert.deepEqual(stdinTexts(), ['first']);
+    const r = await put(id, 'too late');
+    assert.equal(r.status, 409);
+    assert.equal(r.json.error.code, 'chat-ended');
+    assert.equal((await del(id)).status, 200);
+    assert.equal((await page(id)).json.queue, null);
+  });
+
+  test('continue with sendQueued sends the message the ended chat was left with (images kept); a plain continue does not', async () => {
+    fake.unrelease();
+    fake.script('busy-turn', { FAKE_CLAUDE_STDIN_OUT: stdinFile() });
+    rmSync(stdinFile(), { force: true });
+    const id = await startChat(ui, ev, 'first');
+    const png = { media_type: 'image/png', data: 'iVBORw0KGgo=' };
+    assert.equal((await put(id, 'left over', { images: [png] })).status, 200);
+    await stopChat(ui, ev, id);
+    // A plain continue leaves it queued.
+    fake.script('normal-turn', { FAKE_CLAUDE_STDIN_OUT: stdinFile() });
+    assert.equal((await api(ui, 'POST', `/api/chats/${id}/continue`)).status, 200);
+    assert.equal((await page(id)).json.queue.text, 'left over');
+    await stopChat(ui, ev, id);
+    // Continue and send.
+    fake.script('normal-turn', { FAKE_CLAUDE_STDIN_OUT: stdinFile() });
+    rmSync(stdinFile(), { force: true });
+    const m = ev.mark();
+    assert.equal((await api(ui, 'POST', `/api/chats/${id}/continue`, { body: { sendQueued: true } })).status, 200);
+    try {
+      const echo = await ev.waitFor(isUserEcho(id, 'left over'), 10_000, m);
+      assert.equal(entriesOf(echo)[0].from, 'queue');
+      assert.equal(entriesOf(echo)[0].images.length, 1);
+      await ev.waitFor(isEventType(id, 'result'), 10_000, m);
+      const sent = readFileSync(stdinFile(), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+      assert.deepEqual(sent[0].message.content.map((b) => b.type), ['image', 'text']);
+      assert.equal((await page(id)).json.queue, null);
+    } finally {
+      await stopChat(ui, ev, id);
+    }
+  });
+
+  test('bad PUT bodies are 400; an unknown chat is 404; POST message keeps its 409 busy', async () => {
+    await withBusyChat(async (id) => {
+      for (const body of [{}, { text: 5 }, { text: '   ' }, { text: 'x', id: 'a' }, { text: 'x', images: 'no' }]) {
+        const r = await api(ui, 'PUT', `/api/chats/${id}/queue`, { body });
+        assert.equal(r.status, 400, JSON.stringify(body));
+      }
+      assert.equal((await put('11111111-1111-4111-8111-111111111111', 'x')).status, 404);
+      assert.equal((await sendMessage(id, 'direct')).json.error.code, 'busy');
+      assert.equal((await put(id, 'x', { id: 7 })).json.error.code, 'queue-sent', 'nothing queued under that id');
+    });
   });
 });

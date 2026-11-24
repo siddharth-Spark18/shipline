@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import {
   BanIcon,
   BellIcon,
+  BellRingIcon,
   CopyIcon,
   FilePenLineIcon,
   GaugeIcon,
@@ -10,13 +11,21 @@ import {
   OctagonAlertIcon,
   PlugZapIcon,
   ShieldAlertIcon,
+  ShrinkIcon,
 } from 'lucide-react';
 import { cn } from 'cn';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import type { TicketStatus, WorkflowDraftInfo } from '@/lib/types';
+import {
+  dismissBanner,
+  enableNotifications,
+  notificationsSupported,
+  useNotifyState,
+} from '@/lib/notifications';
+import type { QueuedMessage, TicketStatus, WorkflowDraftInfo } from '@/lib/types';
 import type { FatalInfo } from '@/pages/chat/chat-store';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DraftReview } from '@/pages/setup/draft-review';
 import type { ChatResult, NoticeLevel } from '@/pages/chat/timeline';
 
@@ -285,5 +294,127 @@ export function DraftReadyNotice({
         </Alert>
       ))}
     </>
+  );
+}
+
+/** A compact summary from history: collapsed, so a long summary does not push the conversation away. */
+export function CompactedNotice({ text }: { text: string }) {
+  return (
+    <Collapsible className="rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+      <CollapsibleTrigger className="flex w-full items-center gap-2 text-left text-muted-foreground">
+        <ShrinkIcon className="size-4 shrink-0" aria-hidden />
+        <span className="flex-1">Conversation compacted</span>
+        <span className="text-xs underline-offset-2 hover:underline">Show summary</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="pt-2 text-xs whitespace-pre-wrap break-words text-muted-foreground">
+        {text}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+/** The message typed ahead, above the composer: every tab shows it, with Edit and Cancel. */
+export function QueuedNotice({
+  queue,
+  onEdit,
+  onCancel,
+}: {
+  queue: QueuedMessage;
+  /** Left out when the message carries attachments (they can't be put back in the box). */
+  onEdit?: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      className="flex items-center gap-2 rounded-md border border-dashed px-3 py-1.5 text-sm"
+      role="status"
+    >
+      <span className="min-w-0 flex-1 truncate" title={queue.text}>
+        <span className="text-muted-foreground">Queued: </span>
+        {queue.text || '(attachments)'}
+        {queue.images > 0 && (
+          <span className="text-muted-foreground">
+            {' '}
+            · {queue.images} image{queue.images > 1 ? 's' : ''}
+          </span>
+        )}
+      </span>
+      {onEdit && (
+        <Button variant="ghost" size="xs" onClick={onEdit}>
+          Edit
+        </Button>
+      )}
+      <Button variant="ghost" size="xs" onClick={onCancel}>
+        Cancel
+      </Button>
+    </div>
+  );
+}
+
+/** The chat ended with a message still queued: send it by resuming, or drop it. */
+export function NotSentNotice({
+  queue,
+  busy,
+  onResumeAndSend,
+  onDiscard,
+}: {
+  queue: QueuedMessage;
+  busy: boolean;
+  onResumeAndSend: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <Alert className="border-l-4 border-l-notice-reminder py-2">
+      <InfoIcon />
+      <AlertTitle>Not sent: the chat ended</AlertTitle>
+      <AlertDescription className="flex flex-col gap-2">
+        <p className="break-words">{queue.text || '(attachments)'}</p>
+        <div className="flex gap-2">
+          <Button size="xs" disabled={busy} onClick={onResumeAndSend}>
+            Resume and send
+          </Button>
+          <Button size="xs" variant="outline" disabled={busy} onClick={onDiscard}>
+            Discard
+          </Button>
+        </div>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+/**
+ * Shown above the composer while a prompt waits: asks once for permission to notify (it needs a click), or explains
+ * why there is nothing to turn on. Dismissed for good on this device.
+ */
+export function NotifyBanner() {
+  const { permission, dismissed } = useNotifyState();
+  const unsupported = permission === 'unsupported' || !notificationsSupported();
+  if (dismissed || (!unsupported && permission !== 'default')) return null;
+  return (
+    <Alert className="border-l-4 border-l-notice-reminder py-2">
+      <BellRingIcon />
+      <AlertTitle>
+        {unsupported
+          ? 'Add to Home Screen to get notifications'
+          : 'Turn on notifications to hear when Claude needs you'}
+      </AlertTitle>
+      <AlertDescription className="flex flex-wrap items-center gap-2">
+        <span>
+          {unsupported
+            ? 'This browser has no notifications here. The tab title still shows how many chats wait for you.'
+            : 'A permission prompt or question can wait a long time; this tells you when one arrives.'}
+        </span>
+        <span className="flex gap-2">
+          {!unsupported && (
+            <Button size="xs" onClick={() => void enableNotifications()}>
+              Turn on
+            </Button>
+          )}
+          <Button size="xs" variant="outline" onClick={dismissBanner}>
+            Not now
+          </Button>
+        </span>
+      </AlertDescription>
+    </Alert>
   );
 }

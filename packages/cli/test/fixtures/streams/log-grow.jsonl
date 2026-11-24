@@ -1,0 +1,15 @@
+# NOT A REAL CAPTURE. Hand-made stand-in, read by test/fixtures/fake-claude.mjs (see its header).
+# Chat log tests (chat reliability, C1.1/C1.2/C1.4): a streamed text block that grows after the test has looked at it
+# (it waits for $FAKE_CLAUDE_RELEASE mid-block), its final message (with a uuid), a Bash call that never gets a result,
+# then result.
+@wait-user
+{"type":"system","subtype":"init","session_id":"{{SESSION_ID}}","cwd":"{{CWD}}","model":"fake-model","tools":["Bash","Edit","Write","AskUserQuestion"],"mcp_servers":[{"name":"shipline_ui","status":"connected"}],"permissionMode":"default"}
+{"type":"stream_event","session_id":"{{SESSION_ID}}","event":{"type":"message_start","message":{"id":"msg_g1"}}}
+{"type":"stream_event","session_id":"{{SESSION_ID}}","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}
+{"type":"stream_event","session_id":"{{SESSION_ID}}","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}}
+@wait-release
+{"type":"stream_event","session_id":"{{SESSION_ID}}","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lo"}}}
+{"type":"stream_event","session_id":"{{SESSION_ID}}","event":{"type":"content_block_stop","index":0}}
+{"type":"assistant","uuid":"ev-g1","session_id":"{{SESSION_ID}}","message":{"id":"msg_g1","role":"assistant","content":[{"type":"text","text":"Hello there."}]}}
+{"type":"assistant","uuid":"ev-g2","session_id":"{{SESSION_ID}}","message":{"id":"msg_g2","role":"assistant","content":[{"type":"tool_use","id":"toolu_open1","name":"Bash","input":{"command":"sleep 100"}}]}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"{{SESSION_ID}}","duration_ms":900,"num_turns":1,"result":"Hello there.","total_cost_usd":0.001,"usage":{"input_tokens":5,"output_tokens":7}}

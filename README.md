@@ -110,6 +110,47 @@ reached" are in [Phone access](docs/phone-access.md).
 
 Run `npx @forgeyard/shipline <command> --help` for details, and `npx @forgeyard/shipline@latest upgrade` to update (`@latest` avoids npx's cached older copy). Task data lives in `~/.shipline`, not in your repo.
 
+## FAQ
+
+**What does it add to my repo?** With the defaults (`init --yes`, four workflows): 43 files, about 280 KB.
+- `.shipline/` holds `config.yml`, the workflows, one rules file per stage and the hook scripts. The scripts are
+  plain Node with no dependencies.
+- `.claude/` holds the agents, the skills and the hook entries in `settings.json`.
+- `CLAUDE.md` gets one marked block.
+
+They're committed so everyone who clones the repo gets the same rules and hooks, with no install step and no
+network call when a hook runs. Your tasks and their documents live in `~/.shipline`, not in the repo.
+`npx @forgeyard/shipline uninstall` removes everything `init` added.
+
+**How many tokens does it cost?** A little. These are estimates for the default install, at about 4 characters per token:
+
+| What | When | Tokens |
+| --- | --- | --- |
+| The `CLAUDE.md` block, plus the skill and agent descriptions | Every request | ~750 |
+| The workflow reminder from the prompt hook | Each message you send | ~100–150 |
+| The workflow skill | Once per task | ~2,800 |
+| One stage's rules | Once per stage | ~150–300 |
+
+Guardrails and stage checks run as hooks, outside the model, so they cost no tokens.
+
+**Does it slow Claude down?** Barely. The tool-call hook is a short Node process: about 55 ms per call on a recent
+Mac, small next to a model response.
+
+**Can Claude get around it?** Not by itself:
+- The hooks refuse the blocked tool calls.
+- Stages only move forward through `stage.mjs`, which checks each stage's document, your commands and your answers.
+- Claude can't edit task progress or approve its own gates.
+
+It isn't a sandbox, though. Hooks stop mistakes, not a determined user, and anything done outside Claude Code isn't
+checked. For hard limits, add Claude Code's sandbox and managed settings, and use the pull-request check with branch
+protection. See [Guardrails](docs/guardrails.md).
+
+**Do I need the browser UI?** No. Everything works in plain `claude` in the terminal; the UI is optional.
+
+**Which platforms?** macOS, Linux and Windows. Every pull request is tested on Linux and Windows in CI, and the
+suite is run on macOS locally. The CLI and UI need Node 22+. The hooks
+also run on Node 18.
+
 ## Documentation
 
 - [Install, upgrade and uninstall](docs/install.md): requirements, every `init` option, what gets written

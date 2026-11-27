@@ -87,11 +87,11 @@ jobs:
         with:
           node-version: 18
       - run: echo "SHIPLINE_TEST_HOOK_NODE=$(command -v node)" >> "$GITHUB_ENV" && node --version
-      - uses: pnpm/action-setup@v6
+      # pnpm is set up only after Node 22 is the active Node (its setup fails on Node 18).
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: pnpm
+      - uses: pnpm/action-setup@v6
       - run: pnpm install --frozen-lockfile
       - run: '"$SHIPLINE_TEST_HOOK_NODE" --version && node --version && node scripts/run-tests.mjs hooks'
         working-directory: packages/cli

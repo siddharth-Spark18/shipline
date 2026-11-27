@@ -147,13 +147,15 @@ export async function openEvents(ui) {
           const frame = buf.slice(0, i);
           buf = buf.slice(i + 2);
           let type = 'message';
+          let id;
           const data = [];
           for (const line of frame.split('\n')) {
             if (line.startsWith('event: ')) type = line.slice(7);
+            else if (line.startsWith('id: ')) id = line.slice(4);
             else if (line.startsWith('data: ')) data.push(line.slice(6));
           }
           if (!data.length) continue;
-          const ev = { type, data: JSON.parse(data.join('\n')), at: Date.now() };
+          const ev = { type, data: JSON.parse(data.join('\n')), id, at: Date.now() };
           events.push(ev);
           for (const w of waiters) w();
         }

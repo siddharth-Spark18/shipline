@@ -10,6 +10,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { encodePath, mainRoot, shiplineHome, storeDir, storeDirFor, storeKey, storeScheme, tasksDir, stateDir, uiDir } from '../src/store.mjs';
 import { BIN, CLI_ROOT, git, homeFor, hook, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
+import { HOOK_NODE } from './helpers.mjs';
 
 const dirs = [];
 const keep = (d) => (dirs.push(d), d);
@@ -95,7 +96,7 @@ describe('SHIPLINE_HOME', () => {
     const b = keep(makeRepo({ commitInit: true }));
     const home = keep(tmpDir('shipline-shared-home-'));
     for (const d of [a, b]) {
-      const r = run(process.execPath, [path.join(d, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'feature', '--title', 'Same name', '--session', 's1'], { cwd: d, env: { SHIPLINE_HOME: home } });
+      const r = run(HOOK_NODE, [path.join(d, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'feature', '--title', 'Same name', '--session', 's1'], { cwd: d, env: { SHIPLINE_HOME: home } });
       assert.equal(r.code, 0, r.stderr);
       const want = path.join(home, 'projects', storeKey(realpathSync(d)), 'tasks', 'same-name');
       assert.ok(r.stdout.includes(`Started Feature task in ${want}`), r.stdout);
@@ -158,7 +159,7 @@ describe('an unwritable store', () => {
     writeFileSync(blocker, 'x');
     const home = path.join(blocker, 'home');
     for (const script of ['session-start.mjs', 'guard.mjs', 'prompt-submit.mjs']) {
-      const r = run(process.execPath, [path.join(repo, '.shipline', 'bin', script)], {
+      const r = run(HOOK_NODE, [path.join(repo, '.shipline', 'bin', script)], {
         cwd: repo,
         env: { SHIPLINE_HOME: home },
         input: JSON.stringify({ session_id: 's1', cwd: repo, tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'src/a.js') }, prompt: 'hi' }),
@@ -168,7 +169,7 @@ describe('an unwritable store', () => {
       assert.ok(json.systemMessage.includes(`Shipline can't write its task store at ${path.join(home, 'projects', storeKey(realpathSync(repo)))}`), `${script}: ${r.stdout}`);
       assert.ok(!r.stdout.includes('"deny"'));
     }
-    const s = run(process.execPath, [path.join(repo, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'feature', '--title', 'X', '--session', 's1'], { cwd: repo, env: { SHIPLINE_HOME: home } });
+    const s = run(HOOK_NODE, [path.join(repo, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'feature', '--title', 'X', '--session', 's1'], { cwd: repo, env: { SHIPLINE_HOME: home } });
     assert.equal(s.code, 1);
     assert.match(s.stderr, /Shipline can't write its task store at /);
   });

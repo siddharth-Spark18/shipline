@@ -11,7 +11,9 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/s
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useVisualViewport } from '@/hooks/use-visual-viewport';
 import { api, setCurrentRepo } from '@/lib/api';
+import { startChatSync } from '@/lib/chat-sync';
 import { connectEvents, queryKeys } from '@/lib/events';
+import { useChatNotifications, useTitleBadge } from '@/lib/notifications';
 import { usePalette } from '@/lib/palette';
 import { useAccessIssue, useAllChats, useHealth, useProjects } from '@/lib/queries';
 import {
@@ -142,6 +144,11 @@ function MainApp() {
 
   // One SSE connection for the whole app, for every repo; events land in the query cache by their repoId.
   useEffect(() => (issue ? undefined : connectEvents(queryClient)), [queryClient, issue]);
+  // Chat logs catch up by version after a missed stretch (an SSE reconnect, a skipped version).
+  useEffect(() => (issue ? undefined : startChatSync(queryClient)), [queryClient, issue]);
+  // What needs you: browser notifications, and the tab title's `(n)` while chats wait.
+  useChatNotifications(!issue);
+  useTitleBadge(allChats.data?.filter((c) => c.waiting).length ?? 0);
 
   useEffect(() => {
     const onHash = () => setHash(window.location.hash);

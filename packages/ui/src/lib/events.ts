@@ -88,6 +88,15 @@ export function subscribeShell(listener: ShellListener): () => void {
   return () => shellListeners.delete(listener);
 }
 
+type ReconnectListener = () => void;
+const reconnectListeners = new Set<ReconnectListener>();
+
+/** Told every time the event stream (re)opens after the first time, including the browser's own automatic reconnect. */
+export function subscribeReconnect(listener: ReconnectListener): () => void {
+  reconnectListeners.add(listener);
+  return () => reconnectListeners.delete(listener);
+}
+
 const MIN_DELAY = 1000;
 const MAX_DELAY = 15000;
 
@@ -101,6 +110,7 @@ export function connectEvents(queryClient: QueryClient): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let delay = MIN_DELAY;
   let stopped = false;
+  let opened = false;
 
   const parse = <T>(e: MessageEvent): T | null => {
     try {
@@ -119,8 +129,9 @@ export function connectEvents(queryClient: QueryClient): () => void {
       // The server re-sends every pending prompt on connect, so start from an empty list; this
       // also drops cards resolved while the stream was down.
       queryClient.setQueryData<PromptEvent[]>(queryKeys.prompts, []);
-      // After a reconnect, anything missed in between is picked up by refetching.
-      if (delay !== MIN_DELAY) {
+      // After a reconnect (ours, or the browser's own retry), anything missed in between is picked up by refetching.
+      // The chat logs catch up by version (lib/chat-sync.ts), which also takes busy / ended from the server.
+      if (opened) {
         for (const key of ['tasks', 'drafts', 'status', 'chats', 'chat', 'banners'])
           void queryClient.invalidateQueries({ queryKey: [key] });
         void queryClient.invalidateQueries({ queryKey: queryKeys.projects });
@@ -128,7 +139,9 @@ export function connectEvents(queryClient: QueryClient): () => void {
         void queryClient.invalidateQueries({ queryKey: queryKeys.allChats });
         void queryClient.invalidateQueries({ queryKey: queryKeys.health });
         void queryClient.invalidateQueries({ queryKey: queryKeys.preferences });
+        reconnectListeners.forEach((fn) => fn());
       }
+      opened = true;
       delay = MIN_DELAY;
     };
 
@@ -191,7 +204,15 @@ export function connectEvents(queryClient: QueryClient): () => void {
       const type = (data.event as { type?: unknown } | undefined)?.type;
       const subtype = (data.event as { subtype?: unknown } | undefined)?.subtype;
       // controls, context and busy are live readings, not a change to the chat list.
-      if (data.kind === 'controls' || data.kind === 'context' || data.kind === 'busy') return;
+      if (
+        data.kind === 'controls' ||
+        data.kind === 'context' ||
+        data.kind === 'busy' ||
+        data.kind === 'user' ||
+        data.kind === 'queue' ||
+        data.kind === 'tools_cancelled'
+      )
+        return;
       // system/init carries the connector list, which GET /api/chats/<id> reports as `jira`.
       if (type === 'system' && subtype === 'init')
         void queryClient.invalidateQueries({ queryKey: keys.chat(data.chatId) });

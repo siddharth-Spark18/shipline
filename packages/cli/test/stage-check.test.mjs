@@ -9,6 +9,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, wri
 import path from 'node:path';
 import { IS_WIN, git, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
 import { fingerprint } from '../templates/shipline/bin/lib.mjs';
+import { HOOK_NODE } from './helpers.mjs';
 
 let dir; // an initialised repo with a task
 let scripts; // helper scripts the commands run, outside the repo
@@ -30,7 +31,7 @@ function setCommands(cmds) {
   writeFileSync(path.join(dir, '.shipline', 'config.yml'), text);
 }
 
-const check = () => run(process.execPath, [path.join(dir, '.shipline', 'bin', 'stage.mjs'), 'check', '--session', SESSION], { cwd: dir });
+const check = () => run(HOOK_NODE, [path.join(dir, '.shipline', 'bin', 'stage.mjs'), 'check', '--session', SESSION], { cwd: dir });
 
 before(() => {
   dir = makeRepo({ commitInit: true });

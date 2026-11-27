@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type MutableRefObject } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { cn } from 'cn';
 import { ChevronDownIcon } from 'lucide-react';
@@ -177,6 +177,7 @@ export function ChatControls({
   disabled = false,
   onCompact,
   stacked = false,
+  cycleRef,
 }: {
   chatId: string | null;
   ended?: boolean;
@@ -185,6 +186,8 @@ export function ChatControls({
   /** Sends `/compact` as a normal message. Left out where there is no composer. */
   onCompact?: () => void;
   stacked?: boolean;
+  /** Filled with the function that moves the permission mode to the next one (the composer's Shift+Tab calls it). */
+  cycleRef?: MutableRefObject<(() => void) | null>;
 }) {
   const queryClient = useQueryClient();
   const live = useChatLive(chatId);
@@ -265,6 +268,22 @@ export function ChatControls({
     }
     void pick(patch);
   };
+
+  // The next mode after the current one in the list the mode menu offers; a toast says which one it is.
+  const cycleMode = () => {
+    if (disabled || modes.length === 0) return;
+    const at = modes.findIndex((m) => m.value === current.permissionMode);
+    const next = modes[(at + 1) % modes.length];
+    void pick({ permissionMode: next.value });
+    toast(`Mode: ${next.label}`);
+  };
+  useEffect(() => {
+    if (!cycleRef) return;
+    cycleRef.current = cycleMode;
+    return () => {
+      cycleRef.current = null;
+    };
+  });
 
   const hasPending = Boolean(pending && Object.keys(pending).length > 0);
   const hint = hasPending

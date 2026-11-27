@@ -139,15 +139,19 @@ export function makeRepo({ init = true, commitInit = false, yes = false } = {}) 
   return dir;
 }
 
+// The Node that runs the vendored hook scripts (.shipline/bin). CI's hooks-node18 job points it at Node 18, so the
+// hooks are tested on the oldest Node they promise while the CLI and the tests themselves run on Node 22+.
+export const HOOK_NODE = process.env.SHIPLINE_TEST_HOOK_NODE || process.execPath;
+
 export function stage(dir, args, session) {
-  return run(process.execPath, [path.join(dir, '.shipline', 'bin', 'stage.mjs'), ...args, ...(session ? ['--session', session] : [])], {
+  return run(HOOK_NODE, [path.join(dir, '.shipline', 'bin', 'stage.mjs'), ...args, ...(session ? ['--session', session] : [])], {
     cwd: dir,
   });
 }
 
 // Runs a vendored hook script with a JSON payload on stdin. Returns { code, stdout, json }.
 export function hook(dir, script, payload) {
-  const r = run(process.execPath, [path.join(dir, '.shipline', 'bin', script)], { cwd: dir, input: JSON.stringify(payload) });
+  const r = run(HOOK_NODE, [path.join(dir, '.shipline', 'bin', script)], { cwd: dir, input: JSON.stringify(payload) });
   let json = null;
   if (r.stdout.trim()) json = JSON.parse(r.stdout);
   return { ...r, json };

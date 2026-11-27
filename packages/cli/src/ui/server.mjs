@@ -263,7 +263,7 @@ export async function startServer({ dir, port = 0, open = true, remote = false }
         throw new HttpError(404, 'not-found', 'Not found');
       }
       const body =
-        req.method === 'POST'
+        req.method === 'POST' || req.method === 'PUT'
           ? parseJsonBody(await readBody(req, { max: route.maxBody }))
           : undefined;
       const result = await withLogger(logger, () =>

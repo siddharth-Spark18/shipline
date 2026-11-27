@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { git, homeFor, hook, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
 import { findRoot, listAllTasks, listOpenTasks } from '../templates/shipline/bin/lib.mjs';
+import { HOOK_NODE } from './helpers.mjs';
 
 // One stage that blocks every file edit outside docs/ until it is done.
 const DOCS_WF = `id: dw
@@ -67,13 +68,13 @@ const nextSession = (p = 'ls') => `${p}${++uniq}`;
 
 // The stage CLI with extra environment (SHIPLINE_NONINTERACTIVE and the like).
 function stageEnv(args, session, env = {}, d = dir) {
-  return run(process.execPath, [path.join(d, '.shipline', 'bin', 'stage.mjs'), ...args, ...(session ? ['--session', session] : [])], { cwd: d, env });
+  return run(HOOK_NODE, [path.join(d, '.shipline', 'bin', 'stage.mjs'), ...args, ...(session ? ['--session', session] : [])], { cwd: d, env });
 }
 const headless = { SHIPLINE_NONINTERACTIVE: '1' };
 
 // The guard hook for one tool call; `env` adds environment. Returns { json, hso, decision, reason }.
 function guard(session, tool, toolInput, { env, cwd = dir, root = dir } = {}) {
-  const r = run(process.execPath, [path.join(root, '.shipline', 'bin', 'guard.mjs')], {
+  const r = run(HOOK_NODE, [path.join(root, '.shipline', 'bin', 'guard.mjs')], {
     cwd,
     input: JSON.stringify({ session_id: session, cwd, hook_event_name: 'PreToolUse', tool_name: tool, tool_input: toolInput }),
     env,
@@ -787,10 +788,10 @@ describe('D12: worktrees', () => {
   });
 
   test('stage.mjs run from the worktree uses the worktree as its root (config from it) and the main checkout\'s shared store', () => {
-    const r = run(process.execPath, [path.join(wt, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'one', '--title', 'In worktree', '--session', 'wt-stage'], { cwd: wt, env: { CLAUDE_PROJECT_DIR: repo } });
+    const r = run(HOOK_NODE, [path.join(wt, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'one', '--title', 'In worktree', '--session', 'wt-stage'], { cwd: wt, env: { CLAUDE_PROJECT_DIR: repo } });
     // The workflow `one` doesn't exist in this repo; the point is the root: the error names the worktree's workflow list.
     assert.equal(r.code, 1);
-    const ok = run(process.execPath, [path.join(wt, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'small', '--title', 'In worktree', '--session', 'wt-stage'], { cwd: wt, env: { CLAUDE_PROJECT_DIR: repo } });
+    const ok = run(HOOK_NODE, [path.join(wt, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'small', '--title', 'In worktree', '--session', 'wt-stage'], { cwd: wt, env: { CLAUDE_PROJECT_DIR: repo } });
     assert.equal(ok.code, 0, ok.stderr);
     // Plan E: every worktree of a repo shares the main checkout's store.
     assert.equal(storeOf(wt), storeOf(repo));

@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { appendFileSync, chmodSync, closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { CLI_ROOT, cleanEnv, homeFor, makeRepo, removeDir, stage, tmpDir } from './helpers.mjs';
+import { HOOK_NODE } from './helpers.mjs';
 
 const WARNING = "Shipline needs Node.js 18 or newer on this machine; its workflow hooks are off until it's installed.";
 const SETTINGS = JSON.parse(readFileSync(path.join(CLI_ROOT, 'templates', 'settings-hooks.json'), 'utf8'));
@@ -96,7 +97,7 @@ describe('the hook wrappers (sh -c)', { skip: process.platform === 'win32' && 'P
   test('with a real node, the output is what the script itself prints', () => {
     const PATH = [path.dirname(process.execPath), process.env.PATH].join(path.delimiter);
     for (const h of HOOKS) {
-      const direct = spawnSync(process.execPath, [path.join(dir, '.shipline', 'bin', h.script)], {
+      const direct = spawnSync(HOOK_NODE, [path.join(dir, '.shipline', 'bin', h.script)], {
         cwd: dir,
         env: hookEnv(PATH),
         input: JSON.stringify(payload(h.event)),
@@ -122,7 +123,7 @@ describe('lib.mjs on a Node older than 18', () => {
     writeFileSync(preload, "Object.defineProperty(process, 'versions', { value: { ...process.versions, node: '16.20.2' } });\n");
   });
   const runOld = (script, event) =>
-    spawnSync(process.execPath, ['--require', preload, path.join(dir, '.shipline', 'bin', script)], {
+    spawnSync(HOOK_NODE, ['--require', preload, path.join(dir, '.shipline', 'bin', script)], {
       cwd: dir,
       env: cleanEnv({ CLAUDE_PROJECT_DIR: dir, SHIPLINE_HOME: homeFor(dir) }),
       input: JSON.stringify(payload(event)),
@@ -144,7 +145,7 @@ describe('lib.mjs on a Node older than 18', () => {
   });
 
   test('stage.mjs is not a hook and is left alone', () => {
-    const r = spawnSync(process.execPath, ['--require', preload, path.join(dir, '.shipline', 'bin', 'stage.mjs'), 'workflows'], {
+    const r = spawnSync(HOOK_NODE, ['--require', preload, path.join(dir, '.shipline', 'bin', 'stage.mjs'), 'workflows'], {
       cwd: dir,
       env: cleanEnv({ SHIPLINE_HOME: homeFor(dir) }),
       encoding: 'utf8',

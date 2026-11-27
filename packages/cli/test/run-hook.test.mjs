@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { copyFileSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { CLI_ROOT, hook, makeRepo, removeDir, run, tmpDir } from './helpers.mjs';
+import { HOOK_NODE } from './helpers.mjs';
 
 const RUN_HOOK = path.join(CLI_ROOT, 'templates', 'shipline', 'bin', 'run-hook.mjs');
 const dirs = [];
@@ -19,7 +20,7 @@ function fakeBin(files) {
   for (const [name, body] of Object.entries(files)) writeFileSync(path.join(dir, name), body);
   return dir;
 }
-const launch = (dir, name) => run(process.execPath, [path.join(dir, 'run-hook.mjs'), ...(name ? [name] : [])], { cwd: dir, input: '{}' });
+const launch = (dir, name) => run(HOOK_NODE, [path.join(dir, 'run-hook.mjs'), ...(name ? [name] : [])], { cwd: dir, input: '{}' });
 
 describe('run-hook.mjs', () => {
   test('a script that throws on import: one systemMessage JSON on stdout, exit 0', () => {
@@ -66,7 +67,7 @@ describe('run-hook.mjs', () => {
   test('a normal guard deny passes through unchanged', () => {
     const repo = makeRepo({ commitInit: true });
     dirs.push(repo);
-    const r = run(process.execPath, [path.join(repo, '.shipline', 'bin', 'run-hook.mjs'), 'guard'], {
+    const r = run(HOOK_NODE, [path.join(repo, '.shipline', 'bin', 'run-hook.mjs'), 'guard'], {
       cwd: repo,
       input: JSON.stringify({ session_id: 's', cwd: repo, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'node .shipline/bin/record-answer.mjs' } }),
     });
@@ -81,7 +82,7 @@ describe('run-hook.mjs', () => {
     dirs.push(repo);
     writeFileSync(path.join(repo, '.shipline', 'bin', 'lib.mjs'), 'export const = ;\n');
     for (const name of ['guard', 'session-start', 'prompt-submit', 'record-answer']) {
-      const r = run(process.execPath, [path.join(repo, '.shipline', 'bin', 'run-hook.mjs'), name], { cwd: repo, input: JSON.stringify({ session_id: 's', cwd: repo }) });
+      const r = run(HOOK_NODE, [path.join(repo, '.shipline', 'bin', 'run-hook.mjs'), name], { cwd: repo, input: JSON.stringify({ session_id: 's', cwd: repo }) });
       assert.equal(r.code, 0, `${name}: ${r.stderr}`);
       assert.match(JSON.parse(r.stdout).systemMessage, new RegExp(`^Shipline ${name} hook crashed: `), name);
     }

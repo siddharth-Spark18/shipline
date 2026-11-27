@@ -58,8 +58,10 @@ const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer.types).includes('Fi
  * leading `!` runs a shell command in the chat's repo. Images come from paste, drop or Attach.
  *
  * `onSend` resolves true when the message was accepted (the box is cleared) and false when it
- * failed (the text stays so nothing is lost). `disabled` turns the whole box off; `busy` (Claude is
- * mid-turn) only holds back messages to Claude, since `!` commands run independently of a turn.
+ * failed (the text stays so nothing is lost). `disabled` turns the whole box off. While `busy` (Claude is
+ * mid-turn) the box stays usable: Send becomes Queue and `onSend` is asked to queue the message for after the turn
+ * (`!` commands run independently of a turn). While a send is in flight the box is read-only, not disabled, so it keeps
+ * focus. Shift+Tab moves the permission mode on.
  *
  * On a phone the box is one line that grows with the text (about 6 lines, then it scrolls), the send button is
  * an icon, and the model / effort / mode / context controls sit in a bottom sheet behind a + button.
@@ -72,6 +74,7 @@ export function Composer({
   allowImages = true,
   placeholder,
   hint,
+  fill,
   onSend,
   onShellError,
 }: {
@@ -85,6 +88,8 @@ export function Composer({
   placeholder?: string;
   /** Shown under the box, e.g. "Claude is working...". */
   hint?: string;
+  /** Puts this text in the box (an edit of the queued message); a new `nonce` puts it again. */
+  fill?: { text: string; nonce: number };
   onSend: (text: string, images: ImageData[]) => Promise<boolean>;
   onShellError?: (e: unknown) => void;
 }) {
@@ -99,6 +104,15 @@ export function Composer({
   const mobile = useIsMobile();
   const [controlsOpen, setControlsOpen] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
+  const cycleRef = useRef<(() => void) | null>(null);
+
+  const nonce = fill?.nonce;
+  useEffect(() => {
+    if (!fill || nonce === undefined) return;
+    setText(fill.text);
+    field.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nonce]);
 
   // Autogrow on a phone (the desktop box is a fixed two rows).
   useEffect(() => {
@@ -120,7 +134,7 @@ export function Composer({
 
   const canSend = shellMode
     ? Boolean(chatId) && shellCommand !== ''
-    : !busy && (text.trim() !== '' || images.length > 0);
+    : text.trim() !== '' || images.length > 0;
 
   const change = (value: string) => {
     setText(value);
@@ -153,7 +167,6 @@ export function Composer({
       }
       return;
     }
-    if (busy) return;
     const value = text.trim();
     if (!value && images.length === 0) return;
     const name = /^\/(\S+)/.exec(value)?.[1];
@@ -175,7 +188,15 @@ export function Composer({
       }
     } finally {
       setSending(false);
+      keepFocus();
     }
+  };
+
+  // A click on Send moves focus to the button: give it back to the box so typing can go on.
+  const keepFocus = () => {
+    const el = document.activeElement;
+    if (!el || el === document.body || el.getAttribute('data-send') !== null)
+      field.current?.focus();
   };
 
   // Compact now: `/compact` as a normal message, so it waits for the turn to end.
@@ -221,6 +242,12 @@ export function Composer({
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void send();
+      return;
+    }
+    // Shift+Tab: the next permission mode (Tab alone, and Shift+Tab outside the box, keep their normal job).
+    if (e.key === 'Tab' && e.shiftKey && cycleRef.current) {
+      e.preventDefault();
+      cycleRef.current();
     }
   };
 
@@ -244,11 +271,14 @@ export function Composer({
       ? 'Runs in cmd.exe in the repo folder. Nothing is sent to Claude.'
       : 'Runs in the repo folder, like your terminal. Nothing is sent to Claude.';
   // The phone shows only errors under the box: the hints cost a line of messages.
-  const line = mobile ? note : (note ?? (shellMode ? shellHint : hint));
+  const line = mobile
+    ? (note ?? (sending ? 'Sending...' : null))
+    : (note ?? (sending ? 'Sending...' : shellMode ? shellHint : hint));
 
   return (
     <div
       className="flex flex-col gap-1"
+      data-composer=""
       onDragOver={(e) => {
         if (!off && allowImages && hasFiles(e)) {
           e.preventDefault();
@@ -301,13 +331,16 @@ export function Composer({
           onChange={(e) => change(e.target.value)}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
-          disabled={off}
+          disabled={disabled}
+          readOnly={sending}
           placeholder={
             shellMode
               ? 'Shell command'
-              : mobile
-                ? (placeholder ?? 'Message Claude')
-                : (placeholder ?? 'Message Claude, / for commands, ! to run a command')
+              : busy && !ended
+                ? 'Type the next message; it is sent when Claude is done'
+                : mobile
+                  ? (placeholder ?? 'Message Claude')
+                  : (placeholder ?? 'Message Claude, / for commands, ! to run a command')
           }
           rows={mobile ? 1 : 2}
           className={cn(
@@ -320,13 +353,14 @@ export function Composer({
         />
         <Button
           onClick={() => void send()}
+          data-send=""
           disabled={off || !canSend}
-          aria-label={shellMode ? 'Run command' : 'Send'}
+          aria-label={shellMode ? 'Run command' : busy && !ended ? 'Queue' : 'Send'}
           size={mobile ? 'icon' : 'default'}
           className={mobile ? 'size-11 shrink-0 rounded-full' : undefined}
         >
           <SendIcon />
-          {!mobile && (shellMode ? 'Run' : 'Send')}
+          {!mobile && (shellMode ? 'Run' : busy && !ended ? 'Queue' : 'Send')}
         </Button>
       </div>
       {mobile ? (
@@ -366,6 +400,7 @@ export function Composer({
                 setControlsOpen(false);
                 void compact();
               }}
+              cycleRef={cycleRef}
             />
           </SheetContent>
         </Sheet>
@@ -376,6 +411,7 @@ export function Composer({
           busy={busy}
           disabled={disabled}
           onCompact={() => void compact()}
+          cycleRef={cycleRef}
         />
       )}
       {line && (

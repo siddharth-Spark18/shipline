@@ -4,15 +4,17 @@ import { execFile } from 'node:child_process';
 import { accessSync, constants, statSync } from 'node:fs';
 import path from 'node:path';
 import { controlArgs } from './controls.mjs';
+import { PROMPT_TIMEOUT_MS } from './prompts.mjs';
 import { meetsMinVersion, parseVersion } from './versions.mjs';
 
 // Verified 2026-11-05: the chat controls (--model, --effort, --permission-mode, control_request messages) were
 // checked on claude 2.1.318; everything else on 2.1.317.
 export const MIN_CLAUDE_VERSION = '2.1.318';
 
-// Not checked (chat test Q5): whether MCP_TOOL_TIMEOUT in claude's environment raises its limit on a long
-// permission-prompt call. null = leave the environment alone. The prompt timeout is 5 minutes instead.
-export const MCP_TOOL_TIMEOUT_ENV = null;
+// MCP_TOOL_TIMEOUT for the spawned claude: a permission-prompt call may wait PROMPT_TIMEOUT_MS for the developer,
+// so no shorter limit from the user's own environment (some people set 30 s) may cut it. A minute more than the
+// prompt wait, so Shipline's own timeout always answers first. (claude 2.1.331 reads MCP_TOOL_TIMEOUT as milliseconds.)
+export const MCP_TOOL_TIMEOUT_ENV = String(PROMPT_TIMEOUT_MS + 60_000);
 
 export const PERMISSION_TOOL = 'mcp__shipline_ui__approve';
 

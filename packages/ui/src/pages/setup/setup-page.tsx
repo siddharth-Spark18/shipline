@@ -31,7 +31,6 @@ import {
   type WorkflowDraft,
 } from '@/pages/setup/draft';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { chatStore } from '@/pages/chat/chat-store';
 import { ApiError, api } from '@/lib/api';
 import { queryKeys } from '@/lib/events';
 import { useDrafts } from '@/lib/queries';
@@ -214,7 +213,6 @@ export default function SetupPage({
     setStartingChat(true);
     try {
       const { id } = await api.createChat(message);
-      chatStore.addUser(id, message, true, []);
       void queryClient.invalidateQueries({ queryKey: queryKeys.chats });
       onChatStarted(id);
     } catch (e) {

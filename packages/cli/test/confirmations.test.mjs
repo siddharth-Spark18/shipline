@@ -9,6 +9,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { git, hook, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
 import { CONFIRM_OPTIONS, confirmQuestion, needsAnswer } from '../templates/shipline/bin/lib.mjs';
+import { HOOK_NODE } from './helpers.mjs';
 
 // ---------- the rule ----------
 
@@ -392,7 +393,7 @@ describe('ci-check agrees with the hooks', () => {
       const ci = () => {
         const ev = path.join(scratch, `event-${++n}.json`);
         writeFileSync(ev, JSON.stringify({ action: 'opened', pull_request: { number: 1, body: prBody, labels: [] } }));
-        return run(process.execPath, [path.join(dir, '.shipline', 'bin', 'ci-check.mjs')], { cwd: dir, env: { GITHUB_EVENT_PATH: ev } });
+        return run(HOOK_NODE, [path.join(dir, '.shipline', 'bin', 'ci-check.mjs')], { cwd: dir, env: { GITHUB_EVENT_PATH: ev } });
       };
       const ok = ci();
       assert.equal(ok.code, 0, ok.stdout);

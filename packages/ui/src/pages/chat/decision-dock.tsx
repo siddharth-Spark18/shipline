@@ -1,6 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronDownIcon, ChevronUpIcon, MessageCircleQuestionIcon } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import {
   Sheet,
   SheetContent,
@@ -13,49 +12,12 @@ import type { PromptEvent } from '@/lib/types';
 import {
   Countdown,
   InputPreview,
+  PermissionActions,
   PermissionSummary,
   useAnswerPrompt,
 } from '@/pages/chat/permission-card';
 import { QuestionCard, parseQuestions, type QuestionItem } from '@/pages/chat/question-card';
-
-// The phone's big touch targets; the desktop dock uses normal buttons.
-const BIG = 'h-auto min-h-14 flex-1 py-2 text-base';
-const NORMAL = 'h-auto min-h-8 flex-1 py-1.5';
-
-function AllowDeny({
-  pending,
-  mobile,
-  onAllow,
-  onDeny,
-}: {
-  pending: boolean;
-  mobile: boolean;
-  onAllow: () => void;
-  onDeny: () => void;
-}) {
-  const className = mobile ? BIG : NORMAL;
-  return (
-    <div className="flex gap-2">
-      <Button
-        variant="outline"
-        size={mobile ? 'lg' : 'default'}
-        className={className}
-        disabled={pending}
-        onClick={onDeny}
-      >
-        Deny
-      </Button>
-      <Button
-        size={mobile ? 'lg' : 'default'}
-        className={className}
-        disabled={pending}
-        onClick={onAllow}
-      >
-        Allow
-      </Button>
-    </div>
-  );
-}
+import { inputSummary } from '@/pages/chat/timeline';
 
 function QuestionDock({
   prompt,
@@ -88,8 +50,6 @@ function ApprovalDock({ prompt, counter }: { prompt: PromptEvent; counter: strin
   const { answer, pending } = useAnswerPrompt(prompt);
   const mobile = useIsMobile();
   const [open, setOpen] = useState(false);
-  const allow = () => void answer({ decision: 'allow' });
-  const deny = () => void answer({ decision: 'deny' });
 
   return (
     <>
@@ -117,7 +77,7 @@ function ApprovalDock({ prompt, counter }: { prompt: PromptEvent; counter: strin
           <InputPreview tool={prompt.tool} input={prompt.input} tall />
         </div>
       )}
-      <AllowDeny pending={pending} mobile={mobile} onAllow={allow} onDeny={deny} />
+      <PermissionActions prompt={prompt} pending={pending} answer={answer} />
       <Sheet open={mobile && open} onOpenChange={setOpen}>
         <SheetContent
           side="bottom"
@@ -127,12 +87,14 @@ function ApprovalDock({ prompt, counter }: { prompt: PromptEvent; counter: strin
             <SheetTitle>
               Claude wants to use <span className="font-mono">{prompt.tool}</span>
             </SheetTitle>
-            <SheetDescription className="sr-only">Allow or deny this tool call.</SheetDescription>
+            <SheetDescription className="sr-only">
+              Allow this tool call once, for this chat or always in this repo, or deny it.
+            </SheetDescription>
           </SheetHeader>
           <div className="mb-4 min-w-0">
             <InputPreview tool={prompt.tool} input={prompt.input} tall />
           </div>
-          <AllowDeny pending={pending} mobile onAllow={allow} onDeny={deny} />
+          <PermissionActions prompt={prompt} pending={pending} answer={answer} />
         </SheetContent>
       </Sheet>
     </>
@@ -145,16 +107,34 @@ function ApprovalDock({ prompt, counter }: { prompt: PromptEvent; counter: strin
  * sheet it opened (phone) goes away with the prompt (answered elsewhere, timed out) and the next one takes over.
  */
 export function DecisionDock({ prompts }: { prompts: PromptEvent[] }) {
+  const dock = useRef<HTMLDivElement>(null);
   const current = prompts[0];
+  const currentId = current?.id;
+  // A new prompt takes focus when it was in the composer or nowhere (so 1-4 / Enter / Esc work at once); anywhere
+  // else (another field, a button) it is only announced.
+  useEffect(() => {
+    if (!currentId) return;
+    const el = document.activeElement;
+    if (el && el !== document.body && !el.closest('[data-composer]')) return;
+    dock.current
+      ?.querySelector<HTMLElement>('[data-permission-actions], [data-question-card]')
+      ?.focus({ preventScroll: true });
+  }, [currentId]);
   if (!current) return null;
   const counter = prompts.length > 1 ? `1 of ${prompts.length}` : null;
   const questions = current.tool === 'AskUserQuestion' ? parseQuestions(current.input) : null;
   return (
     <div
+      ref={dock}
       role="region"
       aria-label="Waiting for your answer"
       className="flex max-h-[60svh] shrink-0 flex-col gap-2 overflow-y-auto rounded-xl border bg-card p-3 shadow-sm ring-2 ring-primary/40"
     >
+      <div key={`alert-${current.id}`} role="alert" className="sr-only">
+        {questions
+          ? `Claude has a question: ${questions[0].header?.trim() || questions[0].question}`
+          : `Claude wants to use ${current.tool}: ${inputSummary(current.tool, current.input)}`}
+      </div>
       {questions ? (
         <QuestionDock key={current.id} prompt={current} questions={questions} counter={counter} />
       ) : (

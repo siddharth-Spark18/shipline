@@ -13,6 +13,7 @@ import {
   writeCmdShim,
 } from './helpers.mjs';
 import { encodePath, mainRoot, sameRoot, storeKey } from '../templates/shipline/bin/lib.mjs';
+import { HOOK_NODE } from './helpers.mjs';
 
 const major = Number(process.versions.node.split('.')[0]);
 const WIN_ONLY = !IS_WIN && 'Windows only (cmd.exe, taskkill, tasklist, drive letters, NUL); the platform-neutral rules are in paths-eol.test.mjs';
@@ -68,7 +69,7 @@ describe('a repo on a drive-letter path', { skip: WIN_ONLY }, () => {
     // The same repo reached with the other drive-letter case: same store (NTFS is case-insensitive, so
     // repo.json is compared with sameRoot), no collision, no second folder.
     const other = otherDriveCase(dir);
-    const st = run(process.execPath, [path.join(other, '.shipline', 'bin', 'stage.mjs'), 'status', '--session', 'w-1'], { cwd: other, env: { SHIPLINE_HOME: homeFor(dir) } });
+    const st = run(HOOK_NODE, [path.join(other, '.shipline', 'bin', 'stage.mjs'), 'status', '--session', 'w-1'], { cwd: other, env: { SHIPLINE_HOME: homeFor(dir) } });
     assert.equal(st.code, 0, st.stderr);
     assert.ok(!/collision/i.test(st.stdout + st.stderr), st.stdout + st.stderr);
     assert.match(st.stdout, /windows-task/, 'the task started through the other spelling is found');

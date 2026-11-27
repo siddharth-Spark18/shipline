@@ -73,8 +73,9 @@ jobs:
       - if: matrix.full
         run: node packages/cli/scripts/build-ui.mjs
 
-  # The hook scripts copied into repos promise Node 18 (docs/install.md, the hooks' own "needs Node.js 18" message).
-  # Install with a current Node (pnpm and the UI toolchain need it), then run the hooks subset on Node 18.
+  # The hook scripts copied into repos promise Node 18 (docs/install.md, the hooks' own "needs Node.js 18" message),
+  # while the CLI needs 22. Like a teammate on an old Node: the tests and the CLI run on 22, and every vendored hook
+  # script the tests start runs on Node 18 (SHIPLINE_TEST_HOOK_NODE, read by test/helpers.mjs).
   hooks-node18:
     name: hooks (Node 18, ubuntu-latest)
     needs: changes
@@ -82,16 +83,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 18
+      - run: echo "SHIPLINE_TEST_HOOK_NODE=$(command -v node)" >> "$GITHUB_ENV" && node --version
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 18
-      - run: node --version && node scripts/run-tests.mjs hooks
+      - run: '"$SHIPLINE_TEST_HOOK_NODE" --version && node --version && node scripts/run-tests.mjs hooks'
         working-directory: packages/cli
 
   # The one required status check (main's ruleset): passes when the tests passed or were skipped (no code changes),

@@ -428,7 +428,7 @@ async function main() {
       }
       case '@stage-start': {
         const r = await new Promise((resolve) => {
-          const c = spawn(process.execPath, [path.join(process.cwd(), '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'feature', '--title', rest], {
+          const c = spawn(process.env.SHIPLINE_TEST_HOOK_NODE || process.execPath, [path.join(process.cwd(), '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'feature', '--title', rest], {
             stdio: ['ignore', 'pipe', 'pipe'],
           });
           let err = '';

@@ -136,14 +136,20 @@ Guardrails and stage checks run as hooks, outside the model, so they cost no tok
 **Does it slow Claude down?** Barely. The tool-call hook is a short Node process: about 55 ms per call on a recent
 Mac, small next to a model response.
 
-**Can Claude get around it?** Not by itself:
+**Can Claude get around it?** Once a task has started, not by itself:
 - The hooks refuse the blocked tool calls.
 - Stages only move forward through `stage.mjs`, which checks each stage's document, your commands and your answers.
 - Claude can't edit task progress or approve its own gates.
 
-It isn't a sandbox, though. Hooks stop mistakes, not a determined user, and anything done outside Claude Code isn't
-checked. For hard limits, add Claude Code's sandbox and managed settings, and use the pull-request check with branch
-protection. See [Guardrails](docs/guardrails.md).
+Two things it doesn't do:
+- **It doesn't force a task to start.** Starting a workflow is a step Claude is asked to take, not one it's made to.
+  If you tell Claude to skip the workflow, no task starts and only the guardrails apply. The pull-request check is
+  the backstop: a PR without the Shipline summary fails (unless it has the skip label).
+- **It isn't a sandbox.** Hooks stop mistakes, not a determined user, and anything done outside Claude Code isn't
+  checked. For hard limits, add Claude Code's sandbox and managed settings, and use the pull-request check with
+  branch protection.
+
+See [Guardrails](docs/guardrails.md).
 
 **Do I need the browser UI?** No. Everything works in plain `claude` in the terminal; the UI is optional.
 

@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { CLI_ROOT, git, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
+import { HOOK_NODE } from './helpers.mjs';
 
 let dir;
 let scratch;
@@ -37,7 +38,7 @@ function check(body, labels = [], { event, cwd = dir, summary = true } = {}) {
   const summaryPath = path.join(scratch, `summary-${i}.md`);
   writeFileSync(eventPath, event !== undefined ? event : JSON.stringify({ action: 'opened', pull_request: { number: 7, body, labels: labels.map((name) => ({ name })) } }));
   const env = { GITHUB_EVENT_PATH: eventPath, ...(summary ? { GITHUB_STEP_SUMMARY: summaryPath } : {}) };
-  const r = run(process.execPath, [path.join(dir, '.shipline', 'bin', 'ci-check.mjs')], { cwd, env });
+  const r = run(HOOK_NODE, [path.join(dir, '.shipline', 'bin', 'ci-check.mjs')], { cwd, env });
   return { ...r, summary: existsSync(summaryPath) ? readFileSync(summaryPath, 'utf8') : null };
 }
 
@@ -257,7 +258,7 @@ stages:
       assert.equal(stage(dir, ['start', '--workflow', 'mini', '--title', 'E2E'], s).code, 0);
       const q = 'Advance past "plan" in task e2e?';
       assert.equal(stage(dir, ['advance'], s).code, 1);
-      const rec = run(process.execPath, [path.join(dir, '.shipline', 'bin', 'record-answer.mjs')], {
+      const rec = run(HOOK_NODE, [path.join(dir, '.shipline', 'bin', 'record-answer.mjs')], {
         cwd: dir,
         input: JSON.stringify({
           session_id: s,

@@ -10,6 +10,7 @@ import { api, openEvents, startUi } from './helpers.mjs';
 import { headerFor } from '../../src/setup-schema.mjs';
 import { INTERFACE } from '../../src/interface.mjs';
 import { parseYaml } from '../../templates/shipline/bin/lib.mjs';
+import { HOOK_NODE } from '../helpers.mjs';
 
 const sha256 = (t) => crypto.createHash('sha256').update(t).digest('hex');
 const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -1496,7 +1497,7 @@ describe('guardrails and actions blocks (Teams Phase 3)', () => {
 
 // Runs the repo's vendored guard with a hook payload.
 function spawnGuard(root, payload) {
-  return run(process.execPath, [path.join(root, '.shipline', 'bin', 'guard.mjs')], { cwd: root, input: JSON.stringify(payload) });
+  return run(HOOK_NODE, [path.join(root, '.shipline', 'bin', 'guard.mjs')], { cwd: root, input: JSON.stringify(payload) });
 }
 
 // Teams Phase 4: the Standard/Light choice in the config form and the stage editor's Checkpoint switch save through

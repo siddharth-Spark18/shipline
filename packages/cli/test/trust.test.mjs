@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { hook, homeFor, makeRepo, removeDir, run, stage, storeOf } from './helpers.mjs';
+import { HOOK_NODE } from './helpers.mjs';
 
 // A small workflow with one stage of each kind the confirmations care about.
 const TRUST_WORKFLOW = `id: trust
@@ -208,7 +209,7 @@ describe('record-answer.mjs (the PostToolUse recorder)', () => {
 
   test('fails open: bad input exits 0 silently, a store write error exits 0 with a visible message', () => {
     for (const input of ['not json', '', '{"tool_name":"AskUserQuestion"}']) {
-      const r = run(process.execPath, [path.join(dir, '.shipline', 'bin', 'record-answer.mjs')], { cwd: dir, input });
+      const r = run(HOOK_NODE, [path.join(dir, '.shipline', 'bin', 'record-answer.mjs')], { cwd: dir, input });
       assert.equal(r.code, 0, input);
       assert.equal(r.stdout, '', input);
     }
@@ -346,7 +347,7 @@ describe('stage.mjs advance on a confirm_to_advance stage', () => {
     const { session, slug } = startTask();
     artifact(slug, 'draft.md');
     const viaEnv = (...args) =>
-      run(process.execPath, [path.join(dir, '.shipline', 'bin', 'stage.mjs'), ...args], { cwd: dir, env: { SHIPLINE_HOME: homeFor(dir), SHIPLINE_SESSION: session } });
+      run(HOOK_NODE, [path.join(dir, '.shipline', 'bin', 'stage.mjs'), ...args], { cwd: dir, env: { SHIPLINE_HOME: homeFor(dir), SHIPLINE_SESSION: session } });
     const q = advanceQ('draft', slug);
     assert.equal(viaEnv('advance').code, 1);
     answer(session, q, 'Advance');

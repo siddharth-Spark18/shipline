@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { appendFileSync, copyFileSync, cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { FIXTURES, git, hook, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
+import { HOOK_NODE } from './helpers.mjs';
 
 let dir;
 let tasks; // the store's tasks/ folder
@@ -115,7 +116,7 @@ test('CLAUDE_ENV_FILE gets the SHIPLINE_SESSION export', () => {
   try {
     const envFile = path.join(envDir, 'env');
     writeFileSync(envFile, '');
-    const withEnv = run(process.execPath, [path.join(dir, '.shipline', 'bin', 'session-start.mjs')], {
+    const withEnv = run(HOOK_NODE, [path.join(dir, '.shipline', 'bin', 'session-start.mjs')], {
       cwd: dir,
       input: JSON.stringify({ session_id: 'abc', cwd: dir }),
       env: { CLAUDE_ENV_FILE: envFile },

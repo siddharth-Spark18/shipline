@@ -8,6 +8,7 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdir
 import os from 'node:os';
 import path from 'node:path';
 import { BIN, FIXTURES, git, homeFor, makeRepo, removeDir, run, runInitAll, storeOf, tmpDir } from './helpers.mjs';
+import { HOOK_NODE } from './helpers.mjs';
 
 const sha = (data) => createHash('sha256').update(data).digest('hex');
 const dirs = [];
@@ -425,5 +426,5 @@ describe('side files and shared stores (Plan E)', () => {
 });
 
 function stage_start(dir) {
-  return run(process.execPath, [path.join(dir, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'bugfix', '--title', 'T', '--session', 's1'], { cwd: dir }).code;
+  return run(HOOK_NODE, [path.join(dir, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'bugfix', '--title', 'T', '--session', 's1'], { cwd: dir }).code;
 }

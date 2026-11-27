@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFile
 import path from 'node:path';
 import { encodePath } from '../src/store.mjs';
 import { BIN, homeFor, makeRepo, removeDir, run, stage, storeOf, tmpDir } from './helpers.mjs';
+import { HOOK_NODE } from './helpers.mjs';
 
 const dirs = [];
 const keep = (d) => (dirs.push(d), d);
@@ -42,7 +43,7 @@ describe('shipline relink', () => {
     assert.equal(meta.root, moved);
     assert.equal(meta.key_version, 2);
     assert.ok(existsSync(path.join(projects, stores[0], 'tasks', 'fix-crash', 'manifest.json')));
-    const status = run(process.execPath, [path.join(moved, '.shipline', 'bin', 'stage.mjs'), 'status', '--all'], { cwd: moved, env: { SHIPLINE_HOME: home } });
+    const status = run(HOOK_NODE, [path.join(moved, '.shipline', 'bin', 'stage.mjs'), 'status', '--all'], { cwd: moved, env: { SHIPLINE_HOME: home } });
     assert.match(status.stdout, /fix-crash/);
     assert.ok(registry(home).some((p) => p.root === meta.root));
   });
@@ -72,7 +73,7 @@ describe('shipline relink', () => {
 
   test('refuses when this repo\'s store already has tasks', () => {
     const { oldPath, moved, oldStore, home } = movedRepo();
-    assert.equal(run(process.execPath, [path.join(moved, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'bugfix', '--title', 'Newer', '--session', 's9'], { cwd: moved, env: { SHIPLINE_HOME: home } }).code, 0);
+    assert.equal(run(HOOK_NODE, [path.join(moved, '.shipline', 'bin', 'stage.mjs'), 'start', '--workflow', 'bugfix', '--title', 'Newer', '--session', 's9'], { cwd: moved, env: { SHIPLINE_HOME: home } }).code, 0);
     const r = rl(moved, home, '--from', oldPath);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /already has 1 task/);
@@ -82,7 +83,7 @@ describe('shipline relink', () => {
   test('an empty store that init-style access created at the new key is replaced', () => {
     const { oldPath, moved, home } = movedRepo();
     // Opening the new location first (as any hook would) leaves an empty store there.
-    run(process.execPath, [path.join(moved, '.shipline', 'bin', 'stage.mjs'), 'status'], { cwd: moved, env: { SHIPLINE_HOME: home } });
+    run(HOOK_NODE, [path.join(moved, '.shipline', 'bin', 'stage.mjs'), 'status'], { cwd: moved, env: { SHIPLINE_HOME: home } });
     assert.equal(readdirSync(path.join(home, 'projects')).length, 2);
     const r = rl(moved, home, '--from', oldPath);
     assert.equal(r.code, 0, r.stderr);

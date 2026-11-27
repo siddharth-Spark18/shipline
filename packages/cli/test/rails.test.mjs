@@ -9,6 +9,7 @@ import path from 'node:path';
 import { git, hook, homeFor, makeRepo, removeDir, run, storeOf, tmpDir } from './helpers.mjs';
 import { RAIL_DEFAULTS, RAIL_IDS, credentialTier, defaultBranches, globNamesCredential, isCredentialPath, loadConfig, matchInstallPackages, matchRail, matchRailTier, parseCommand } from '../templates/shipline/bin/lib.mjs';
 import { validateConfig } from '../src/setup-schema.mjs';
+import { HOOK_NODE } from './helpers.mjs';
 
 // ---------- matchers, with a stub context ----------
 
@@ -894,7 +895,7 @@ describe('D9: Grep only asks when the glob names a credential pattern', () => {
   describe('in the guard', () => {
     let dir;
     const guardCall = (tool, toolInput, session = 'grep-s', env = {}) => {
-      const r = run(process.execPath, [path.join(dir, '.shipline', 'bin', 'guard.mjs')], {
+      const r = run(HOOK_NODE, [path.join(dir, '.shipline', 'bin', 'guard.mjs')], {
         cwd: dir,
         input: JSON.stringify({ session_id: session, cwd: dir, hook_event_name: 'PreToolUse', tool_name: tool, tool_input: toolInput }),
         env,
